@@ -1,0 +1,108 @@
+package pt.isep.sidis.flightops.services;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import pt.isep.sidis.flightops.api.dto.FlightView;
+import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
+import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
+import pt.isep.sidis.flightops.peers.PeerClient;
+import pt.isep.sidis.flightops.peers.PeerResult;
+import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
+
+import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Read side of the service. Every query is answered from the local shard first and then completed with what the
+ * peer replicas hold, so the client sees one coherent answer no matter which replica it hit.
+ */
+@Service
+@RequiredArgsConstructor
+public class FlightQueryService {
+
+    private static final ParameterizedTypeReference<List<FlightView>> FLIGHT_LIST = new ParameterizedTypeReference<>() {};
+
+    private final ScheduledFlightRepository repository;
+    private final PeerClient peers;
+
+    // ---------------------------------------------------------------- local-only (used by /internal endpoints)
+
+    @Transactional(readOnly = true)
+    public FlightView localById(String flightNumber) {
+        return repository.findById(flightNumber).map(FlightView::of).orElse(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<FlightView> localByAircraft(String registration) {
+        return repository.findByAircraftRegistration(registration).stream().map(FlightView::of).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<FlightView> localActive(String registration) {
+        return repository.findNonCancelledFlights(registration).stream().map(FlightView::of).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<FlightView> localDepartures(String originIata, LocalDateTime from, LocalDateTime to) {
+        return repository.findUpcomingDepartures(originIata, from, to).stream().map(FlightView::of).toList();
+    }
+
+    // ---------------------------------------------------------------- distributed (local + peers)
+
+    public FlightView findById(String flightNumber) {
+        FlightView local = localById(flightNumber);
+        if (local != null) {
+            return local;
+        }
+        PeerResult<FlightView> remote = peers.getOne("/internal/flights/{n}", FlightView.class, flightNumber);
+        if (!remote.items().isEmpty()) {
+            return remote.items().get(0);
+        }
+        if (remote.isPartial()) {
+            throw new ServiceUnavailableException("Flight " + flightNumber
+                    + " was not found, but " + remote.unreachable() + " replica(s) could not be reached.");
+        }
+        throw new ResourceNotFoundException("Scheduled flight not found with number: " + flightNumber);
+    }
+
+    public List<FlightView> findByAircraft(String registration) {
+        PeerResult<FlightView> remote = peers.getList("/internal/flights?aircraft={reg}", FLIGHT_LIST, registration);
+        return merge(localByAircraft(registration), remote.items());
+    }
+
+    /** All non-cancelled flights (optionally of one aircraft) across every replica. */
+    public List<FlightView> findActive(String registrationOrNull) {
+        return merge(localActive(registrationOrNull), activeOnPeers(registrationOrNull));
+    }
+
+    /** Non-cancelled flights held ONLY by peer replicas. */
+    public List<FlightView> activeOnPeers(String registrationOrNull) {
+        PeerResult<FlightView> remote = registrationOrNull == null
+                ? peers.getList("/internal/flights/active", FLIGHT_LIST)
+                : peers.getList("/internal/flights/active?aircraft={reg}", FLIGHT_LIST, registrationOrNull);
+        return remote.items();
+    }
+
+    public List<FlightView> findUpcomingDepartures(String originIata, int hours) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime end = now.plusHours(hours);
+        PeerResult<FlightView> remote = peers.getList("/internal/flights/departures/{iata}?hours={h}",
+                FLIGHT_LIST, originIata, hours);
+        return merge(localDepartures(originIata, now, end), remote.items());
+    }
+
+    /** Union of both lists without duplicates (same flightNumber), ordered by departure time. */
+    private List<FlightView> merge(List<FlightView> local, List<FlightView> remote) {
+        Map<String, FlightView> byNumber = new LinkedHashMap<>();
+        local.forEach(f -> byNumber.put(f.flightNumber(), f));
+        remote.forEach(f -> byNumber.putIfAbsent(f.flightNumber(), f));
+        return byNumber.values().stream()
+                .sorted(Comparator.comparing(FlightView::scheduledDeparture))
+                .toList();
+    }
+}
