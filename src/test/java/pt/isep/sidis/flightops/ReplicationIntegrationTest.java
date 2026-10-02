@@ -65,6 +65,9 @@ class ReplicationIntegrationTest {
         cluster = String.join(",", entries);
         ports.keySet().forEach(ReplicationIntegrationTest::start);
         token = login(url("instance1"));
+        // like waiting for READY FOR TESTS: an instance that started first saw the others as down (circuit open)
+        // until its next health check after they came up
+        await(() -> ports.keySet().stream().allMatch(ReplicationIntegrationTest::seesAllPeersHealthy));
 
         @SuppressWarnings("unchecked")
         List<String> replicas = (List<String>) get("instance1", "/api/cluster/owner/" + AIRCRAFT).getBody().get("replicas");
@@ -215,6 +218,13 @@ class ReplicationIntegrationTest {
     private static String dataSource(String instance, String flightNumber) {
         ResponseEntity<Map> res = get(instance, "/api/scheduled-flights/" + flightNumber);
         return res.getStatusCode().value() == 200 ? res.getHeaders().getFirst("X-Data-Source") : "HTTP " + res.getStatusCode().value();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean seesAllPeersHealthy(String instance) {
+        List<Map<String, Object>> endpoints = (List<Map<String, Object>>) get(instance, "/api/cluster/health").getBody().get("endpoints");
+        return endpoints.stream().filter(e -> "flight-operations peer".equals(e.get("group")))
+                .allMatch(e -> Boolean.TRUE.equals(e.get("healthy")));
     }
 
     @SuppressWarnings("unchecked")
