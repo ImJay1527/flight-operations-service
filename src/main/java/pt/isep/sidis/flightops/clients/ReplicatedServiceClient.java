@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
@@ -75,6 +76,9 @@ public abstract class ReplicatedServiceClient {
             } catch (HttpClientErrorException e) {
                 // 401/403/400...: a configuration/contract problem, another instance will not fix it
                 throw new ServiceUnavailableException(targetName + " rejected the request (" + e.getStatusCode() + ").", e);
+            } catch (HttpServerErrorException.NotImplemented e) {
+                // the other service is up but doesn't have this endpoint yet (docs/service-contracts.md)
+                throw new ServiceUnavailableException(targetName + " does not implement GET " + path + " yet (501).", e);
             } catch (CircuitOpenException e) {
                 log.debug("{} instance {} skipped for {}: circuit open", targetName, instance.health().url(), path);
             } catch (RestClientException e) {

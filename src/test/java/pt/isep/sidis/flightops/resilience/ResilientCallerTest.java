@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 
@@ -65,6 +66,18 @@ class ResilientCallerTest {
             throw new ResourceAccessException("timeout");
         })).isInstanceOf(ResourceAccessException.class);
         assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void notImplementedIsNotRetriedAndKeepsTheInstanceHealthy() {
+        // e.g. a teammate's skeleton answering 501 on an /internal endpoint it doesn't implement yet
+        assertThatThrownBy(() -> caller.call(peer, true, () -> {
+            calls.incrementAndGet();
+            throw HttpServerErrorException.create(HttpStatus.NOT_IMPLEMENTED, "not implemented", null, null, null);
+        })).isInstanceOf(HttpServerErrorException.NotImplemented.class);
+        assertThat(calls).hasValue(1);
+        assertThat(peer.snapshot().circuit()).isEqualTo(EndpointHealth.State.CLOSED);
+        assertThat(peer.snapshot().consecutiveFailures()).isZero();
     }
 
     @Test

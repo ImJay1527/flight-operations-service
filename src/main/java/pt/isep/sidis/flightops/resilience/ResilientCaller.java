@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 
@@ -19,7 +20,8 @@ import java.util.function.Supplier;
  *       wait 100 ms, then 200 ms, ... (plus a little random jitter so instances don't retry in lock-step).
  *       Only for idempotent requests (GET); a PATCH is never repeated because the first attempt may have worked.
  *       Retrying stops as soon as the circuit opens, so a failing instance is not flooded.</li>
- *   <li>A 4xx answer (e.g. 404 "not here") is NOT a failure: the instance is alive and answered.</li>
+ *   <li>A 4xx answer (e.g. 404 "not here") or 501 (endpoint not implemented yet) is NOT a failure: the instance is
+ *       alive and answered, and asking again would get the same answer.</li>
  * </ul>
  */
 @Component
@@ -55,6 +57,9 @@ public class ResilientCaller {
         } catch (HttpClientErrorException e) {
             metrics.recordRemoteCall(endpoint, e.getStatusCode().value() == 404 ? "not_found" : "client_error", start);
             throw e;
+        } catch (HttpServerErrorException.NotImplemented e) {
+            metrics.recordRemoteCall(endpoint, "not_implemented", start);
+            throw e;
         } catch (RuntimeException e) {
             metrics.recordRemoteCall(endpoint, "failure", start);
             throw e;
@@ -72,8 +77,9 @@ public class ResilientCaller {
                 T result = request.get();
                 endpoint.recordSuccess();
                 return result;
-            } catch (HttpClientErrorException e) {
-                endpoint.recordSuccess();   // it answered: alive
+            } catch (HttpClientErrorException | HttpServerErrorException.NotImplemented e) {
+                // it answered (4xx, or 501 "this endpoint doesn't exist yet"): alive, and repeating won't change the answer
+                endpoint.recordSuccess();
                 throw e;
             } catch (RestClientException e) {
                 endpoint.recordFailure(e.getMessage());

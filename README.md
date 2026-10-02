@@ -114,8 +114,8 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (40 requests with test scripts) and
-`local.postman_environment.json` (one URL per instance). Import both in Postman.
+`flight-operations.postman_collection.json` (43 requests with test scripts) and two environments (one URL per
+instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
    two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "2 instances for the Postman tests".
@@ -134,6 +134,14 @@ Files in `postman/`:
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
 | 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower), forwarding success rate, peer health, both instances served requests |
 | 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped unless 3 instances run: `./scripts/run-local.sh -n 3 --stub` |
+| 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
+
+**Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
+and select "Flight Ops - local HTTPS (2 instances)". Postman must trust the dev CA: Settings → Certificates →
+CA certificates → on → select `certs/ca.crt` (created by `./scripts/generate-dev-certs.sh`). If that setting isn't
+available (Postman on the web), turn off Settings → General → "SSL certificate verification" instead: the traffic is
+still encrypted, only the server's identity isn't checked. Command line:
+`npx newman run postman/flight-operations.postman_collection.json -e postman/local-https.postman_environment.json --ssl-extra-ca-certs certs/ca.crt`.
 
 From the command line (same files): `npx newman run postman/flight-operations.postman_collection.json -e postman/local.postman_environment.json --folder "01 Local Data Access"`.
 

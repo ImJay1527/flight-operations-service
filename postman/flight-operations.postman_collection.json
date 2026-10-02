@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "d1726ab0-afaf-470a-822c-92e6d43424bd",
+    "_postman_id": "d3260b36-48a0-4933-8c17-684c34c6b27c",
     "name": "Flight Operations - distributed tests (SIDIS PL3)",
     "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -1580,6 +1580,142 @@
               "}"
             ]
           }
+        }
+      ]
+    },
+    {
+      "name": "08 Encryption in transit",
+      "description": "Assignment 1: \"evidence of ... encryption\". Only runs with the HTTPS environment (instances started with ./scripts/run-local.sh --tls --stub); skipped with the HTTP one. Checks that the instances only speak HTTPS (plain HTTP is refused), that their certificate is verified, and that they call their peers over HTTPS.",
+      "item": [
+        {
+          "name": "HTTPS works and the certificate is trusted",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/actuator/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!String(pm.environment.get(\"instance1\")).startsWith(\"https://\")) {",
+                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (2 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"request went over https\", () => pm.expect(pm.request.url.protocol).to.eql(\"https\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Plain HTTP to the same port is refused",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/actuator/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!String(pm.environment.get(\"instance1\")).startsWith(\"https://\")) {",
+                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (2 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
+                  "} else {",
+                  "  const plain = pm.environment.get(\"instance1\").replace(\"https://\", \"http://\") + \"/actuator/health\";",
+                  "  pm.sendRequest(plain, (err, res) => {",
+                  "    pm.test(\"plain HTTP gets no normal answer (400 \\\"requires TLS\\\" or connection error)\", () => {",
+                  "      if (err) return;   // connection closed: refused as well",
+                  "      pm.expect(res.code).to.eql(400);",
+                  "      pm.expect(res.text()).to.include(\"TLS\");",
+                  "    });",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Instances call their peers over HTTPS",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!String(pm.environment.get(\"instance1\")).startsWith(\"https://\")) {",
+                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (2 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"every peer URL is https\", () => {",
+                  "    const peers = pm.response.json().endpoints.filter(e => e.group === \"flight-operations peer\");",
+                  "    pm.expect(peers.length).to.be.above(0);",
+                  "    peers.forEach(p => pm.expect(p.url).to.match(/^https:\\/\\//));",
+                  "  });",
+                  "  pm.test(\"and they are reachable over HTTPS (healthy)\", () => {",
+                  "    pm.response.json().endpoints.filter(e => e.group === \"flight-operations peer\")",
+                  "      .forEach(p => pm.expect(p.healthy, p.url).to.eql(true));",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
