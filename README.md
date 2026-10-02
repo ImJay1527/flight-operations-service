@@ -115,7 +115,7 @@ Files in `postman/`:
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
    two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "2 instances for the Postman tests".
 2. Select the environment "Flight Ops - local (2 instances)".
-3. Run the folders **00 → 01 → 02 → 04 → 05** (Collection Runner, or one by one).
+3. Run the whole collection. Folder **03 Resilience** shows its tests as *skipped* while instance 2 is running.
 4. Stop **instance 2**, then run folder **03 Resilience** on its own. Start instance 2 again afterwards.
 
 | Folder | PL3 p.16 test |
