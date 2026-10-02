@@ -1,6 +1,0 @@
-Building...
-flightops-1  http://localhost:8083  peers=http://localhost:8093  (logs/flightops-1.log)
-flightops-2  http://localhost:8093  peers=http://localhost:8083  (logs/flightops-2.log)
-All 2 instances starting. Ctrl+C to stop.
-
-Stopping instances...
