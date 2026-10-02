@@ -34,6 +34,12 @@ docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build fl
 ./loadtest/run.sh 3
 ```
 
+**Instances = Spring profiles.** Each instance has its own file with its own port, database, peers and slice of the
+sample data: `application-instance1.properties` (8083, `flightops_db_1`), `application-instance2.properties`
+(8093, `flightops_db_2`) and `application-instance3.properties` (8103, scale-up). Start one with
+`java -jar target/flight-operations-service-*.jar --spring.profiles.active=instance1` (add `,tls` for HTTPS).
+Environment variables override the files, and docker-compose uses them for container hostnames.
+
 **VS Code:** Run and Debug panel → "Flight Ops: 2 instances (HTTP)" or "(HTTPS)" starts both instances
 (`.vscode/launch.json`).
 

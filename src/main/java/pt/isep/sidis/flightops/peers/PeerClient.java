@@ -62,6 +62,7 @@ public class PeerClient {
                 if (part != null) {
                     all.addAll(part);
                 }
+                log.debug("Peer {} answered GET {} with {} item(s)", peerUrls.get(i), path, part == null ? 0 : part.size());
             } catch (RestClientException e) {
                 unreachable++;
                 log.warn("Peer {} unreachable for GET {}: {}", peerUrls.get(i), path, e.getMessage());
@@ -89,10 +90,11 @@ public class PeerClient {
                         : peers.get(i).get().uri(path, uriVariables);
                 T body = spec.header(HttpHeaders.AUTHORIZATION, bearer()).retrieve().body(type);
                 if (body != null) {
+                    log.debug("Peer {} owns {} {} - answered", peerUrls.get(i), patch ? "PATCH" : "GET", path);
                     return new PeerResult<>(List.of(body), unreachable);
                 }
             } catch (HttpClientErrorException.NotFound e) {
-                // not on this peer, keep looking
+                log.debug("Peer {} does not have {} - asking the next one", peerUrls.get(i), path);
             } catch (HttpClientErrorException.Conflict e) {
                 // the owner replied: the operation is not allowed in the flight's current state
                 throw new IllegalStateException("The flight cannot be changed in its current state.");

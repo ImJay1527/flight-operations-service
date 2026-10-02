@@ -24,9 +24,10 @@ services:
     ports: ["8083:8083"]
     environment:
       <<: [*common-env, *tls-env]
+      SPRING_PROFILES_ACTIVE: instance1,tls
+      PORT: 8083                       # inside the container; host port above is unique per instance
       SSL_KEYSTORE: file:/certs/flightops.p12
       PEERS: https://flightops-2:8083
-      BOOTSTRAP_SHARD: 1
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
 
@@ -36,9 +37,10 @@ services:
     ports: ["8093:8083"]
     environment:
       <<: [*common-env, *tls-env]
+      SPRING_PROFILES_ACTIVE: instance2,tls
+      PORT: 8083                       # inside the container; host port above is unique per instance
       SSL_KEYSTORE: file:/certs/flightops.p12
       PEERS: https://flightops-1:8083
-      BOOTSTRAP_SHARD: 2
       AIRCRAFT_SERVICE_URLS: http://aircraft-2:8081,http://aircraft-1:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-2:8082,http://airports-1:8082
 

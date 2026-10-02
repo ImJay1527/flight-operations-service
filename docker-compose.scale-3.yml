@@ -23,12 +23,11 @@ services:
     ports: ["8103:8083"]
     environment:
       JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
-      SPRING_PROFILES_ACTIVE: tls
+      SPRING_PROFILES_ACTIVE: instance3,tls
+      PORT: 8083
       SSL_TRUSTSTORE: file:/certs/truststore.p12
       SSL_PASSWORD: ${SSL_PASSWORD:-changeit}
       SSL_KEYSTORE: file:/certs/flightops.p12
       PEERS: https://flightops-1:8083,https://flightops-2:8083
-      BOOTSTRAP_SHARD: 3
-      SHARD_COUNT: 3
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
