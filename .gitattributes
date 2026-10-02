@@ -1,3 +1,5 @@
 *.sh text eol=lf
 mvnw text eol=lf
 *.cmd text eol=crlf
+*.conf text eol=lf
+*.yml text eol=lf

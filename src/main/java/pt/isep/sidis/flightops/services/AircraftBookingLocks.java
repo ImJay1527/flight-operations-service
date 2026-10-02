@@ -5,6 +5,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import pt.isep.sidis.flightops.common.crypto.FieldEncryption;
 import pt.isep.sidis.flightops.repositories.AircraftBookingLockRepository;
 
 /**
@@ -19,9 +20,12 @@ public class AircraftBookingLocks {
 
     private final AircraftBookingLockRepository repository;
     private final AircraftLockRowCreator lockRowCreator;
+    private final FieldEncryption encryption;
 
     @Transactional(propagation = Propagation.MANDATORY)
-    public void lock(String aircraftRegistration) {
+    public void lock(String registration) {
+        // the lock row is keyed by the encrypted registration (deterministic), so it isn't stored in plain text either
+        String aircraftRegistration = encryption.encrypt(registration);
         if (!repository.existsById(aircraftRegistration)) {
             try {
                 lockRowCreator.create(aircraftRegistration);   // own transaction, committed right away
@@ -30,6 +34,6 @@ public class AircraftBookingLocks {
             }
         }
         repository.lockForUpdate(aircraftRegistration)
-                .orElseThrow(() -> new IllegalStateException("Could not lock aircraft " + aircraftRegistration));
+                .orElseThrow(() -> new IllegalStateException("Could not lock aircraft " + registration));
     }
 }
