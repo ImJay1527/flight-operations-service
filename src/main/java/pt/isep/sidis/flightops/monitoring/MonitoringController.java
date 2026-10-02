@@ -64,15 +64,18 @@ public class MonitoringController {
     private TimerStats timerStats(String source) {
         Timer timer = registry.find(FlightOpsMetrics.LOOKUPS).tag("source", source).timer();
         if (timer == null || timer.count() == 0) {
-            return new TimerStats(0, null, null, null);
+            return new TimerStats(0, null, null, null, null);
         }
+        Double p50 = null;
         Double p95 = null;
         for (ValueAtPercentile v : timer.takeSnapshot().percentileValues()) {
-            if (v.percentile() == 0.95) {
+            if (v.percentile() == 0.5) {
+                p50 = round(v.value(TimeUnit.MILLISECONDS));
+            } else if (v.percentile() == 0.95) {
                 p95 = round(v.value(TimeUnit.MILLISECONDS));
             }
         }
-        return new TimerStats(timer.count(), round(timer.mean(TimeUnit.MILLISECONDS)), p95,
+        return new TimerStats(timer.count(), round(timer.mean(TimeUnit.MILLISECONDS)), p50, p95,
                 round(timer.max(TimeUnit.MILLISECONDS)));
     }
 
@@ -129,7 +132,8 @@ public class MonitoringController {
     public record Lookups(TimerStats local, TimerStats forwarded, TimerStats notFound) {
     }
 
-    public record TimerStats(long count, Double avgMs, Double p95Ms, Double maxMs) {
+    /** medianMs is robust against a few slow calls (e.g. the very first one on a cold JVM); avgMs is not. */
+    public record TimerStats(long count, Double avgMs, Double medianMs, Double p95Ms, Double maxMs) {
     }
 
     /** Lookups that were not local and had to ask the peers: how many found the flight. */

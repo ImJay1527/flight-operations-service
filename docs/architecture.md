@@ -1,6 +1,6 @@
 # Flight Operations – architecture notes
 
-Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Horizontal scaling](#horizontal-scaling)
+Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Consistency model](#consistency-model) · [Horizontal scaling](#horizontal-scaling)
 
 ## System architecture (PL3 p.20)
 
@@ -102,6 +102,88 @@ With a load balancer and replication factor 2, the measured scenario (one instan
   flight status was preferred over the ~4 ms saved.
 * **Geographic placement**: put the instances that forward to each other close together (same region), or replicate
   the data to each region so reads stay local.
+
+## Consistency model
+
+*(Assignment 1: "documentation of design decisions, consistency model and fault-tolerance mechanisms")*
+
+### In one sentence
+
+Every flight has **exactly one owner** (the instance that created it); reads of a single flight are always answered
+by its owner, so they are up to date; rules that span several instances (no double-booking of an aircraft) are only
+checked **best-effort**, and during failures the system prefers **availability** over completeness (AP in CAP).
+
+### How data is placed
+
+* **Partitioned, not replicated.** A flight is stored only in the database of the instance that received the
+  `POST` (its *owner*). There are no copies, so there are never two different versions of the same flight. This
+  matches the practical session (PL3 p.24, quiz Q3: instances do **not** keep identical copies of all data).
+* **No ID clashes.** Flight numbers are UUIDs, generated independently on each instance, so two instances can never
+  create the same id (PL3 p.18 "Data inconsistency: same ID on multiple instances").
+* **Snapshots of other services' data.** When a flight is scheduled, the aircraft model, route distance and airports
+  are copied into it. They describe the flight *as scheduled* and are not updated if the aircraft or route changes
+  later (deliberate: a scheduled flight keeps the data it was validated against).
+
+### What a client can rely on
+
+| Operation | Guarantee | Why |
+|---|---|---|
+| Read one flight (`GET /api/scheduled-flights/{n}`) | **Up to date** while its owner is reachable; otherwise `404` with "could not be reached" | Answered by the owner's database (locally or forwarded), never from a copy or cache |
+| Read your own write | **Yes**, from any instance | The write is committed in the owner's database before the `201`; any instance finds it there |
+| Cancel a flight | **Applied once**, by the owner; a second cancel is `409` | Forwarded to the owner (single writer per flight), `@Version` optimistic locking, `PATCH` never retried |
+| Lists and reports (flights of an aircraft, departures, utilization, fuel) | Up to date **for the reachable instances**; **partial** while an instance is down | Scatter-gather over all instances; an unreachable peer is skipped (logged) instead of failing the whole request |
+| "An aircraft is never in two flights at the same time" | **Best effort only** - see below | The rule spans instances, and there is no distributed lock |
+
+### The weak spot: double-booking an aircraft
+
+Before saving a new flight, the receiving instance checks for overlapping flights of the same aircraft:
+
+1. on its **own** database, with a `PESSIMISTIC_WRITE` lock on the overlapping rows, and
+2. on its **peers**, by asking them for that aircraft's active flights.
+
+A double booking can still happen when:
+
+* **two requests for the same aircraft arrive at the same moment on different instances**: each checks the other
+  before the other has saved;
+* **a peer is down**: its flights are skipped by the check (availability first), so a booking that overlaps one of
+  them is accepted;
+* **two requests arrive at the same moment on the same instance**: the lock only covers flights that *already
+  exist*; when there is no overlapping flight yet there is nothing to lock, so both can pass the check. (This one was
+  already present in the PSOFT monolith.)
+
+This is the price of choosing availability: bookings keep working with an instance down. The overlap is not lost or
+hidden: both flights exist and can be listed for that aircraft.
+
+**How it could be made strongly consistent** (not implemented):
+
+* **One owner per aircraft**: send every booking for an aircraft to the instance chosen by a hash of its
+  registration (consistent hashing). All flights of an aircraft then live on one instance and the check is local.
+  This also removes the fan-out for per-aircraft reads (see "Horizontal scaling").
+* **Lock the aircraft, not the flights**: e.g. a row per aircraft locked with `SELECT ... FOR UPDATE`, or a PostgreSQL
+  advisory lock on the registration, so concurrent bookings on one instance are serialised even when no flight
+  exists yet.
+* **Refuse instead of guess**: reject a booking (`503`) while a peer is unreachable, which turns the system from AP to
+  CP for writes: always correct, but bookings stop during a failure.
+
+### During a failure (CAP)
+
+With one instance down (a partition from the others' point of view):
+
+* the other instances keep serving **their own data** and accept **new bookings** (Availability);
+* the down instance's flights are **not visible** (404 for single reads, missing from lists) instead of the whole
+  request failing (Partition tolerance);
+* consistency is weakened only for the cross-instance overlap rule above.
+
+When the instance comes back, nothing has to be reconciled: no other instance ever held a copy of its data, so its
+flights are simply visible again (measured in "Availability while an instance fails" above, and checked by the
+Postman folder "03 Resilience").
+
+### If replication is added later
+
+Replicating each flight to a second instance would remove the "data unavailable while its owner is down" gap
+(Performance section). It would also bring the classic replication problems that the current design avoids:
+replicas that disagree after a failure (need versioning / a "last write wins" or quorum rule, e.g. R + W > N), and
+writes that must reach two instances. PL3 p.18 lists the same options: "data versioning or authoritative instance".
 
 ## Horizontal scaling
 

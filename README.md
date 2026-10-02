@@ -83,9 +83,9 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
   * *Load balancing*: when looking for the instance that holds a flight, the peer asked first rotates per request.
   * Status: `GET /api/cluster/health` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) lists every peer / remote instance
     with its circuit state and failure count. Settings: `sidis.resilience.*` in `application.properties`.
-* **Consistency**: eventual (AP in CAP). Overlap checks for the same aircraft use a DB lock on the local shard and a
-  best-effort check on peers. Two simultaneous requests on different replicas could still double-book. That trade-off
-  is documented, not a bug.
+* **Consistency**: every flight has exactly one owner (no copies), so single reads are up to date; lists are partial
+  while an instance is down; the "no double-booking" rule is only best-effort across instances (AP in CAP).
+  Details, the known weak spots and how to fix them: [docs/architecture.md#consistency-model](docs/architecture.md#consistency-model).
 
 ## Security
 
@@ -113,7 +113,7 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (35 requests with test scripts) and
+`flight-operations.postman_collection.json` (40 requests with test scripts) and
 `local.postman_environment.json` (one URL per instance). Import both in Postman.
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -132,6 +132,7 @@ Files in `postman/`:
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
 | 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower), forwarding success rate, peer health, both instances served requests |
+| 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped unless 3 instances run: `./scripts/run-local.sh -n 3 --stub` |
 
 From the command line (same files): `npx newman run postman/flight-operations.postman_collection.json -e postman/local.postman_environment.json --folder "01 Local Data Access"`.
 
@@ -203,4 +204,4 @@ isolated from the others and **survives restarts**:
 - [x] PostgreSQL container per instance in docker-compose
 - [x] Postman collection (postman/)
 - [x] Architecture diagrams and performance analysis (docs/architecture.md)
-- [ ] Design document: consistency model, failure scenarios (partly in docs/architecture.md)
+- [x] Consistency model, failure scenarios (docs/architecture.md)

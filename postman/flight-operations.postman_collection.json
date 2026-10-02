@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "cac9e0b5-45d0-44c9-9ac8-2498905b5f09",
+    "_postman_id": "d1726ab0-afaf-470a-822c-92e6d43424bd",
     "name": "Flight Operations - distributed tests (SIDIS PL3)",
     "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -1248,6 +1248,23 @@
           },
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 20 local + 20 forwarded lookups on instance 1 first, so the comparison is not decided by one or two",
+                  "// calls (the very first calls on a freshly started JVM are slow)",
+                  "const env = k => pm.environment.get(k);",
+                  "const auth = [{ key: 'Authorization', value: 'Bearer ' + env('atccToken') }];",
+                  "let remaining = 40;",
+                  "for (let i = 0; i < 20; i++) {",
+                  "  pm.sendRequest({ url: env('instance1') + '/api/scheduled-flights/' + env('flight_on_instance1'), header: auth }, () => remaining--);",
+                  "  pm.sendRequest({ url: env('instance1') + '/api/scheduled-flights/' + env('flight_on_instance2'), header: auth }, () => remaining--);",
+                  "}"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -1259,8 +1276,8 @@
                   "pm.environment.set(\"served_by_instance1\", m.requestsServed.total);",
                   "pm.test(\"local lookups counted\", () => pm.expect(m.lookupResponseTimes.local.count).to.be.above(0));",
                   "pm.test(\"forwarded lookups counted\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));",
-                  "pm.test(\"forwarded lookups are slower than local ones (network hop)\", () =>",
-                  "  pm.expect(m.lookupResponseTimes.forwarded.avgMs).to.be.above(m.lookupResponseTimes.local.avgMs));",
+                  "pm.test(\"forwarded lookups are slower than local ones (median, network hop)\", () =>",
+                  "  pm.expect(m.lookupResponseTimes.forwarded.medianMs).to.be.above(m.lookupResponseTimes.local.medianMs));",
                   "pm.test(\"forwarding success rate reported\", () => pm.expect(m.forwarding.successRatePercent).to.be.a(\"number\"));",
                   "pm.test(\"peer instance 2: healthy, calls and failure rate reported\", () => {",
                   "  const peer = m.remoteInstances.find(r => r.url === pm.environment.get(\"instance2\"));",
@@ -1310,6 +1327,259 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "07 Three instances",
+      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh -n 3 --stub); otherwise its tests are skipped. Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy.",
+      "item": [
+        {
+          "name": "Create flight on instance 3",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance3}}/api/scheduled-flights",
+              "host": [
+                "{{instance3}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-mad-opo\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCSeconds(0, 0);",
+                  "const arr = new Date(dep.getTime() + 45 * 60000);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set('departure', fmt(dep));",
+                  "pm.variables.set('arrival', fmt(arr));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance3Up\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "  pm.test(\"answered by instance3 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance3\"));",
+                  "  pm.environment.set(\"flight_on_instance3\", pm.response.json().flightNumber);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET it via instance 1 (forwarded from 3)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/{{flight_on_instance3}}",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{flight_on_instance3}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance3Up\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance3\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance3\")));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET it via instance 2 (forwarded from 3)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/{{flight_on_instance3}}",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{flight_on_instance3}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance3Up\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance3\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance3\")));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Instance 3 finds instance 1's and instance 2's flights",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance3}}/api/scheduled-flights/{{flight_on_instance1}}",
+              "host": [
+                "{{instance3}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{flight_on_instance1}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance3Up\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance1\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance1\")));",
+                  "  pm.sendRequest({ url: pm.environment.get(\"instance3\") + \"/api/scheduled-flights/\" + pm.environment.get(\"flight_on_instance2\"),",
+                  "                   header: [{ key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") }] }, (err, res) => {",
+                  "    pm.test(\"instance 2's flight via instance 3: 200 from peer instance 2\", () => {",
+                  "      pm.expect(res.code).to.eql(200);",
+                  "      pm.expect(res.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance2\"));",
+                  "    });",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Every instance sees 2 healthy peers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance3Up\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const env = k => pm.environment.get(k);",
+                  "  const peersOf = body => body.endpoints.filter(e => e.group === \"flight-operations peer\");",
+                  "  pm.test(\"instance 1: 2 healthy peers\", () => {",
+                  "    const peers = peersOf(pm.response.json());",
+                  "    pm.expect(peers.map(p => p.url)).to.have.members([env(\"instance2\"), env(\"instance3\")]);",
+                  "    pm.expect(peers.every(p => p.healthy)).to.eql(true);",
+                  "  });",
+                  "  [\"instance2\", \"instance3\"].forEach(name => pm.sendRequest({ url: env(name) + \"/api/cluster/health\",",
+                  "      header: [{ key: \"Authorization\", value: \"Bearer \" + env(\"adminToken\") }] }, (err, res) => {",
+                  "    pm.test(name + \": 2 healthy peers\", () => {",
+                  "      const peers = peersOf(res.json());",
+                  "      pm.expect(peers.length).to.eql(2);",
+                  "      pm.expect(peers.every(p => p.healthy)).to.eql(true);",
+                  "    });",
+                  "  }));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const url = pm.environment.get('instance3');",
+              "if (!url) { pm.variables.set('instance3Up', false); } else {",
+              "  pm.sendRequest({ url: url + '/actuator/health', method: 'GET' }, (err, res) => {",
+              "    pm.variables.set('instance3Up', !err && res && res.code === 200);",
+              "  });",
+              "}"
+            ]
+          }
         }
       ]
     },
