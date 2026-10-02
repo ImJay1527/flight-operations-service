@@ -29,14 +29,14 @@ public class AuthTokenFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String header = request.getHeader("Authorization");
         if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
-            String jwt = header.substring(7);
-            if (jwtUtils.isValid(jwt)) {
-                List<SimpleGrantedAuthority> authorities = Arrays.stream(jwtUtils.getRoles(jwt).split(","))
+            jwtUtils.parse(header.substring(7)).ifPresent(claims -> {
+                String roles = claims.get("role", String.class);
+                List<SimpleGrantedAuthority> authorities = Arrays.stream(roles == null ? new String[0] : roles.split(","))
                         .map(r -> new SimpleGrantedAuthority("ROLE_" + r.trim()))
                         .toList();
                 SecurityContextHolder.getContext().setAuthentication(
-                        new UsernamePasswordAuthenticationToken(jwtUtils.getSubject(jwt), null, authorities));
-            }
+                        new UsernamePasswordAuthenticationToken(claims.getSubject(), null, authorities));
+            });
         }
         chain.doFilter(request, response);
     }

@@ -11,18 +11,33 @@ Other services: [`aircraft-maintenance-service`](../aircraft-maintenance-service
 ## Run
 
 ```bash
-# one standalone replica, plain HTTP, H2 in memory (port 8083) - handy while developing
+# one standalone instance, plain HTTP, H2 in memory (port 8083) - handy while developing
 ./mvnw spring-boot:run
 
 # certificates for HTTPS (once; output in certs/, which is git-ignored)
 ./scripts/generate-dev-certs.sh
 
-# whole system, 2 replicas per service (needs the 3 repos side by side)
+# 2 instances without Docker (8083, 8093); Ctrl+C stops both. Add --tls for HTTPS, -n 3 for a third instance.
+./scripts/run-local.sh
+
+# whole system, 2 instances per service (needs the 3 repos side by side)
 docker compose up --build
 
-# only the 2 flight-ops replicas (enough to demo peer-to-peer queries)
+# only the 2 flight-ops instances (enough to demo peer-to-peer queries)
 docker compose up --build flightops-1 flightops-2
+
+# scale-up: 3 flight-ops instances
+docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build flightops-1 flightops-2 flightops-3
+
+# load test (k6 in Docker, 1 CPU per instance); results in loadtest/results/
+./loadtest/run.sh 2
+./loadtest/run.sh 3
 ```
+
+**VS Code:** Run and Debug panel → "Flight Ops: 2 instances (HTTP)" or "(HTTPS)" starts both instances
+(`.vscode/launch.json`).
+
+Port scheme and scaling decisions: [docs/architecture.md](docs/architecture.md).
 
 In docker-compose the flight-ops replicas serve **HTTPS only**: https://localhost:8083 and https://localhost:8093.
 Swagger UI: https://localhost:8083/swagger-ui.html
@@ -34,8 +49,8 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 ## How the distribution works
 
-* **Sharding**: a flight is stored on the replica that created it. In the compose file `flightops-1` loads sample
-  shard 1 and `flightops-2` shard 2.
+* **Sharding**: a flight is stored on the instance that created it. The 10 sample flights are split across the
+  instances (`BOOTSTRAP_SHARD` of `SHARD_COUNT`).
 * **Peer-to-peer reads**: a GET answers from the local DB and then asks every peer on `/internal/flights/**`.
   Results are merged and de-duplicated by `flightNumber`. Internal endpoints answer from the local shard only, so
   there are no loops.

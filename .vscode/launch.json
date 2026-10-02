@@ -1,0 +1,86 @@
+{
+    // Run and Debug panel -> pick a compound to start both instances at once.
+    // HTTPS variants need the certificates first: ./scripts/generate-dev-certs.sh
+    // Instances of the other services are expected on 8081/8091 (aircraft) and 8082/8092 (airports).
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "flightops-1 (HTTP :8083)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PORT": "8083",
+                "PEERS": "http://localhost:8093",
+                "BOOTSTRAP_SHARD": "1",
+                "SHARD_COUNT": "2",
+                "AIRCRAFT_SERVICE_URLS": "http://localhost:8081,http://localhost:8091",
+                "AIRPORTS_ROUTES_SERVICE_URLS": "http://localhost:8082,http://localhost:8092"
+            }
+        },
+        {
+            "type": "java",
+            "name": "flightops-2 (HTTP :8093)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PORT": "8093",
+                "PEERS": "http://localhost:8083",
+                "BOOTSTRAP_SHARD": "2",
+                "SHARD_COUNT": "2",
+                "AIRCRAFT_SERVICE_URLS": "http://localhost:8091,http://localhost:8081",
+                "AIRPORTS_ROUTES_SERVICE_URLS": "http://localhost:8092,http://localhost:8082"
+            }
+        },
+        {
+            "type": "java",
+            "name": "flightops-1 (HTTPS :8083)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "SPRING_PROFILES_ACTIVE": "tls",
+                "PORT": "8083",
+                "PEERS": "https://localhost:8093",
+                "BOOTSTRAP_SHARD": "1",
+                "SHARD_COUNT": "2",
+                "AIRCRAFT_SERVICE_URLS": "http://localhost:8081,http://localhost:8091",
+                "AIRPORTS_ROUTES_SERVICE_URLS": "http://localhost:8082,http://localhost:8092"
+            }
+        },
+        {
+            "type": "java",
+            "name": "flightops-2 (HTTPS :8093)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "SPRING_PROFILES_ACTIVE": "tls",
+                "PORT": "8093",
+                "PEERS": "https://localhost:8083",
+                "BOOTSTRAP_SHARD": "2",
+                "SHARD_COUNT": "2",
+                "AIRCRAFT_SERVICE_URLS": "http://localhost:8091,http://localhost:8081",
+                "AIRPORTS_ROUTES_SERVICE_URLS": "http://localhost:8092,http://localhost:8082"
+            }
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Flight Ops: 2 instances (HTTP)",
+            "configurations": ["flightops-1 (HTTP :8083)", "flightops-2 (HTTP :8093)"],
+            "stopAll": true
+        },
+        {
+            "name": "Flight Ops: 2 instances (HTTPS)",
+            "configurations": ["flightops-1 (HTTPS :8083)", "flightops-2 (HTTPS :8093)"],
+            "stopAll": true
+        }
+    ]
+}

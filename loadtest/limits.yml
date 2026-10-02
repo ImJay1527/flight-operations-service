@@ -1,0 +1,9 @@
+# Load-test override: every flight-ops instance gets 1 CPU and 768 MB, to simulate one small machine per instance.
+# Without limits all containers share the host's cores and adding an instance shows nothing about scaling.
+services:
+  flightops-1:
+    cpus: 1.0
+    mem_limit: 768m
+  flightops-2:
+    cpus: 1.0
+    mem_limit: 768m

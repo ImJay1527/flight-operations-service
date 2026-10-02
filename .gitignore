@@ -1,7 +1,9 @@
 target/
 .idea/
 *.iml
-.vscode/
+.vscode/*
+!.vscode/launch.json
+logs/
 .env
 *.log
 HELP.md

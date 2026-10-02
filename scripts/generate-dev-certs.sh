@@ -6,7 +6,7 @@
 #   certs/truststore.p12   contains only the CA certificate; used by clients to verify servers
 #   certs/<svc>.p12        key + certificate (signed by the CA) for each service
 #
-# Each service certificate is valid for localhost, 127.0.0.1 and the docker-compose hostnames <svc>-1 / <svc>-2.
+# Each service certificate is valid for localhost, 127.0.0.1 and the docker-compose hostnames <svc>-1 .. <svc>-3.
 # Usage: ./scripts/generate-dev-certs.sh            (password defaults to "changeit", override with SSL_PASSWORD)
 set -euo pipefail
 
@@ -34,7 +34,7 @@ for svc in "${SERVICES[@]}"; do
   keytool -certreq -alias "$svc" -keystore "$svc.p12" -storepass "$PASS" -file "$svc.csr"
   keytool -gencert -alias ca -keystore ca.p12 -storepass "$PASS" -rfc -validity 825 \
     -infile "$svc.csr" -outfile "$svc.crt" \
-    -ext "SAN=dns:localhost,ip:127.0.0.1,dns:$svc-1,dns:$svc-2" \
+    -ext "SAN=dns:localhost,ip:127.0.0.1,dns:$svc-1,dns:$svc-2,dns:$svc-3" \
     -ext "KU=digitalSignature,keyEncipherment" -ext "EKU=serverAuth,clientAuth"
   # install the chain (CA first, then the signed certificate as reply to the key entry)
   keytool -importcert -noprompt -alias aisafe-ca -file ca.crt -keystore "$svc.p12" -storepass "$PASS"

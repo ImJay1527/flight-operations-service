@@ -11,13 +11,15 @@ import pt.isep.sidis.flightops.security.SystemUser;
 import pt.isep.sidis.flightops.security.SystemUserRepository;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Seeds users and sample flights. Route IDs, registrations and model data must match the bootstrap data of the
  * other two services (docs/service-contracts.md, "Shared bootstrap data").
  *
- * <p>Sharding of the sample data: every replica loads the users, but each replica only loads the flights of its own
- * shard ({@code flightops.bootstrap.shard} = 1 or 2), so a peer query is needed to see all of them.
+ * <p>Sharding of the sample data: every instance loads the users, but the 10 sample flights are split across the
+ * instances. Instance {@code shard} (1..shard-count) loads flights number i where {@code i % shard-count == shard - 1},
+ * so a peer query is needed to see all of them. {@code shard = 0} loads everything (standalone instance).
  */
 @Component
 public class Bootstrapper implements CommandLineRunner {
@@ -34,13 +36,20 @@ public class Bootstrapper implements CommandLineRunner {
     private final ScheduledFlightRepository flightRepository;
     private final PasswordEncoder passwordEncoder;
     private final int shard;
+    private final int shardCount;
 
     public Bootstrapper(SystemUserRepository userRepository, ScheduledFlightRepository flightRepository,
-                        PasswordEncoder passwordEncoder, @Value("${flightops.bootstrap.shard:0}") int shard) {
+                        PasswordEncoder passwordEncoder,
+                        @Value("${flightops.bootstrap.shard:0}") int shard,
+                        @Value("${flightops.bootstrap.shard-count:2}") int shardCount) {
+        if (shard < 0 || shard > shardCount) {
+            throw new IllegalArgumentException("flightops.bootstrap.shard must be between 0 and " + shardCount);
+        }
         this.userRepository = userRepository;
         this.flightRepository = flightRepository;
         this.passwordEncoder = passwordEncoder;
         this.shard = shard;
+        this.shardCount = shardCount;
     }
 
     @Override
@@ -64,27 +73,29 @@ public class Bootstrapper implements CommandLineRunner {
         if (flightRepository.count() > 0) return;
         LocalDateTime now = LocalDateTime.now();
 
-        // shard 1 (or a single standalone instance, shard 0)
-        if (shard == 0 || shard == 1) {
-            save(OPO_LIS, "CS-TPA", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(90), 45);
-            save(LIS_MAD, "CS-TPB", "737 MAX", B737_BURN, "LIS", "MAD", 502.0, now.minusDays(85), 80);
-            save(MAD_OPO, "CS-TPC", "A320neo", A320_BURN, "MAD", "OPO", 420.0, now.minusDays(80), 70);
-            save(OPO_LIS, "CS-TPB", "737 MAX", B737_BURN, "OPO", "LIS", 277.0, now.minusDays(75), 45);
-            save(LIS_MAD, "CS-TPA", "A320neo", A320_BURN, "LIS", "MAD", 502.0, now.minusDays(70), 80);
-        }
-        // shard 2
-        if (shard == 0 || shard == 2) {
-            save(MAD_OPO, "CS-TPA", "A320neo", A320_BURN, "MAD", "OPO", 420.0, now.minusDays(60), 70);
-            save(OPO_LIS, "CS-TPC", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(45), 45);
-            save(LIS_MAD, "CS-TPC", "A320neo", A320_BURN, "LIS", "MAD", 502.0, now.minusDays(30), 80);
-            save(OPO_LIS, "CS-TPA", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(15), 45);
-            save(LIS_MAD, "CS-TPB", "737 MAX", B737_BURN, "LIS", "MAD", 502.0, now.plusDays(5), 80);
+        List<ScheduledFlight> sample = List.of(
+                flight(OPO_LIS, "CS-TPA", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(90), 45),
+                flight(LIS_MAD, "CS-TPB", "737 MAX", B737_BURN, "LIS", "MAD", 502.0, now.minusDays(85), 80),
+                flight(MAD_OPO, "CS-TPC", "A320neo", A320_BURN, "MAD", "OPO", 420.0, now.minusDays(80), 70),
+                flight(OPO_LIS, "CS-TPB", "737 MAX", B737_BURN, "OPO", "LIS", 277.0, now.minusDays(75), 45),
+                flight(LIS_MAD, "CS-TPA", "A320neo", A320_BURN, "LIS", "MAD", 502.0, now.minusDays(70), 80),
+                flight(MAD_OPO, "CS-TPA", "A320neo", A320_BURN, "MAD", "OPO", 420.0, now.minusDays(60), 70),
+                flight(OPO_LIS, "CS-TPC", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(45), 45),
+                flight(LIS_MAD, "CS-TPC", "A320neo", A320_BURN, "LIS", "MAD", 502.0, now.minusDays(30), 80),
+                flight(OPO_LIS, "CS-TPA", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(15), 45),
+                flight(LIS_MAD, "CS-TPB", "737 MAX", B737_BURN, "LIS", "MAD", 502.0, now.plusDays(5), 80));
+
+        for (int i = 0; i < sample.size(); i++) {
+            if (shard == 0 || i % shardCount == shard - 1) {
+                flightRepository.save(sample.get(i));
+            }
         }
     }
 
-    private void save(String routeId, String registration, String model, double burnRate,
-                      String origin, String destination, double distanceKm, LocalDateTime departure, int minutes) {
-        flightRepository.save(new ScheduledFlight(routeId, registration, model, origin, destination,
-                distanceKm, burnRate, departure, departure.plusMinutes(minutes)));
+    private ScheduledFlight flight(String routeId, String registration, String model, double burnRate,
+                                   String origin, String destination, double distanceKm,
+                                   LocalDateTime departure, int minutes) {
+        return new ScheduledFlight(routeId, registration, model, origin, destination,
+                distanceKm, burnRate, departure, departure.plusMinutes(minutes));
     }
 }
