@@ -31,6 +31,7 @@ class ScheduledFlightServiceTest {
     @Mock RouteDirectory airportsRoutesClient;
     @Mock FlightQueryService flightQueryService;
     @Mock PeerClient peers;
+    @Mock AircraftBookingLocks aircraftBookingLocks;
 
     @InjectMocks ScheduledFlightService service;
 

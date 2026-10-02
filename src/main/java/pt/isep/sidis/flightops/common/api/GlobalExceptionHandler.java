@@ -45,6 +45,12 @@ public class GlobalExceptionHandler {
                 "Concurrency conflict: the record was modified by another user. Please refresh your data and try again.");
     }
 
+    // 409 - another booking for the same aircraft held the aircraft lock for too long (see AircraftBookingLocks)
+    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, String>> handleLockTimeout(org.springframework.dao.PessimisticLockingFailureException ex) {
+        return error(HttpStatus.CONFLICT, "Another booking for this aircraft is in progress. Please try again.");
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, String>> handleNotReadable(HttpMessageNotReadableException ex) {
         return error(HttpStatus.BAD_REQUEST, "Malformed JSON request or invalid data type/enum value provided.");

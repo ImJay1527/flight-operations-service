@@ -110,8 +110,8 @@ With a load balancer and replication factor 2, the measured scenario (one instan
 ### In one sentence
 
 Every flight has **exactly one owner** (the instance that created it); reads of a single flight are always answered
-by its owner, so they are up to date; rules that span several instances (no double-booking of an aircraft) are only
-checked **best-effort**, and during failures the system prefers **availability** over completeness (AP in CAP).
+by its owner, so they are up to date; the "no double-booking" rule is **guaranteed on one instance** but only
+**best-effort across instances**, and during failures the system prefers **availability** over completeness (AP in CAP).
 
 ### How data is placed
 
@@ -132,24 +132,31 @@ checked **best-effort**, and during failures the system prefers **availability**
 | Read your own write | **Yes**, from any instance | The write is committed in the owner's database before the `201`; any instance finds it there |
 | Cancel a flight | **Applied once**, by the owner; a second cancel is `409` | Forwarded to the owner (single writer per flight), `@Version` optimistic locking, `PATCH` never retried |
 | Lists and reports (flights of an aircraft, departures, utilization, fuel) | Up to date **for the reachable instances**; **partial** while an instance is down | Scatter-gather over all instances; an unreachable peer is skipped (logged) instead of failing the whole request |
-| "An aircraft is never in two flights at the same time" | **Best effort only** - see below | The rule spans instances, and there is no distributed lock |
+| "An aircraft is never in two flights at the same time" | **Guaranteed** for bookings on the same instance; **best effort** across instances - see below | Per-aircraft lock on each instance; no distributed lock between instances |
 
 ### The weak spot: double-booking an aircraft
 
-Before saving a new flight, the receiving instance checks for overlapping flights of the same aircraft:
+Before saving a new flight, the receiving instance:
 
-1. on its **own** database, with a `PESSIMISTIC_WRITE` lock on the overlapping rows, and
-2. on its **peers**, by asking them for that aircraft's active flights.
+1. **locks the aircraft** on its own database: a row per aircraft in `aircraft_booking_lock`, locked with
+   `SELECT ... FOR UPDATE` until the booking's transaction commits (`services.AircraftBookingLocks`). A second
+   booking for the same aircraft on this instance waits, and then sees the first one's flight;
+2. checks its **own** database for overlapping flights of that aircraft, and
+3. checks its **peers**, by asking them for that aircraft's active flights.
+
+**Fixed: two bookings at the same moment on the same instance.** Locking the overlapping *flights* (the PSOFT
+monolith's approach) is not enough: when there is no overlapping flight yet, there is nothing to lock, so both
+bookings passed the check. `ConcurrentBookingTest` sends 2 simultaneous overlapping bookings, 20 times: before the
+fix **both succeeded in all 20 rounds**; with the aircraft lock exactly one succeeds every time (also checked over
+HTTP on PostgreSQL: 20 × "201 + 409"). If the lock can't be obtained within 10 s the booking gets a `409`
+"another booking for this aircraft is in progress".
 
 A double booking can still happen when:
 
 * **two requests for the same aircraft arrive at the same moment on different instances**: each checks the other
   before the other has saved;
 * **a peer is down**: its flights are skipped by the check (availability first), so a booking that overlaps one of
-  them is accepted;
-* **two requests arrive at the same moment on the same instance**: the lock only covers flights that *already
-  exist*; when there is no overlapping flight yet there is nothing to lock, so both can pass the check. (This one was
-  already present in the PSOFT monolith.)
+  them is accepted.
 
 This is the price of choosing availability: bookings keep working with an instance down. The overlap is not lost or
 hidden: both flights exist and can be listed for that aircraft.
@@ -157,11 +164,9 @@ hidden: both flights exist and can be listed for that aircraft.
 **How it could be made strongly consistent** (not implemented):
 
 * **One owner per aircraft**: send every booking for an aircraft to the instance chosen by a hash of its
-  registration (consistent hashing). All flights of an aircraft then live on one instance and the check is local.
+  registration (consistent hashing). All flights of an aircraft then live on one instance, where the aircraft lock
+  above already makes the check exact.
   This also removes the fan-out for per-aircraft reads (see "Horizontal scaling").
-* **Lock the aircraft, not the flights**: e.g. a row per aircraft locked with `SELECT ... FOR UPDATE`, or a PostgreSQL
-  advisory lock on the registration, so concurrent bookings on one instance are serialised even when no flight
-  exists yet.
 * **Refuse instead of guess**: reject a booking (`503`) while a peer is unreachable, which turns the system from AP to
   CP for writes: always correct, but bookings stop during a failure.
 
@@ -172,7 +177,7 @@ With one instance down (a partition from the others' point of view):
 * the other instances keep serving **their own data** and accept **new bookings** (Availability);
 * the down instance's flights are **not visible** (404 for single reads, missing from lists) instead of the whole
   request failing (Partition tolerance);
-* consistency is weakened only for the cross-instance overlap rule above.
+* consistency is weakened only for the cross-instance overlap rule above (bookings on the same instance stay exact).
 
 When the instance comes back, nothing has to be reconciled: no other instance ever held a copy of its data, so its
 flights are simply visible again (measured in "Availability while an instance fails" above, and checked by the

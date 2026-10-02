@@ -84,7 +84,8 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
   * Status: `GET /api/cluster/health` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) lists every peer / remote instance
     with its circuit state and failure count. Settings: `sidis.resilience.*` in `application.properties`.
 * **Consistency**: every flight has exactly one owner (no copies), so single reads are up to date; lists are partial
-  while an instance is down; the "no double-booking" rule is only best-effort across instances (AP in CAP).
+  while an instance is down; "no double-booking" is guaranteed on one instance (per-aircraft lock) and best-effort
+  across instances (AP in CAP).
   Details, the known weak spots and how to fix them: [docs/architecture.md#consistency-model](docs/architecture.md#consistency-model).
 
 ## Security

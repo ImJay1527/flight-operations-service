@@ -30,6 +30,7 @@ public class ScheduledFlightService {
     private final RouteDirectory airportsRoutesClient;
     private final FlightQueryService flightQueryService;
     private final PeerClient peers;
+    private final AircraftBookingLocks aircraftBookingLocks;
 
     @Transactional
     public FlightView scheduleFlight(String routeId, String aircraftRegistration,
@@ -77,7 +78,11 @@ public class ScheduledFlightService {
         LocalDateTime bufferedDeparture = departureTime.minusMinutes(TURNAROUND_BUFFER_MINUTES);
         LocalDateTime bufferedArrival = arrivalTime.plusMinutes(TURNAROUND_BUFFER_MINUTES);
 
-        // Local shard: pessimistic lock, as in the monolith.
+        // Bookings of the same aircraft on this instance run one after the other from here until commit, so the
+        // overlap check below always sees a flight that a concurrent booking has just saved (see AircraftBookingLocks).
+        aircraftBookingLocks.lock(aircraft.registrationNumber());
+
+        // Local shard
         if (!scheduledFlightRepository.findOverlappingFlightsWithLock(
                 aircraft.registrationNumber(), bufferedDeparture, bufferedArrival).isEmpty()) {
             throw new IllegalStateException("The aircraft is already scheduled...");
