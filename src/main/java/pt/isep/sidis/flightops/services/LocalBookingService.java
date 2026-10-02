@@ -11,26 +11,29 @@ import pt.isep.sidis.flightops.clients.RouteDirectory;
 import pt.isep.sidis.flightops.clients.RouteInfo;
 import pt.isep.sidis.flightops.domain.FlightStatus;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
+import pt.isep.sidis.flightops.replication.ReplicationOutbox;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 
 import java.time.LocalDateTime;
 
 /**
- * Books a flight on this instance: the scheduling rules, the per-aircraft lock and the overlap checks. Used for
- * aircraft this instance owns (directly, or via POST /internal/flights from a peer) and as the fallback when the
- * owner can't be reached.
+ * Changes made on this instance. Booking: the scheduling rules, the per-aircraft lock and the overlap checks; used for
+ * aircraft this instance holds (directly, or via POST /internal/flights from a peer) and as the fallback when no
+ * instance holding the aircraft can be reached. Every change is queued for the flight's other copies in the same
+ * transaction.
  */
 @Service
 @RequiredArgsConstructor
 public class LocalBookingService {
 
-    private static final int TURNAROUND_BUFFER_MINUTES = 30;
+    public static final int TURNAROUND_BUFFER_MINUTES = 30;
 
     private final ScheduledFlightRepository scheduledFlightRepository;
     private final AircraftDirectory aircraftClient;
     private final RouteDirectory airportsRoutesClient;
     private final FlightQueryService flightQueryService;
     private final AircraftBookingLocks aircraftBookingLocks;
+    private final ReplicationOutbox replicationOutbox;
 
     @Transactional
     public FlightView book(String routeId, String aircraftRegistration,
@@ -99,6 +102,21 @@ public class LocalBookingService {
                 route.routeId(), aircraft.registrationNumber(), modelName,
                 origin.iataCode(), destination.iataCode(), route.distanceKm(), aircraft.fuelBurnRate(),
                 departureTime, arrivalTime);
-        return FlightView.of(scheduledFlightRepository.save(newFlight));
+        ScheduledFlight saved = scheduledFlightRepository.save(newFlight);
+        replicationOutbox.flightChanged(saved);
+        return FlightView.of(saved);
+    }
+
+    /** Cancels this instance's copy of a flight; null if it is not here. */
+    @Transactional
+    public FlightView cancel(String flightNumber) {
+        return scheduledFlightRepository.findById(flightNumber)
+                .map(flight -> {
+                    flight.cancel();
+                    ScheduledFlight saved = scheduledFlightRepository.save(flight);
+                    replicationOutbox.flightChanged(saved);
+                    return FlightView.of(saved);
+                })
+                .orElse(null);
     }
 }

@@ -71,20 +71,28 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 ## How the distribution works
 
-* **Sharding by aircraft** (P1 p.15): every instance knows all instances (`flightops.cluster`); the owner of an
-  aircraft is chosen by rendezvous hashing of its registration. A booking is stored on the owner, forwarded there if
-  it arrived elsewhere (`X-Stored-On` says where); `GET /api/cluster/owner/{registration}` shows the owner.
-  The 10 sample flights are loaded by the owners of their aircraft.
+* **Sharding by aircraft** (P1 p.15): every instance knows all instances (`flightops.cluster`) and ranks them for
+  each aircraft by rendezvous hashing of its registration. A booking is made on the first of them, the **owner**,
+  forwarded there if it arrived elsewhere (`X-Stored-On` says where); `GET /api/cluster/owner/{registration}` shows
+  the owner and the backup.
+* **Replication** (P1 p.2 "redundancy-based fault tolerance"): every flight is also kept on the second instance of
+  the ranking, the **backup** (`flightops.replication.factor=2`, env `REPLICATION_FACTOR`; `X-Replicas` lists both).
+  A change is saved together with an outbox task in one transaction and copied to the other holder right after the
+  commit, retried while it is down; copies carry a `revision`, the newest wins. At startup (before reporting ready)
+  and every 60 s each instance fetches the flights it should hold from its peers, so a restarted instance catches up
+  even with an empty database. If the owner is down, its backup takes the aircraft's bookings.
+  `GET /api/cluster/health` shows `replicationBacklog` (copies still waiting per instance).
 * **Peer-to-peer reads**: a GET answers from the local DB and then asks the peers on `/internal/flights/**`:
   lists ask **all peers at the same time** (P1 p.12), a single flight asks them one by one until found (PL3 p.11).
-  Results are merged and de-duplicated by `flightNumber`. Internal endpoints answer from the local shard only, so
-  there are no loops. A list built while a peer was unreachable is still `200`, with `X-Partial-Result: true` and
-  `X-Unreachable-Peers: n`.
+  Results are merged and de-duplicated by `flightNumber` (newest copy wins). Internal endpoints answer from local
+  data only, so there are no loops. A list built while a peer was unreachable is still `200` with
+  `X-Unreachable-Peers: n`; `X-Partial-Result: true` is added only when data may really be missing (as many
+  instances down as there are copies).
   Try: `GET http://localhost:8083/api/aircraft-utilization` and `GET http://localhost:8093/api/aircraft-utilization`.
-  Both return all 10 sample flights, although each instance only stores those of its own aircraft.
-* **Fault tolerance**: an unreachable peer is skipped (logged as a warning). If a single-item lookup can't be found
-  *and* a peer was unreachable, the answer is still `404`, as the practical session expects (PL3 p.11, p.16 test 03),
-  but the error message says how many peers could not be reached, because the item may exist there.
+  Both return the 10 sample flights once, although each is stored on two instances.
+* **Fault tolerance**: an unreachable peer is skipped (logged as a warning). A stopped instance's flights are served
+  from their copies. Only if no instance holding a flight answers is a single lookup `404` (PL3 p.11), with the
+  number of unreachable peers in the message, because the flight may exist there.
 * **Calls to other services** (`AircraftClient`, `AirportsRoutesClient`) go round-robin over their instances and
   fail over to the next one on timeout or 5xx. If none can be reached the answer is `404`, with
   "(… could not be reached)" in the message.
@@ -100,9 +108,10 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
     for a single flight rotates per request; calls to other services go round-robin.
   * Status: `GET /api/cluster/health` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) lists every peer / remote instance
     with its circuit state and failure count. Settings: `sidis.resilience.*` in `application.properties`.
-* **Consistency**: every flight has exactly one owner (no copies), so single reads are up to date; lists are partial
-  while an instance is down; "no double-booking" is guaranteed while the aircraft's owner is reachable (all its
-  bookings meet there, under a per-aircraft lock) and best effort while it is down (AP in CAP).
+* **Consistency**: eventual - the other copy of a change arrives shortly after it is made (outbox, revisions,
+  catch-up). "No double-booking" is guaranteed while one holder takes an aircraft's bookings (owner, or its backup
+  while the owner is down, under a per-aircraft lock); if the two holders are cut off from each other, an overlap is
+  reported as a replication conflict instead of being prevented (AP in CAP).
   Details, the known weak spots and how to fix them: [docs/architecture.md#consistency-model](docs/architecture.md#consistency-model).
 
 ## Security
@@ -126,15 +135,16 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 | Test | What it covers |
 |---|---|
-| `services/*Test`, `resilience/*Test`, `cluster/ClusterTest`, `common/crypto/*Test` | Unit tests: forwarding/merge logic, scheduling rules, routing a booking to the aircraft's owner (and the fallbacks), retry/backoff, circuit breaker, rendezvous hashing (agreement, spread, minimal movement), encryption |
+| `services/*Test`, `resilience/*Test`, `cluster/ClusterTest`, `common/crypto/*Test`, `replication/ReplicaStoreTest`, `api/*Test` | Unit tests: forwarding/merge logic, scheduling rules, routing a booking to the aircraft's owner (and to its backup when the owner is down), retry/backoff, circuit breaker, rendezvous hashing (agreement, spread, minimal movement, replica sets), applying copies (newest wins, any order, conflicts reported), encryption, fuel efficiency and utilization (ported from PSOFT) |
 | `ConcurrentBookingTest`, `EncryptionAtRestTest` | Real database: simultaneous bookings of one aircraft (exactly one succeeds), what is really stored (raw SQL shows only ciphertext) |
 | `SecurityIntegrationTest` | One instance: login, 401/403 rules, service-only `/internal/**` |
-| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP: local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 404, partial lists flagged, circuit open |
+| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP, replication off (the week-3 behaviour on its own): local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 404, partial lists flagged, circuit open |
+| `ReplicationIntegrationTest` | **Three real instances**, 2 copies of each flight: a booking copied to the backup, the owner stopped → its flights still readable and lists complete, bookings go to the backup, a cancel while it is down; the owner restarts with an empty database and catches up; the backup's outbox empties |
 
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (48 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (51 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -149,14 +159,14 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
 | Folder | PL3 p.16 test |
 |---|---|
 | 01 Local Data Access | 01: data on instance 1, asked from instance 1 → 200, `X-Data-Source: local` (no peer query) |
-| 02 Successful Forwarding | 02: data created on instance 2 only, asked from instance 1 → 200, `X-Data-Source: peer:…` |
-| 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, lists flagged `X-Partial-Result`, instance 2 reported down; then instance 2 restarted → trusted again, forwarding works, its data survived (PL3 p.14 automatic recovery) |
+| 02 Successful Forwarding | 02: data created on instance 2, asked from instance 1 → 200; `X-Data-Source: local` when instance 1 keeps a copy (2 instances, 2 copies), `peer:…` when it doesn't (3 instances, or `REPLICATION_FACTOR=1`) |
+| 03 Resilience | 03 + P1 p.2 redundancy: instance 2 stopped → its flights still 200 from their copies, lists complete (`X-Unreachable-Peers: 1`, no `X-Partial-Result`), a booking for its aircraft taken by the backup and queued in its outbox; instance 2 restarted → trusted again, has caught up with that booking, outbox empty (PL3 p.14 automatic recovery). With `REPLICATION_FACTOR=1`: 404 and `X-Partial-Result` as in PL3 p.16 |
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
-| 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower), forwarding success rate, peer health, both instances served requests |
+| 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower; skipped when every read is local because of the copies), forwarding success rate, peer health, both instances served requests |
 | 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped unless 3 instances run: `./scripts/run-local.sh -n 3 --stub` |
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
-| 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
+| 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
 and select "Flight Ops - local HTTPS (2 instances)". Postman must trust the dev CA: Settings → Certificates →

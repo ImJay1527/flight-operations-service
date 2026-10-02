@@ -11,8 +11,9 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
 /**
- * Flags incomplete answers (P1 p.12): if peers could not be reached while building a response, it still gets 200
- * with what the reachable instances had, plus {@code X-Partial-Result: true} and {@code X-Unreachable-Peers: n}.
+ * Flags answers built without some peers (P1 p.12 "partial response scenarios"). The response is still 200 with what
+ * the reachable instances had, plus {@code X-Unreachable-Peers: n}. {@code X-Partial-Result: true} is added only if
+ * data may really be missing, i.e. if every copy of some flight could be on the unreachable peers.
  */
 @RestControllerAdvice
 public class PartialResults implements ResponseBodyAdvice<Object> {
@@ -20,8 +21,9 @@ public class PartialResults implements ResponseBodyAdvice<Object> {
     public static final String PARTIAL_HEADER = "X-Partial-Result";
     public static final String UNREACHABLE_HEADER = "X-Unreachable-Peers";
     private static final String ATTRIBUTE = PartialResults.class.getName() + ".unreachable";
+    private static final String INCOMPLETE = PartialResults.class.getName() + ".incomplete";
 
-    public static void record(int unreachable) {
+    public static void record(int unreachable, boolean mayBeIncomplete) {
         RequestAttributes request = RequestContextHolder.getRequestAttributes();
         if (unreachable <= 0 || request == null) {
             return;
@@ -29,6 +31,9 @@ public class PartialResults implements ResponseBodyAdvice<Object> {
         Integer before = (Integer) request.getAttribute(ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
         // several peer queries in one request: report the worst one
         request.setAttribute(ATTRIBUTE, Math.max(before == null ? 0 : before, unreachable), RequestAttributes.SCOPE_REQUEST);
+        if (mayBeIncomplete) {
+            request.setAttribute(INCOMPLETE, Boolean.TRUE, RequestAttributes.SCOPE_REQUEST);
+        }
     }
 
     @Override
@@ -44,8 +49,10 @@ public class PartialResults implements ResponseBodyAdvice<Object> {
         Integer unreachable = attributes == null ? null
                 : (Integer) attributes.getAttribute(ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
         if (unreachable != null && unreachable > 0) {
-            response.getHeaders().set(PARTIAL_HEADER, "true");
             response.getHeaders().set(UNREACHABLE_HEADER, String.valueOf(unreachable));
+            if (attributes.getAttribute(INCOMPLETE, RequestAttributes.SCOPE_REQUEST) != null) {
+                response.getHeaders().set(PARTIAL_HEADER, "true");
+            }
         }
         return body;
     }

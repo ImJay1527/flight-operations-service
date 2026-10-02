@@ -5,7 +5,6 @@ import org.apache.hc.client5.http.ConnectTimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -17,7 +16,6 @@ import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
-import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 import pt.isep.sidis.flightops.resilience.CircuitOpenException;
 
 import java.net.ConnectException;
@@ -27,8 +25,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Bookings are sharded by aircraft (P1 p.15): a booking is made on the aircraft's owner ({@link Cluster#ownerOf}),
- * forwarded there if needed, so the owner's per-aircraft lock prevents double-booking across instances too.
+ * Bookings are sharded by aircraft (P1 p.15) and replicated: the aircraft's flights are kept on the instances
+ * {@link Cluster#replicasOf} returns. A booking is made on the first of them that can be reached - the owner, or
+ * its backup while the owner is down - so that instance's per-aircraft lock prevents double-booking across
+ * instances too. That instance then copies the flight to the others.
  */
 @Service
 @RequiredArgsConstructor
@@ -36,7 +36,6 @@ public class ScheduledFlightService {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduledFlightService.class);
 
-    private final ScheduledFlightRepository scheduledFlightRepository;
     private final AircraftDirectory aircraftClient;
     private final RouteDirectory airportsRoutesClient;
     private final FlightQueryService flightQueryService;
@@ -45,34 +44,41 @@ public class ScheduledFlightService {
     private final Cluster cluster;
 
     /**
-     * If the owner certainly did not get the request (connection refused, circuit open), the booking is made here
-     * instead - availability first (AP). If it was reached but did not answer in time the outcome is unknown: 503,
-     * rather than risking a second booking.
+     * Tries the aircraft's instances in order. One that certainly did not get the request (connection refused,
+     * circuit open) is skipped. One that was reached but did not answer in time leaves the outcome unknown: 503,
+     * rather than risking a second booking. If none can be reached, the booking is made here - availability first
+     * (AP) - and copied to them when they are back.
      */
     public Booking scheduleFlight(String routeId, String aircraftRegistration,
                                   LocalDateTime departureTime, LocalDateTime arrivalTime) {
-        String owner = cluster.ownerOf(aircraftRegistration);
-        if (owner.equals(cluster.self())) {
-            return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime), owner);
-        }
-        try {
-            FlightView flight = peers.postTo(owner, "/internal/flights",
-                    new InternalBookingRequest(routeId, aircraftRegistration, departureTime, arrivalTime), FlightView.class);
-            return new Booking(flight, owner);
-        } catch (HttpClientErrorException refused) {
-            throw ownersAnswer(refused);
-        } catch (HttpServerErrorException failed) {
-            throw new ServiceUnavailableException(owner + ": " + errorMessage(failed.getResponseBodyAsString()));
-        } catch (CircuitOpenException | ResourceAccessException e) {
-            if (e instanceof ResourceAccessException && !neverDelivered(e)) {
-                throw new ServiceUnavailableException("The instance that owns aircraft " + aircraftRegistration + " (" + owner
-                        + ") did not answer in time; the booking may or may not have been made. Check the aircraft's "
-                        + "flights before trying again.", e);
+        List<String> replicas = cluster.replicasOf(aircraftRegistration);
+        for (String instance : replicas) {
+            if (instance.equals(cluster.self())) {
+                return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime),
+                        instance, replicas);
             }
-            log.warn("Owner {} of aircraft {} unreachable ({}): booking it here instead (overlap check best effort)",
-                    owner, aircraftRegistration, e.getMessage());
-            return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime), cluster.self());
+            try {
+                FlightView flight = peers.postTo(instance, "/internal/flights",
+                        new InternalBookingRequest(routeId, aircraftRegistration, departureTime, arrivalTime), FlightView.class);
+                return new Booking(flight, instance, replicas);
+            } catch (HttpClientErrorException refused) {
+                throw ownersAnswer(refused);
+            } catch (HttpServerErrorException failed) {
+                throw new ServiceUnavailableException(instance + ": " + errorMessage(failed.getResponseBodyAsString()));
+            } catch (CircuitOpenException | ResourceAccessException e) {
+                if (e instanceof ResourceAccessException && !neverDelivered(e)) {
+                    throw new ServiceUnavailableException("The instance holding aircraft " + aircraftRegistration + " ("
+                            + instance + ") did not answer in time; the booking may or may not have been made. Check the "
+                            + "aircraft's flights before trying again.", e);
+                }
+                log.warn("{} (holds aircraft {}) unreachable ({}): trying the next instance that holds it",
+                        instance, aircraftRegistration, e.getMessage());
+            }
         }
+        log.warn("No instance holding aircraft {} reachable ({}): booking it here (overlap check best effort)",
+                aircraftRegistration, replicas);
+        return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime),
+                cluster.self(), replicas);
     }
 
     /** The owner's 4xx as the same error here, so the client gets the owner's status and message. */
@@ -116,9 +122,9 @@ public class ScheduledFlightService {
         return flightQueryService.findById(flightNumber);
     }
 
-    /** Cancels the flight on whichever instance holds it. */
+    /** Cancels the flight: here if this instance has a copy, otherwise on a peer that has one. */
     public FlightView cancelFlight(String flightNumber) {
-        FlightView local = cancelLocal(flightNumber);
+        FlightView local = localBookings.cancel(flightNumber);
         if (local != null) {
             return local;
         }
@@ -127,17 +133,6 @@ public class ScheduledFlightService {
             return remote.items().get(0);
         }
         throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
-    }
-
-    /** Cancels a flight stored on this instance; null if it is not here. */
-    @Transactional
-    public FlightView cancelLocal(String flightNumber) {
-        return scheduledFlightRepository.findById(flightNumber)
-                .map(flight -> {
-                    flight.cancel();
-                    return FlightView.of(scheduledFlightRepository.save(flight));
-                })
-                .orElse(null);
     }
 
     public List<FlightView> getUpcomingDepartures(String originIata, int hoursWindow) {

@@ -56,9 +56,11 @@ public class ScheduledFlightController {
                 dto.getArrivalTime()
         );
 
-        // X-Stored-On: the aircraft's owner, which stores the flight
+        // X-Stored-On: the instance that made the booking (the aircraft's owner, or its backup while the owner is down)
+        // X-Replicas: every instance that keeps a copy of the flight
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header("X-Stored-On", booking.storedOn())
+                .header("X-Replicas", String.join(",", booking.replicas()))
                 .body(assembler.toModel(booking.flight()));
     }
 

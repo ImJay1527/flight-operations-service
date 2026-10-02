@@ -6,6 +6,8 @@ Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Perform
 
 Three components, each running as **2 instances** with their **own database**. Instances of the same component
 forward GET requests to each other (peer forwarding); components call each other over HTTPS with a service token.
+Flight Operations keeps every flight on **two instances** (replication), so the data of a stopped instance stays
+available.
 Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
 `npx @mermaid-js/mermaid-cli -i <file>.mmd -o <file>.png -b white -s 2`.
 
@@ -25,17 +27,21 @@ Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
 
 ![Failure and recovery](diagrams/4-failure-and-recovery.png)
 
-### 5. A booking is stored on the aircraft's owner (P1 p.15, sharding by registration)
+### 5. A booking is made on the aircraft's owner and copied to its backup (P1 p.15, sharding by registration)
 
 ![Sharded booking](diagrams/5-booking-sharded.png)
+
+### 6. Replication: how a change reaches every copy (P1 p.11, eventual consistency)
+
+![Replication](diagrams/6-replication.png)
 
 ### Key architectural benefits (PL3 p.20)
 
 | Benefit | How this system provides it | Limit (honest) |
 |---|---|---|
-| **High availability**: the service continues if instances fail | 2 instances per component behind a load balancer (nginx: health-aware, fails over to the other instance); any instance answers any request (stateless JWT); retries, circuit breaker; Docker restarts an instance whose process stops; health checks bring a recovered instance back automatically | The flights stored on the failed instance are unavailable until it is back (no replication, by choice - PL3 p.24 Q3). Measured below. |
+| **High availability**: the service continues if instances fail | 2 instances per component behind a load balancer (nginx: health-aware, fails over to the other instance); any instance answers any request (stateless JWT); every flight kept on 2 instances, so a failed instance's data is still served from its copies; retries, circuit breaker; Docker restarts an instance whose process stops; a restarted instance catches up before taking traffic | With 2 copies, losing **both** holders of an aircraft at once makes its flights unavailable until one is back |
 | **Horizontal scalability**: add instances as load grows | Instance profiles + `docker-compose.scale-3.yml`; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins); requests spread by the load balancer | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
-| **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); the failure is contained to its share of the data | Instances of one component share the same code, so a bug can affect all of them |
+| **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); replication runs on its own thread, so a dead peer never slows down requests | Instances of one component share the same code, so a bug can affect all of them |
 | **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
 
 ## Performance (PL3 p.21)
@@ -66,6 +72,9 @@ local / forwarded (`X-Data-Source` header): 100 % of 61 000 checks passed (run o
 
 ### Availability while an instance fails
 
+*Measured on 2026-10-02 **before replication** (one copy of each flight). This is the measurement that showed the
+gap replication now closes; see the end of this section.*
+
 A steady 20 requests/s for 150 s, each asking for a random flight (half the flights are stored on each instance).
 Instance 2 is **killed** (like a crash) at ~30 s and started again at ~50 s; it is ready ~30–45 s later.
 `./loadtest/performance.sh availability` sends each request to a random instance;
@@ -83,9 +92,15 @@ balancer does that for every client: in the run through it **no request reached 
 (`fail_instance_down = 0`); nginx notices the failure on the first request, retries it on instance 1 and leaves
 instance 2 out for 10 s at a time. (The higher whole-run figure is also helped by a shorter outage in that run.)
 
-What still fails during the outage is the **flights stored on instance 2**: the reachable instance answers 404
-"could not be reached" for them. Instance 1's own data stays 100 % available the whole time, and recovery is
-automatic: as soon as instance 2 answers again, everything is back to 100 % within one 10-s window.
+What still failed during the outage was the **flights stored on instance 2**: the reachable instance answered 404
+"could not be reached" for them. Instance 1's own data stayed 100 % available the whole time, and recovery was
+automatic: as soon as instance 2 answered again, everything was back to 100 % within one 10-s window.
+
+**With replication** every flight is also on the other instance, so those reads are answered from the copy:
+`ReplicationIntegrationTest` and the Postman folder "03 Resilience" check that a stopped instance's flights are
+still returned (200, complete lists), that bookings for its aircraft go to the backup, and that the instance catches
+up when it restarts with an empty database. Re-run `./loadtest/performance.sh availability-lb` to measure the
+outage window again with replication on.
 
 ### What 99.9 % would need (slide: "with proper instance distribution and health monitoring")
 
@@ -96,9 +111,10 @@ data of the surviving instance, but not for the whole service. The three gaps an
 |---|---|---|
 | Clients send requests to a dead instance | 25 % → 50 % during the outage | **Done**: nginx load balancer (`lb/nginx.conf`), passive health checks + failover |
 | A crashed instance stays down | length of the outage | **Done** for crashes: `restart: unless-stopped` + container health check (a process that exits is back in ~12 s). A *killed* container or a dead machine still needs an orchestrator (Kubernetes / Swarm, PL3 p.25 "later") |
-| Each flight exists on one instance only | the other 50 % (404 for the dead instance's data) | **Not done, by choice**: replication (every flight on 2 instances) would close it, but the week-3 design keeps one owner per item (PL3 p.11, p.24 Q3). See "Consistency model" |
+| Each flight exists on one instance only | the other 50 % (404 for the dead instance's data) | **Done**: every flight is kept on 2 instances (owner + backup), copied through a transactional outbox and repaired by a catch-up at startup and every 60 s. See "Consistency model" |
 
-With replication factor 2 on top of the load balancer, the measured scenario (one instance down) would stay at ~100 %.
+With replication factor 2 on top of the load balancer, one instance down no longer makes any flight unavailable; what
+is left is the moment nginx takes to notice the failure (it retries that request on the other instance).
 
 ### Other considerations from the slide
 
@@ -108,8 +124,9 @@ With replication factor 2 on top of the load balancer, the measured scenario (on
 * **Caching**: forwarded lookups could be cached for a few seconds to save the extra hop, at the cost of possibly
   serving a stale status (e.g. a flight cancelled on the other instance a moment ago). Not done: correctness of the
   flight status was preferred over the ~4 ms saved.
-* **Geographic placement**: put the instances that forward to each other close together (same region), or replicate
-  the data to each region so reads stay local.
+* **Geographic placement**: put the instances that forward to each other close together (same region), or place
+  each aircraft's copies in different regions (rendezvous hashing could rank instances per region) so reads stay
+  local and a whole region can fail.
 
 ## Consistency model
 
@@ -117,45 +134,73 @@ With replication factor 2 on top of the load balancer, the measured scenario (on
 
 ### In one sentence
 
-Every flight has **exactly one owner**: the instance that owns its **aircraft** (sharding by registration). Reads of a
-single flight are always answered by its owner, so they are up to date; "no double-booking" is **guaranteed while
-the aircraft's owner is reachable**, and during failures the system prefers **availability** over completeness
-(AP in CAP).
+Every flight is kept on **two instances** - its aircraft's **owner** and a **backup** - and changes reach the other
+copy shortly after they are made (**eventual consistency**). Bookings of an aircraft are made on one instance at a
+time, so "no double-booking" is exact unless the two holders are cut off from each other; during failures the
+system prefers **availability** (AP in CAP).
 
 ### How data is placed
 
-* **Partitioned by aircraft, not replicated** (P1 p.15 "data-based sharding: partition by operational identifiers,
-  e.g. aircraft registration numbers"). Every instance knows the list of all instances (`flightops.cluster`) and
-  computes the owner of an aircraft with **rendezvous hashing** (highest SHA-256 of instance name + registration):
-  all instances agree without talking to each other, and adding an instance only moves the aircraft it wins.
-  A booking that arrives at another instance is **forwarded to the owner** (`POST /internal/flights`, diagram 5;
-  the response says where it was stored: `X-Stored-On`). There are no copies, so there are never two different
-  versions of the same flight - matching the practical session (PL3 p.24, quiz Q3: instances do **not** keep
-  identical copies of all data).
+* **Partitioned by aircraft** (P1 p.15 "data-based sharding: partition by operational identifiers, e.g. aircraft
+  registration numbers"). Every instance knows the list of all instances (`flightops.cluster`) and ranks them for
+  each aircraft with **rendezvous hashing** (SHA-256 of instance name + registration): all instances agree on the
+  ranking without talking to each other, and adding an instance only moves the aircraft it wins.
+* **Replicated** (P1 p.2 "redundancy-based fault tolerance", P1 p.10 "redundancy"). The first
+  `flightops.replication.factor` instances of the ranking (default **2**) keep the aircraft's flights: the first is
+  the **owner**, where bookings go; the second is the **backup** (`GET /api/cluster/owner/{reg}` shows both, and a
+  booking's `X-Replicas` header lists them). Not every instance holds everything: with 3 instances each one holds
+  about 2/3 of the aircraft (`ClusterTest`), matching the practical session's answer that instances do **not** keep
+  identical copies of all data (PL3 p.24, quiz Q3). With 2 instances the backup of every aircraft is the other one.
 * **No ID clashes.** Flight numbers are UUIDs, generated independently on each instance, so two instances can never
-  create the same id (PL3 p.18 "Data inconsistency: same ID on multiple instances").
+  create the same id (PL3 p.18 "Data inconsistency: same ID on multiple instances"). Sample flights get the same
+  fixed number on every instance that loads them, so their copies match.
 * **Snapshots of other services' data.** When a flight is scheduled, the aircraft model, route distance and airports
   are copied into it. They describe the flight *as scheduled* and are not updated if the aircraft or route changes
   later (deliberate: a scheduled flight keeps the data it was validated against).
+
+### How a change reaches the other copy (diagram 6)
+
+1. **Transactional outbox.** The instance that makes a change (booking or cancel) saves the flight *and* a task
+   "send flight F to instance B" in the **same database transaction** (`replication_outbox` table,
+   `ReplicationOutbox`). A change is therefore never stored without being queued for its other copy - not even if
+   the process crashes right after the commit.
+2. **Delivery.** `ReplicationSender` sends the flight's current state right after the commit
+   (`POST /internal/replicas`) and deletes the task. While B is down the task stays and is retried every second;
+   `GET /api/cluster/health` shows what is waiting (`replicationBacklog`).
+3. **Versions.** Every flight has a `revision` that grows with each change (a cancel raises it). A copy only replaces
+   the one an instance has if it is **newer** (higher revision; on a tie the later status, since a flight only goes
+   from SCHEDULED to CANCELED/COMPLETED). Applying the same copy twice, or old copies arriving late, changes nothing,
+   so all copies end up equal whatever order the messages arrive in (`ReplicaStoreTest`). PL3 p.18 names this
+   option: "data versioning".
+4. **Catch-up (anti-entropy).** At startup - *before* the instance reports ready - and then every 60 s, each
+   instance asks its peers for the flights it should hold (`GET /internal/replicas?for=<me>`) and applies whatever
+   it is missing or has an older version of. A restarted instance catches up even if it lost all its data
+   (in-memory H2), and a new instance fetches its share when added. This also repairs anything the outbox could
+   not deliver.
+
+The window of inconsistency is short: a copy normally arrives within milliseconds; while an instance is down, its
+copies arrive when it is back (in practice before it accepts traffic, thanks to the startup catch-up).
 
 ### What a client can rely on
 
 | Operation | Guarantee | Why |
 |---|---|---|
-| Read one flight (`GET /api/scheduled-flights/{n}`) | **Up to date** while its owner is reachable; otherwise `404` with "could not be reached" | Answered by the owner's database (locally or forwarded), never from a copy or cache |
-| Read your own write | **Yes**, from any instance | The write is committed in the owner's database before the `201`; any instance finds it there |
-| Cancel a flight | **Applied once**, by the owner; a second cancel is `409` | Forwarded to the owner (single writer per flight), `@Version` optimistic locking, `PATCH` never retried |
-| Lists and reports (flights of an aircraft, departures, utilization, fuel) | Up to date **for the reachable instances**; **partial** while an instance is down | Scatter-gather over all instances; an unreachable peer is skipped (logged) instead of failing the whole request |
-| "An aircraft is never in two flights at the same time" | **Guaranteed** while the aircraft's owner is reachable (all its bookings go there, wherever they arrive); **best effort** when the owner is down - see below | All bookings of an aircraft meet at its owner, where the per-aircraft lock serialises them |
+| Read one flight (`GET /api/scheduled-flights/{n}`) | **200 while at least one copy is reachable**; `404` only if no instance holding it answers | Answered from the local copy if there is one (`X-Data-Source: local`), else forwarded to a peer that has one |
+| Read your own write | **Yes**, from any instance | The write is committed on the instance that made it before the `201`; reads ask every instance, and duplicates are merged keeping the newest copy |
+| Cancel a flight | **Applied once per copy**; a second cancel is `409` | Made on one copy and replicated; `@Version` optimistic locking on each instance |
+| Lists and reports (flights of an aircraft, departures, utilization, fuel) | **Complete while fewer instances are down than there are copies** (one, with 2 copies); `X-Unreachable-Peers: n` says a peer did not answer, `X-Partial-Result: true` only when data may really be missing | Scatter-gather over all instances, duplicates merged (newest wins) |
+| "An aircraft is never in two flights at the same time" | **Guaranteed** while the aircraft's owner - or, if it is down, its backup - takes the bookings; **reported, not prevented** if the two holders are cut off from each other and both accept one | All bookings of an aircraft go to its first reachable holder, where the per-aircraft lock serialises them |
 
 ### The weak spot: double-booking an aircraft
 
-The booking is made on the aircraft's owner (forwarded there if it arrived elsewhere). The owner:
+The booking is made on the aircraft's **first reachable holder** (forwarded there if it arrived elsewhere). That
+instance:
 
 1. **locks the aircraft** on its own database: a row per aircraft in `aircraft_booking_lock`, locked with
    `SELECT ... FOR UPDATE` until the booking's transaction commits (`services.AircraftBookingLocks`). A second
    booking for the same aircraft on this instance waits, and then sees the first one's flight;
-2. checks its **own** database for overlapping flights of that aircraft, and
+2. checks its **own** database for overlapping flights of that aircraft - with replication this includes the
+   copies of the flights booked on the other holder, and
 3. checks its **peers**, by asking them for that aircraft's active flights.
 
 **Fixed: two bookings at the same moment on the same instance.** Locking the overlapping *flights* (the PSOFT
@@ -170,39 +215,39 @@ whose lock lets only one through. `TwoInstancesIntegrationTest` sends simultaneo
 aircraft to instance 1 *and* instance 2, 10 times: exactly one `201` and one `409` every time (Postman folder
 "09 Sharding by aircraft" does the same).
 
-A double booking can still happen only when **the aircraft's owner is down**: if the booking certainly did not reach
-it (connection refused, circuit open), it is made on the receiving instance instead (availability first) with the
-best-effort check of the reachable peers; when the owner is back, both flights exist. If the owner *was* reached but
-did not answer in time, the outcome is unknown, so the client gets `503 "the booking may or may not have been made"`
-instead of risking a second booking.
+**Owner down: the backup takes over.** If the booking certainly did not reach the owner (connection refused,
+circuit open), the next holder - the backup - makes it. It holds copies of the aircraft's flights, so its overlap
+check is just as complete as the owner's would have been. If the owner *was* reached but did not answer in time,
+the outcome is unknown, so the client gets `503 "the booking may or may not have been made"` instead of risking a
+second booking.
 
-This is the price of choosing availability: bookings keep working with an instance down. The overlap is not lost or
-hidden: both flights exist and can be listed for that aircraft.
+**What remains: a network partition.** If owner and backup are both running but cannot reach each other, a client
+on each side can book the same aircraft for the same time, and both bookings succeed (availability first). When the
+copies meet, the instance receiving the second one notices the overlap and logs
+`REPLICATION CONFLICT: aircraft ... has overlapping flights ...` (metric `flightops.replication{event=conflict}`).
+Both flights are kept - nothing is lost or silently overwritten - and an operator cancels one of them.
 
-**How it could be made fully consistent** (not implemented):
-
-* **Refuse instead of guess**: reject a booking (`503`) while the aircraft's owner is unreachable, which turns the
-  system from AP to CP for writes: always correct, but bookings of that aircraft stop while its owner is down.
+**How it could be made fully consistent** (not implemented): **refuse instead of guess** - accept a booking only
+when a majority of the aircraft's holders confirm it (a quorum, e.g. R + W > N with 3 copies). That turns bookings
+from AP into CP: always correct, but bookings of that aircraft stop when the holders can't reach each other.
 
 ### During a failure (CAP)
 
 With one instance down (a partition from the others' point of view):
 
-* the other instances keep serving **their own data** and accept **new bookings** (Availability);
-* the down instance's flights are **not visible** (404 for single reads, missing from lists) instead of the whole
-  request failing (Partition tolerance);
-* consistency is weakened only for the cross-instance overlap rule above (bookings on the same instance stay exact).
+* its flights are **still readable** from their copies, lists stay complete (Availability); the response says that a
+  peer did not answer (`X-Unreachable-Peers`);
+* bookings for its aircraft are taken by their backups (Availability), and queued for it in the backups' outboxes;
+* the others keep working without waiting for it: the circuit breaker skips it after 3 failures (Partition
+  tolerance).
 
-When the instance comes back, nothing has to be reconciled: no other instance ever held a copy of its data, so its
-flights are simply visible again (measured in "Availability while an instance fails" above, and checked by the
-Postman folder "03 Resilience").
+When the instance comes back, it **catches up before it reports ready** (startup anti-entropy), then receives the
+queued copies (no change, they are already there) - measured in "Availability while an instance fails" above, and
+shown by `ReplicationIntegrationTest` and the Postman folder "03 Resilience".
 
-### If replication is added later
-
-Replicating each flight to a second instance would remove the "data unavailable while its owner is down" gap
-(Performance section). It would also bring the classic replication problems that the current design avoids:
-replicas that disagree after a failure (need versioning / a "last write wins" or quorum rule, e.g. R + W > N), and
-writes that must reach two instances. PL3 p.18 lists the same options: "data versioning or authoritative instance".
+Replication can be switched off (`REPLICATION_FACTOR=1`): then each flight has a single copy and the system behaves
+as in the week-3 practical session (PL3 p.16 test 03: `404` for data whose instance is down, `X-Partial-Result`).
+The two-instance integration test runs that way to check the plain forwarding on its own.
 
 ## Horizontal scaling
 
@@ -228,8 +273,9 @@ share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on 
   the next one on timeout or 5xx (`ReplicatedServiceClient`).
 * **Service discovery with hardcoded lists.** `CLUSTER` (all flight-ops instances, by name), `AIRCRAFT_SERVICE_URLS`
   and `AIRPORTS_ROUTES_SERVICE_URLS`.
-* **Sharded data.** A flight is stored on the instance that created it. Reads that need everything ask every peer
-  and merge the answers (scatter-gather, `FlightQueryService`).
+* **Sharded and replicated data.** Each aircraft's flights are kept on 2 of the instances (owner + backup, by
+  rendezvous hashing), not on all of them. Reads that need everything ask every peer and merge the answers, keeping
+  the newest copy of each flight (scatter-gather, `FlightQueryService`).
 
 ### How to add an instance
 
@@ -237,8 +283,9 @@ share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on 
 2. Give **every** instance (old and new) the same list of all instances in `CLUSTER`
    (`instance1=url,instance2=url,instance3=url`), and add the new one to the load balancer's upstream list.
 3. Restart the existing instances so they pick up the new list. Aircraft are re-sharded by rendezvous hashing: only
-   the aircraft the new instance wins move to it (~1/3 with 3 instances, `ClusterTest`); their *old* flights stay
-   where they are and are still found by the peer queries, new bookings go to the new owner.
+   the aircraft the new instance wins move to it (~1/3 with 3 instances, `ClusterTest`). The new instance fetches
+   the flights it should now hold from the others when it starts (catch-up), new bookings go to the new owner, and
+   copies that an old instance no longer needs simply stay there (they are merged away in reads).
 
 The same steps are packaged as an override file:
 
@@ -279,6 +326,9 @@ Raw output: `loadtest/results/`.
 
 ### What the results mean
 
+*(Measured before replication was added. With 2 copies the fan-out per request is the same - every instance is
+still asked - so the conclusion below holds.)*
+
 **For this workload, a third instance does not increase capacity.** Every request is a scatter-gather read:
 the receiving instance does its local query *and* asks each of the other N−1 instances. The total work per request
 therefore grows with N, at the same rate as the capacity added by the new instance, so throughput stays flat.
@@ -288,9 +338,9 @@ Conclusion: stay at **2 instances**. Adding instances only pays off once most re
 1. **Route by owner.** Pick the instance that stores a flight from a hash of the aircraft registration (consistent
    hashing). Requests about one aircraft then go to one instance, with no fan-out, so capacity grows with N. This
    also removes the double-booking race, because all bookings for an aircraft are serialised on one instance.
-2. **Replicate.** Copy every write to the other instances (or to k of them), so reads can be answered locally.
-   Reads then scale with N, writes get more expensive, and the system gains redundancy: a flight survives the
-   loss of the instance that created it.
+2. **Replicate** (done for redundancy, with 2 copies): reads of one flight are now answered locally more often, and
+   a flight survives the loss of the instance that holds it. Lists still ask every instance; answering them from
+   the local copies only would need every instance to hold everything (more copies, more expensive writes).
 3. **Cache aggregates.** Utilization and fuel reports change rarely; caching them for a few seconds per instance
    removes most of the fan-out.
 

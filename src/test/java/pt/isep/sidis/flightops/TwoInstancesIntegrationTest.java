@@ -31,7 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * End-to-end test (PL3 p.15-16): two real instances, each with its own in-memory database and stub data, started on
- * free ports and talking over HTTP. The tests run in order; the last ones stop instance 2.
+ * free ports and talking over HTTP. Replication is off here (one copy of each flight), so these tests show the
+ * forwarding between instances on its own; ReplicationIntegrationTest covers the copies. The tests run in order;
+ * the last ones stop instance 2.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @ExtendWith(OutputCaptureExtension.class)
@@ -66,6 +68,7 @@ class TwoInstancesIntegrationTest {
                 .profiles(profile, "stub")
                 .run("--server.port=" + port,
                         "--flightops.cluster=" + cluster,
+                        "--flightops.replication.factor=1",
                         "--sidis.resilience.health-check-interval-ms=60000");   // keep health checks out of the way
     }
 

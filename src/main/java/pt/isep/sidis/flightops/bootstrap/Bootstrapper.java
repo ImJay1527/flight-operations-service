@@ -2,6 +2,8 @@ package pt.isep.sidis.flightops.bootstrap;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,15 +13,19 @@ import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 import pt.isep.sidis.flightops.security.SystemUser;
 import pt.isep.sidis.flightops.security.SystemUserRepository;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Seeds users and sample flights. Ids must match the other services' bootstrap data (docs/service-contracts.md).
- * Every instance loads the users; each sample flight is loaded only by the owner of its aircraft. Without a cluster
- * list, {@code shard} 1..shard-count picks a slice and 0 loads everything.
+ * Every instance loads the users; each sample flight is loaded by the instances that hold its aircraft
+ * ({@link Cluster#replicasOf}), with the same flight number everywhere. Without a cluster list, {@code shard}
+ * 1..shard-count picks a slice and 0 loads everything.
  */
 @Component
+@Order(Ordered.LOWEST_PRECEDENCE - 10)   // before the replication catch-up (ReplicaSync)
 public class Bootstrapper implements CommandLineRunner {
 
     private static final String OPO_LIS = "route-opo-lis";
@@ -36,6 +42,7 @@ public class Bootstrapper implements CommandLineRunner {
     private final int shard;
     private final int shardCount;
     private final Cluster cluster;
+    private int sampleCount;
 
     public Bootstrapper(SystemUserRepository userRepository, ScheduledFlightRepository flightRepository,
                         PasswordEncoder passwordEncoder,
@@ -74,6 +81,7 @@ public class Bootstrapper implements CommandLineRunner {
         if (flightRepository.count() > 0) return;
         LocalDateTime now = LocalDateTime.now();
 
+        sampleCount = 0;
         List<ScheduledFlight> sample = List.of(
                 flight(OPO_LIS, "CS-TPA", "A320neo", A320_BURN, "OPO", "LIS", 277.0, now.minusDays(90), 45),
                 flight(LIS_MAD, "CS-TPB", "737 MAX", B737_BURN, "LIS", "MAD", 502.0, now.minusDays(85), 80),
@@ -89,7 +97,7 @@ public class Bootstrapper implements CommandLineRunner {
         for (int i = 0; i < sample.size(); i++) {
             ScheduledFlight flight = sample.get(i);
             boolean mine = cluster.isClustered()
-                    ? cluster.ownsLocally(flight.getAircraftRegistration())
+                    ? cluster.holdsLocally(flight.getAircraftRegistration())
                     : shard == 0 || i % shardCount == shard - 1;
             if (mine) {
                 flightRepository.save(flight);
@@ -97,10 +105,13 @@ public class Bootstrapper implements CommandLineRunner {
         }
     }
 
+    /** The n-th sample flight gets the same flight number on every instance, so its copies match. */
     private ScheduledFlight flight(String routeId, String registration, String model, double burnRate,
                                    String origin, String destination, double distanceKm,
                                    LocalDateTime departure, int minutes) {
-        return new ScheduledFlight(routeId, registration, model, origin, destination,
+        String flightNumber = UUID.nameUUIDFromBytes(
+                ("aisafe-sample-flight-" + sampleCount++).getBytes(StandardCharsets.UTF_8)).toString();
+        return new ScheduledFlight(flightNumber, routeId, registration, model, origin, destination,
                 distanceKm, burnRate, departure, departure.plusMinutes(minutes));
     }
 }
