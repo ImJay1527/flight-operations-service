@@ -4,10 +4,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
-import pt.isep.sidis.flightops.clients.AircraftClient;
+import pt.isep.sidis.flightops.clients.AircraftDirectory;
 import pt.isep.sidis.flightops.clients.AircraftInfo;
 import pt.isep.sidis.flightops.clients.AirportInfo;
-import pt.isep.sidis.flightops.clients.AirportsRoutesClient;
+import pt.isep.sidis.flightops.clients.RouteDirectory;
 import pt.isep.sidis.flightops.clients.RouteInfo;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.domain.FlightStatus;
@@ -26,8 +26,8 @@ public class ScheduledFlightService {
     private static final int TURNAROUND_BUFFER_MINUTES = 30;
 
     private final ScheduledFlightRepository scheduledFlightRepository;
-    private final AircraftClient aircraftClient;
-    private final AirportsRoutesClient airportsRoutesClient;
+    private final AircraftDirectory aircraftClient;
+    private final RouteDirectory airportsRoutesClient;
     private final FlightQueryService flightQueryService;
     private final PeerClient peers;
 
@@ -103,7 +103,7 @@ public class ScheduledFlightService {
         return flightQueryService.findByAircraft(aircraftRegistration);
     }
 
-    public FlightView getFlightById(String flightNumber) {
+    public FlightLookup getFlightById(String flightNumber) {
         return flightQueryService.findById(flightNumber);
     }
 

@@ -5,6 +5,8 @@
 #   ./scripts/run-local.sh --tls      2 instances, HTTPS       (needs ./scripts/generate-dev-certs.sh first)
 #   ./scripts/run-local.sh -n 3       3 instances              (8083, 8093, 8103)
 #   ./scripts/run-local.sh --h2       in-memory H2 instead of PostgreSQL (no Docker needed; data is lost on stop)
+#   ./scripts/run-local.sh --stub     built-in aircraft/route data instead of calling the other two services
+#                                     (needed for the Postman collection in postman/ while those services are stubs)
 #
 # PostgreSQL: the database containers (flightops-db-<i>, ports 5433/5434/5435) are started with docker compose and
 # left running when you press Ctrl+C, so the data is kept. Stop them: docker compose stop
@@ -21,11 +23,13 @@ N=2
 SCHEME=http
 PROFILE=""
 DB=postgres
+STUB=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n) N="$2"; [[ "$N" =~ ^[123]$ ]] || { echo "-n must be 1, 2 or 3 (one instance profile each)"; exit 1; }; shift 2 ;;
     --tls) SCHEME=https; PROFILE=tls; shift ;;
     --h2) DB=h2; shift ;;
+    --stub) STUB=stub; shift ;;
     *) echo "unknown option: $1"; exit 1 ;;
   esac
 done
@@ -38,6 +42,8 @@ if [[ "$DB" == postgres ]]; then
   docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up -d --wait "${DBS[@]}"
   PROFILE="${PROFILE:+$PROFILE,}postgres"
 fi
+
+[[ -n "$STUB" ]] && PROFILE="${PROFILE:+$PROFILE,}stub"
 
 echo "Building..."
 ./mvnw -q -B package -DskipTests

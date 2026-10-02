@@ -56,9 +56,11 @@ class FlightQueryServiceTest {
         FlightView remote = new FlightView("F-1", "r", "CS-TPA", "A320neo", "OPO", "LIS", 277, 3.8,
                 t0, t0.plusHours(1), "SCHEDULED");
         when(repository.findById("F-1")).thenReturn(Optional.empty());
-        when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(remote), 0));
+        when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(remote), 0, "http://peer-2"));
 
-        assertThat(service.findById("F-1")).isEqualTo(remote);
+        FlightLookup lookup = service.findById("F-1");
+        assertThat(lookup.flight()).isEqualTo(remote);
+        assertThat(lookup.source()).isEqualTo("peer:http://peer-2");
     }
 
     @Test

@@ -16,6 +16,7 @@ import pt.isep.sidis.flightops.api.dto.CreateScheduledFlightDTO;
 import pt.isep.sidis.flightops.api.dto.DeparturesBoardResponseDTO;
 import pt.isep.sidis.flightops.api.dto.ScheduledFlightResponseDTO;
 import pt.isep.sidis.flightops.api.dto.FlightView;
+import pt.isep.sidis.flightops.services.FlightLookup;
 import pt.isep.sidis.flightops.services.ScheduledFlightService;
 
 import java.util.List;
@@ -92,8 +93,11 @@ public class ScheduledFlightController {
     public ResponseEntity<ScheduledFlightResponseDTO> getFlightById(
             @PathVariable String flightNumber) {
 
-        FlightView flight = scheduledFlightService.getFlightById(flightNumber);
-        return ResponseEntity.ok(assembler.toModel(flight));
+        FlightLookup lookup = scheduledFlightService.getFlightById(flightNumber);
+        // X-Data-Source: "local" or "peer:<url>" - shows whether the request was forwarded (PL3 p.16 tests 01/02)
+        return ResponseEntity.ok()
+                .header("X-Data-Source", lookup.source())
+                .body(assembler.toModel(lookup.flight()));
     }
 
     @Operation(summary = "Bonus: Cancel a scheduled flight",

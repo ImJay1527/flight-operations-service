@@ -53,14 +53,15 @@ public class FlightQueryService {
 
     // ---------------------------------------------------------------- distributed (local + peers)
 
-    public FlightView findById(String flightNumber) {
+    /** PL3 p.11: local store first; if not there, ask the peers one by one; first answer wins. */
+    public FlightLookup findById(String flightNumber) {
         FlightView local = localById(flightNumber);
         if (local != null) {
-            return local;
+            return FlightLookup.local(local);
         }
         PeerResult<FlightView> remote = peers.getOne("/internal/flights/{n}", FlightView.class, flightNumber);
         if (!remote.items().isEmpty()) {
-            return remote.items().get(0);
+            return FlightLookup.fromPeer(remote.items().get(0), remote.answeredBy());
         }
         // PL3 p.11: "Return first successful result or 404 if all peers fail". The message still says when a peer
         // was unreachable, because then the flight may exist on that peer.

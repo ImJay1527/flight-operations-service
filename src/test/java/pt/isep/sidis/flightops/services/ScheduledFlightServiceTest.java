@@ -27,8 +27,8 @@ import static org.mockito.Mockito.*;
 class ScheduledFlightServiceTest {
 
     @Mock ScheduledFlightRepository repository;
-    @Mock AircraftClient aircraftClient;
-    @Mock AirportsRoutesClient airportsRoutesClient;
+    @Mock AircraftDirectory aircraftClient;
+    @Mock RouteDirectory airportsRoutesClient;
     @Mock FlightQueryService flightQueryService;
     @Mock PeerClient peers;
 

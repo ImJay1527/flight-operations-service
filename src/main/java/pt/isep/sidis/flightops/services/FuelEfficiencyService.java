@@ -5,9 +5,9 @@ import org.springframework.stereotype.Service;
 import pt.isep.sidis.flightops.api.dto.AircraftFuelEfficiencyDTO;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.api.dto.RouteFuelEfficiencyDTO;
-import pt.isep.sidis.flightops.clients.AircraftClient;
+import pt.isep.sidis.flightops.clients.AircraftDirectory;
 import pt.isep.sidis.flightops.clients.AircraftInfo;
-import pt.isep.sidis.flightops.clients.AirportsRoutesClient;
+import pt.isep.sidis.flightops.clients.RouteDirectory;
 import pt.isep.sidis.flightops.clients.RouteInfo;
 
 import java.util.ArrayList;
@@ -24,8 +24,8 @@ import java.util.Map;
 public class FuelEfficiencyService {
 
     private final FlightQueryService flightQueryService;
-    private final AircraftClient aircraftClient;
-    private final AirportsRoutesClient airportsRoutesClient;
+    private final AircraftDirectory aircraftClient;
+    private final RouteDirectory airportsRoutesClient;
 
     public List<AircraftFuelEfficiencyDTO> getEfficiencyForAllAircraft() {
         return buildAircraftEfficiencyList(flightQueryService.findActive(null));

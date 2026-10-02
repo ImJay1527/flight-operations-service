@@ -1,6 +1,7 @@
 package pt.isep.sidis.flightops.clients;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
@@ -12,7 +13,8 @@ import java.util.List;
 
 /** HTTP client for the Aircraft & Maintenance service. */
 @Component
-public class AircraftClient extends ReplicatedServiceClient {
+@Profile("!stub")   // replaced by built-in data in the "stub" profile
+public class AircraftClient extends ReplicatedServiceClient implements AircraftDirectory {
 
     public AircraftClient(@Value("${flightops.services.aircraft.urls:}") List<String> urls,
                           @Value("${flightops.services.timeout-ms:2000}") long timeoutMs,
@@ -22,6 +24,7 @@ public class AircraftClient extends ReplicatedServiceClient {
                 jwtUtils, builder, httpClientFactory, Duration.ofMillis(timeoutMs), registry, caller);
     }
 
+    @Override
     public AircraftInfo getAircraft(String registration) {
         return get("/internal/aircraft/{registration}", AircraftInfo.class,
                 "Aircraft not found with registration: " + registration, registration);

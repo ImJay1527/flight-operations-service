@@ -1,6 +1,7 @@
 package pt.isep.sidis.flightops.clients;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
@@ -12,7 +13,8 @@ import java.util.List;
 
 /** HTTP client for the Airports & Routes service. */
 @Component
-public class AirportsRoutesClient extends ReplicatedServiceClient {
+@Profile("!stub")   // replaced by built-in data in the "stub" profile
+public class AirportsRoutesClient extends ReplicatedServiceClient implements RouteDirectory {
 
     public AirportsRoutesClient(@Value("${flightops.services.airports-routes.urls:}") List<String> urls,
                                 @Value("${flightops.services.timeout-ms:2000}") long timeoutMs,
@@ -22,11 +24,13 @@ public class AirportsRoutesClient extends ReplicatedServiceClient {
                 jwtUtils, builder, httpClientFactory, Duration.ofMillis(timeoutMs), registry, caller);
     }
 
+    @Override
     public RouteInfo getRoute(String routeId) {
         return get("/internal/routes/{routeId}", RouteInfo.class,
                 "Flight Route not found with ID: " + routeId, routeId);
     }
 
+    @Override
     public AirportInfo getAirport(String iataCode) {
         return get("/internal/airports/{iata}", AirportInfo.class,
                 "Airport not found with IATA code: " + iataCode, iataCode);

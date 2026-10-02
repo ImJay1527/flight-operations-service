@@ -12,6 +12,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.clients.HttpClientFactory;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
+import pt.isep.sidis.flightops.common.tracing.RequestIdPropagation;
 import pt.isep.sidis.flightops.resilience.CircuitOpenException;
 import pt.isep.sidis.flightops.resilience.EndpointHealth;
 import pt.isep.sidis.flightops.resilience.HealthRegistry;
@@ -56,7 +57,8 @@ public class PeerClient {
         ClientHttpRequestFactory factory = httpClientFactory.create(Duration.ofMillis(timeoutMs));
         for (String url : peerUrls.stream().filter(u -> !u.isBlank()).toList()) {
             peers.add(new Peer(registry.register("flight-operations peer", url),
-                    builder.clone().baseUrl(url).requestFactory(factory).build()));
+                    builder.clone().baseUrl(url).requestFactory(factory)
+                            .requestInterceptor(RequestIdPropagation.INSTANCE).build()));
         }
     }
 
@@ -112,7 +114,7 @@ public class PeerClient {
                 });
                 if (body != null) {
                     log.debug("Peer {} owns {} {} - answered", peer.health().url(), method, path);
-                    return new PeerResult<>(List.of(body), unreachable);
+                    return new PeerResult<>(List.of(body), unreachable, peer.health().url());
                 }
             } catch (HttpClientErrorException.NotFound e) {
                 log.debug("Peer {} does not have {} - asking the next one", peer.health().url(), path);

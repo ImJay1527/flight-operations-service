@@ -92,6 +92,57 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 | Access control | User roles from the login JWT (`@PreAuthorize`). A service token can't call `/api/**`, and a user token can't call `/internal/**`. |
 | Audit logging | `AUDIT` logger: user, roles, method, URI, status and client address for every request. |
 
+## Testing (PL3 p.15-17)
+
+### Automated tests (JUnit)
+
+```bash
+./mvnw test
+```
+
+| Test | What it covers |
+|---|---|
+| `services/*Test`, `resilience/*Test` | Unit tests: forwarding/merge logic, scheduling rules, retry/backoff, circuit breaker |
+| `SecurityIntegrationTest` | One instance: login, 401/403 rules, service-only `/internal/**` |
+| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP: local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, instance 2 stopped → 404 + circuit open |
+
+### Postman (PL3 p.17)
+
+Files in `postman/`:
+`flight-operations.postman_collection.json` (31 requests with test scripts) and
+`local.postman_environment.json` (one URL per instance). Import both in Postman.
+
+1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
+   two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "2 instances for the Postman tests".
+2. Select the environment "Flight Ops - local (2 instances)".
+3. Run the folders **00 → 01 → 02 → 04 → 05** (Collection Runner, or one by one).
+4. Stop **instance 2**, then run folder **03 Resilience** on its own. Start instance 2 again afterwards.
+
+| Folder | PL3 p.16 test |
+|---|---|
+| 01 Local Data Access | 01: data on instance 1, asked from instance 1 → 200, `X-Data-Source: local` (no peer query) |
+| 02 Successful Forwarding | 02: data created on instance 2 only, asked from instance 1 → 200, `X-Data-Source: peer:…` |
+| 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, instance 2 reported down |
+| 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
+| 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
+
+From the command line (same files): `npx newman run postman/flight-operations.postman_collection.json -e postman/local.postman_environment.json --folder "01 Local Data Access"`.
+
+Postman **on the web** reaches `localhost` only through the
+[Postman Desktop Agent](https://www.postman.com/downloads/postman-agent/) (or use the Postman desktop app).
+
+### Tracing a request across instances (PL3 p.15)
+
+Every response has `X-Instance` (which instance answered) and `X-Request-Id`. The request id is passed on to peers,
+and every log line shows `[instance] [request id]`, so one request can be followed through all instances:
+
+```
+INFO [instance1] [postman-forwarding-1] AUDIT : user=atcc ... uri=/api/scheduled-flights/2db4... status=200 durationMs=31
+INFO [instance2] [postman-forwarding-1] AUDIT : user=flight-operations-service roles=[ROLE_SERVICE] ... uri=/internal/flights/2db4...
+```
+
+Send your own id with the `X-Request-Id` header to find a request easily (`grep postman-forwarding-1 logs/*.log`).
+
 ## Database
 
 Each instance has **its own PostgreSQL database**, running in its own container, so the data of one instance is
@@ -117,5 +168,5 @@ isolated from the others and **survives restarts**:
 - [x] HTTPS for flight-ops replicas and their outgoing calls
 - [ ] HTTPS on aircraft-maintenance-service and airports-routes-service (their owners), then switch the URLs in docker-compose to `https://`
 - [x] PostgreSQL container per instance in docker-compose
-- [ ] Postman collection for the demo
+- [x] Postman collection (postman/)
 - [ ] Design document (consistency model, failure scenarios)

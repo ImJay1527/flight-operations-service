@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
+import pt.isep.sidis.flightops.common.tracing.RequestIdPropagation;
 import pt.isep.sidis.flightops.resilience.CircuitOpenException;
 import pt.isep.sidis.flightops.resilience.EndpointHealth;
 import pt.isep.sidis.flightops.resilience.HealthRegistry;
@@ -52,7 +53,8 @@ public abstract class ReplicatedServiceClient {
         ClientHttpRequestFactory factory = httpClientFactory.create(timeout);
         for (String url : baseUrls) {
             instances.add(new Instance(registry.register(targetName, url),
-                    builder.clone().baseUrl(url).requestFactory(factory).build()));
+                    builder.clone().baseUrl(url).requestFactory(factory)
+                            .requestInterceptor(RequestIdPropagation.INSTANCE).build()));
         }
     }
 
