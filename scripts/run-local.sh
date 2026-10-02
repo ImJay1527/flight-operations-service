@@ -43,6 +43,15 @@ done
 
 port() { echo $((8083 + 10 * ($1 - 1))); }
 
+# Refuse to start if an instance port is taken (e.g. instances still running from VS Code or an earlier run):
+# they would keep the old code running and lock the jar, so the build below would fail.
+for i in $(seq 1 "$N"); do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$(port "$i")") 2>/dev/null; then
+    echo "Port $(port "$i") is already in use - stop the running instance(s) first (Ctrl+C in their terminal, or stop them in VS Code)."
+    exit 1
+  fi
+done
+
 if [[ "$DB" == postgres ]]; then
   DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i"); done
   echo "Starting databases: ${DBS[*]}"

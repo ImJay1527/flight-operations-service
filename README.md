@@ -109,7 +109,7 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (33 requests with test scripts) and
+`flight-operations.postman_collection.json` (35 requests with test scripts) and
 `local.postman_environment.json` (one URL per instance). Import both in Postman.
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -127,6 +127,7 @@ Files in `postman/`:
 | 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, instance 2 reported down; then instance 2 restarted → trusted again, forwarding works, its data survived (PL3 p.14 automatic recovery) |
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
+| 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower), forwarding success rate, peer health, both instances served requests |
 
 From the command line (same files): `npx newman run postman/flight-operations.postman_collection.json -e postman/local.postman_environment.json --folder "01 Local Data Access"`.
 
@@ -144,6 +145,32 @@ INFO [instance2] [postman-forwarding-1] AUDIT : user=flight-operations-service r
 ```
 
 Send your own id with the `X-Request-Id` header to find a request easily (`grep postman-forwarding-1 logs/*.log`).
+
+## Monitoring (PL3 p.19)
+
+**Log format** (as on the slide, plus the request id), for every line of every instance:
+
+```
+15:30:16.431 [http-nio-8083-exec-3] INFO  [instance1] [16ad3a5d] AUDIT - user=admin ... uri=/api/cluster/metrics status=200 durationMs=12
+```
+
+The `AUDIT` line is the slide's "request tracer": method, URL, status and processing time of every request.
+`DEBUG` lines of `PeerClient` show each forwarding step (enabled in the instance profiles).
+
+**Metrics**: `GET /api/cluster/metrics` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) answers the slide's four points for
+this instance, counted since it started:
+
+| Slide | Field | Example |
+|---|---|---|
+| Response times: local vs forwarded | `lookupResponseTimes.local / forwarded / notFound` (count, avg, p95, max ms) | local 17 ms, forwarded 65 ms |
+| Success rates: forwarding success % | `forwarding.successRatePercent` (found on a peer / lookups that had to ask peers) | 50 % |
+| Peer health: availability, failure rates | `remoteInstances[]`: `healthy`, `circuit`, `callsByOutcome`, `failureRatePercent`, `avgCallMs` | instance 2: healthy, 9 % failures |
+| Load distribution | `requestsServed.total` / `byStatus`: compare the instances | 34 requests on instance 1 |
+
+Recorded with Micrometer (`monitoring.FlightOpsMetrics`): timers `flightops.lookups` (tag `source`) and
+`flightops.remote.calls` (tags `group`, `target`, `outcome`), gauge `flightops.remote.healthy`, plus Spring Boot's
+`http.server.requests`. Raw values: `GET /actuator/metrics/flightops.lookups?tag=source:forwarded` (ADMIN).
+The Postman folder "06 Monitoring" checks all of it.
 
 ## Database
 

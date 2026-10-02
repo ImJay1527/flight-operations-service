@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
+import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
@@ -28,6 +29,7 @@ public class FlightQueryService {
 
     private final ScheduledFlightRepository repository;
     private final PeerClient peers;
+    private final FlightOpsMetrics metrics;
 
     // ---------------------------------------------------------------- local-only (used by /internal endpoints)
 
@@ -55,14 +57,18 @@ public class FlightQueryService {
 
     /** PL3 p.11: local store first; if not there, ask the peers one by one; first answer wins. */
     public FlightLookup findById(String flightNumber) {
+        long start = System.nanoTime();
         FlightView local = localById(flightNumber);
         if (local != null) {
+            metrics.recordLookup(FlightOpsMetrics.LOCAL, start);
             return FlightLookup.local(local);
         }
         PeerResult<FlightView> remote = peers.getOne("/internal/flights/{n}", FlightView.class, flightNumber);
         if (!remote.items().isEmpty()) {
+            metrics.recordLookup(FlightOpsMetrics.FORWARDED, start);
             return FlightLookup.fromPeer(remote.items().get(0), remote.answeredBy());
         }
+        metrics.recordLookup(FlightOpsMetrics.NOT_FOUND, start);
         // PL3 p.11: "Return first successful result or 404 if all peers fail". The message still says when a peer
         // was unreachable, because then the flight may exist on that peer.
         throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));

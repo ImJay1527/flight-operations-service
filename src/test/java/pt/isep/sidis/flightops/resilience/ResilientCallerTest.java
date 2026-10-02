@@ -1,10 +1,12 @@
 package pt.isep.sidis.flightops.resilience;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
+import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -22,7 +24,7 @@ class ResilientCallerTest {
     @BeforeEach
     void setUp() {
         peer = new EndpointHealth("peer", "http://peer", 3, Duration.ofSeconds(10), Duration.ofSeconds(60), Clock.systemUTC());
-        caller = new ResilientCaller(3, 1, 2.0);   // 1 ms backoff to keep the test fast
+        caller = new ResilientCaller(3, 1, 2.0, new FlightOpsMetrics(new SimpleMeterRegistry()));   // 1 ms backoff: fast test
         calls = new AtomicInteger();
     }
 

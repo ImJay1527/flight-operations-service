@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "6fa8383f-340e-4f90-9b37-7431f358cf61",
+    "_postman_id": "cac9e0b5-45d0-44c9-9ac8-2498905b5f09",
     "name": "Flight Operations - distributed tests (SIDIS PL3)",
     "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -1218,6 +1218,94 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Monitoring",
+      "description": "PL3 p.19 Monitoring Metrics, per instance since it started (GET /api/cluster/metrics): response times local vs forwarded, forwarding success rate, peer health / failure rates, requests served (load distribution). Runs after 01-05 (which create the traffic) and before 03 (restarting instance 2 resets its counters).",
+      "item": [
+        {
+          "name": "Metrics of instance 1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/metrics",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"answered by instance1 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance1\"));",
+                  "const m = pm.response.json();",
+                  "console.log(\"instance 1 metrics\", JSON.stringify(m, null, 2));",
+                  "pm.environment.set(\"served_by_instance1\", m.requestsServed.total);",
+                  "pm.test(\"local lookups counted\", () => pm.expect(m.lookupResponseTimes.local.count).to.be.above(0));",
+                  "pm.test(\"forwarded lookups counted\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));",
+                  "pm.test(\"forwarded lookups are slower than local ones (network hop)\", () =>",
+                  "  pm.expect(m.lookupResponseTimes.forwarded.avgMs).to.be.above(m.lookupResponseTimes.local.avgMs));",
+                  "pm.test(\"forwarding success rate reported\", () => pm.expect(m.forwarding.successRatePercent).to.be.a(\"number\"));",
+                  "pm.test(\"peer instance 2: healthy, calls and failure rate reported\", () => {",
+                  "  const peer = m.remoteInstances.find(r => r.url === pm.environment.get(\"instance2\"));",
+                  "  pm.expect(peer, \"instance 2 in remoteInstances\").to.exist;",
+                  "  pm.expect(peer.healthy).to.eql(true);",
+                  "  pm.expect(peer.calls).to.be.above(0);",
+                  "  pm.expect(peer.failureRatePercent).to.be.a(\"number\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Metrics of instance 2",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/cluster/metrics",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"answered by instance2 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance2\"));",
+                  "const m = pm.response.json();",
+                  "console.log(\"instance 2 metrics\", JSON.stringify(m, null, 2));",
+                  "pm.test(\"load distribution: both instances served requests\", () => {",
+                  "  pm.expect(Number(pm.environment.get(\"served_by_instance1\"))).to.be.above(0);",
+                  "  pm.expect(m.requestsServed.total).to.be.above(0);",
+                  "});",
+                  "pm.test(\"instance 2 also forwarded lookups to instance 1\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));"
                 ]
               }
             }

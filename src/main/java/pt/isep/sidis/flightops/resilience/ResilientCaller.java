@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
+import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
@@ -29,16 +30,38 @@ public class ResilientCaller {
     private final int maxAttempts;
     private final long initialBackoffMs;
     private final double multiplier;
+    private final FlightOpsMetrics metrics;
 
     public ResilientCaller(@Value("${sidis.resilience.retry.max-attempts:3}") int maxAttempts,
                            @Value("${sidis.resilience.retry.initial-backoff-ms:100}") long initialBackoffMs,
-                           @Value("${sidis.resilience.retry.multiplier:2.0}") double multiplier) {
+                           @Value("${sidis.resilience.retry.multiplier:2.0}") double multiplier,
+                           FlightOpsMetrics metrics) {
         this.maxAttempts = Math.max(1, maxAttempts);
         this.initialBackoffMs = initialBackoffMs;
         this.multiplier = multiplier;
+        this.metrics = metrics;
     }
 
+    /** Like {@link #attempt}, and records the call in the metrics (PL3 p.19: peer failure rates). */
     public <T> T call(EndpointHealth endpoint, boolean idempotent, Supplier<T> request) {
+        long start = System.nanoTime();
+        try {
+            T result = attempt(endpoint, idempotent, request);
+            metrics.recordRemoteCall(endpoint, "success", start);
+            return result;
+        } catch (CircuitOpenException e) {
+            metrics.recordRemoteCall(endpoint, "circuit_open", start);
+            throw e;
+        } catch (HttpClientErrorException e) {
+            metrics.recordRemoteCall(endpoint, e.getStatusCode().value() == 404 ? "not_found" : "client_error", start);
+            throw e;
+        } catch (RuntimeException e) {
+            metrics.recordRemoteCall(endpoint, "failure", start);
+            throw e;
+        }
+    }
+
+    private <T> T attempt(EndpointHealth endpoint, boolean idempotent, Supplier<T> request) {
         if (!endpoint.allowRequest()) {
             throw new CircuitOpenException(endpoint.url());
         }

@@ -4,6 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
 import pt.isep.sidis.flightops.api.dto.FlightView;
@@ -27,6 +30,7 @@ class FlightQueryServiceTest {
 
     @Mock ScheduledFlightRepository repository;
     @Mock PeerClient peers;
+    @Spy FlightOpsMetrics metrics = new FlightOpsMetrics(new SimpleMeterRegistry());
 
     @InjectMocks FlightQueryService service;
 
