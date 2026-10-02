@@ -4,6 +4,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
+import pt.isep.sidis.flightops.resilience.HealthRegistry;
+import pt.isep.sidis.flightops.resilience.ResilientCaller;
 
 import java.time.Duration;
 import java.util.List;
@@ -14,9 +16,10 @@ public class AirportsRoutesClient extends ReplicatedServiceClient {
 
     public AirportsRoutesClient(@Value("${flightops.services.airports-routes.urls:}") List<String> urls,
                                 @Value("${flightops.services.timeout-ms:2000}") long timeoutMs,
-                                JwtUtils jwtUtils, RestClient.Builder builder, HttpClientFactory httpClientFactory) {
+                                JwtUtils jwtUtils, RestClient.Builder builder, HttpClientFactory httpClientFactory,
+                          HealthRegistry registry, ResilientCaller caller) {
         super("airports-routes-service", urls.stream().filter(u -> !u.isBlank()).toList(),
-                jwtUtils, builder, httpClientFactory, Duration.ofMillis(timeoutMs));
+                jwtUtils, builder, httpClientFactory, Duration.ofMillis(timeoutMs), registry, caller);
     }
 
     public RouteInfo getRoute(String routeId) {

@@ -65,8 +65,20 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 * **Fault tolerance**: an unreachable peer is skipped (logged as a warning). If a single-item lookup can't be found
   *and* a peer was unreachable, the answer is still `404`, as the practical session expects (PL3 p.11, p.16 test 03),
   but the error message says how many peers could not be reached, because the item may exist there.
-* **Calls to other services** (`AircraftClient`, `AirportsRoutesClient`) go round-robin over all replicas
-  and fail over to the next replica on timeout or 5xx.
+* **Calls to other services** (`AircraftClient`, `AirportsRoutesClient`) go round-robin over their instances and
+  fail over to the next one on timeout or 5xx. If none can be reached the answer is `404`, with
+  "(… could not be reached)" in the message.
+* **Resilience** (PL3 p.12, p.14; package `resilience`):
+  * *Retry with exponential backoff*: a failed GET to another instance is retried up to 2 more times, after
+    ~100 ms and ~200 ms (plus random jitter). A PATCH is never retried, because the first attempt may have worked.
+  * *Circuit breaker*: after 3 failures in a row an instance is skipped for 10 s (fail fast; a struggling instance
+    isn't flooded). Then one trial request is let through: success closes the circuit, failure skips it for twice
+    as long (max 60 s).
+  * *Health checks*: every 5 s each instance calls `/actuator/health` on its peers and on the other services'
+    instances. A recovered instance is used again as soon as it answers.
+  * *Load balancing*: when looking for the instance that holds a flight, the peer asked first rotates per request.
+  * Status: `GET /api/cluster/health` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) lists every peer / remote instance
+    with its circuit state and failure count. Settings: `sidis.resilience.*` in `application.properties`.
 * **Consistency**: eventual (AP in CAP). Overlap checks for the same aircraft use a DB lock on the local shard and a
   best-effort check on peers. Two simultaneous requests on different replicas could still double-book. That trade-off
   is documented, not a bug.
