@@ -29,14 +29,34 @@ while [[ $# -gt 0 ]]; do
 done
 
 port() { echo $((8083 + 10 * ($1 - 1))); }
-CURL=(curl -fs -o /dev/null --max-time 2)
-[[ "$SCHEME" == https ]] && CURL+=(--cacert certs/ca.crt)
+CURL=(curl -sS -o /dev/null -w '%{http_code}' --max-time 2)
+# --ssl-no-revoke: curl on Windows (Schannel) otherwise rejects the dev certificates, which have no revocation list.
+# The certificate itself is still verified against the dev CA.
+[[ "$SCHEME" == https ]] && CURL+=(--cacert certs/ca.crt --ssl-no-revoke)
+ERRF=$(mktemp)
+trap 'rm -f "$ERRF"' EXIT
 
-ready() { "${CURL[@]}" "$SCHEME://localhost:$(port "$1")/actuator/health/readiness"; }
+# prints the HTTP status (000 = no answer); curl's error message goes to $ERRF
+probe() { "${CURL[@]}" "$SCHEME://localhost:$(port "$1")/actuator/health/readiness" 2>"$ERRF"; }
 
 wait_for() {   # $1 = instance number
-  local start=$SECONDS
-  until ready "$1"; do
+  local start=$SECONDS code rc
+  while true; do
+    code=$(probe "$1"); rc=$?
+    [[ "$code" == 200 ]] && break
+    # Keep waiting while nothing listens yet (7), the answer is slow (28) or the instance is still starting (503).
+    # Anything else, e.g. a TLS error, won't go away by waiting.
+    if (( rc != 0 && rc != 7 && rc != 28 )); then
+      echo "flightops-$1: $(head -1 "$ERRF")"
+      return 1
+    elif (( rc == 0 )) && [[ "$code" != 503 ]]; then
+      case "$code" in
+        400) echo "flightops-$1: HTTP 400 - the instance runs HTTPS, add --tls" ;;
+        404) echo "flightops-$1: HTTP 404 - built before /actuator/health/readiness existed, restart it" ;;
+        *)   echo "flightops-$1: HTTP $code from /actuator/health/readiness" ;;
+      esac
+      return 1
+    fi
     if (( SECONDS - start >= TIMEOUT )); then
       echo "flightops-$1 is NOT ready after ${TIMEOUT}s - see logs/flightops-$1.log"
       return 1
