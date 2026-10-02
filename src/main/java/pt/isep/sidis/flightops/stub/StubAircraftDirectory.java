@@ -11,9 +11,8 @@ import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import java.util.Map;
 
 /**
- * "stub" profile only: aircraft data built in, so this service can be run and tested (Postman, PL3 p.16-17) without
- * the Aircraft &amp; Maintenance service. Same data as the shared bootstrap data in docs/service-contracts.md, plus
- * CS-TPM (under maintenance) for the negative tests.
+ * "stub" profile: built-in aircraft data, so this service can be tested without the Aircraft &amp; Maintenance
+ * service. The shared bootstrap data plus CS-TPM (under maintenance) for the negative tests.
  */
 @Component
 @Profile("stub")
@@ -28,7 +27,7 @@ public class StubAircraftDirectory implements AircraftDirectory {
             aircraft("CS-TPD", "AVAILABLE", "777X", 8000.0, 35000.0, 400),
             aircraft("CS-TPE", "IN_FLIGHT", "A350", 15000.0, 140000.0, 350),
             aircraft("CS-TPM", "UNDER_MAINTENANCE", "A320neo", 6300.0, 24000.0, 160),
-            // extra available aircraft, so that every instance owns some when sharding by registration
+            // so that every instance owns some aircraft
             aircraft("CS-TPF", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
             aircraft("CS-TPG", "AVAILABLE", "737 MAX", 6500.0, 26000.0, 180),
             aircraft("CS-TPH", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),

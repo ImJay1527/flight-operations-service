@@ -12,19 +12,14 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * The instances of this service, and which one owns which aircraft (P1 p.15 "Data-Based Sharding: partition by
- * operational identifiers, e.g. aircraft registration numbers").
+ * The instances of this service and which one owns which aircraft (P1 p.15, sharding by registration).
  *
- * <p>Configured with {@code flightops.cluster = instance1=https://host1:8083,instance2=https://host2:8083} - the same
- * list on every instance (hardcoded peer list, PL3 p.12); this instance is the entry named
- * {@code flightops.instance-name}, the others are its peers.
+ * <p>{@code flightops.cluster = instance1=url,instance2=url} is the same list on every instance (hardcoded peer list,
+ * PL3 p.12); this instance is the entry named {@code flightops.instance-name}.
  *
- * <p>Owner of an aircraft = rendezvous (highest random weight) hashing: every instance computes
- * SHA-256(instance name + "|" + registration) for every instance and the highest value wins. All instances agree
- * without talking to each other, and adding an instance only moves the aircraft that the new instance wins.
- *
- * <p>Without {@code flightops.cluster} (a standalone instance, or the old {@code flightops.peers} setting) this
- * instance owns everything.
+ * <p>Owner = rendezvous hashing: the instance with the highest SHA-256(name + "|" + registration) wins. All instances
+ * agree without talking to each other, and adding an instance only moves the aircraft the new one wins.
+ * Without a cluster list (standalone, or the old {@code flightops.peers}) this instance owns everything.
  */
 @Component
 public class Cluster {
@@ -70,7 +65,6 @@ public class Cluster {
         return !members.isEmpty();
     }
 
-    /** The other instances of this service. */
     public List<Member> peers() {
         return peers;
     }
@@ -83,7 +77,7 @@ public class Cluster {
         return members.stream().filter(m -> m.name().equals(name)).findFirst();
     }
 
-    /** Name of the instance that owns (stores the flights of) this aircraft. */
+    /** The instance that stores the flights of this aircraft. */
     public String ownerOf(String registration) {
         if (members.isEmpty()) {
             return self;

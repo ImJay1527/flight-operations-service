@@ -23,12 +23,9 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Base class for calling another service that runs as several instances.
- * Requests are spread round-robin over the instances whose circuit is not open; every call goes through
- * {@link ResilientCaller} (retry with backoff, circuit breaker). If an instance fails, the next one is tried.
- * A 404 is authoritative (that instance already asked its own peers) and is NOT retried elsewhere.
- * If no instance can be reached, the answer is 404 too (like peer forwarding, PL3 p.11), with a message
- * that says the service could not be reached.
+ * Calls another service that runs as several instances: round-robin over the instances whose circuit isn't open,
+ * the next one if an instance fails ({@link ResilientCaller}). A 404 is final: that instance already asked its own
+ * peers. If no instance can be reached the answer is 404 too (as in PL3 p.11), saying the service couldn't be reached.
  */
 public abstract class ReplicatedServiceClient {
 
@@ -74,10 +71,10 @@ public abstract class ReplicatedServiceClient {
             } catch (HttpClientErrorException.NotFound e) {
                 throw new ResourceNotFoundException(notFoundMessage);
             } catch (HttpClientErrorException e) {
-                // 401/403/400...: a configuration/contract problem, another instance will not fix it
+                // a configuration/contract problem: another instance won't fix it
                 throw new ServiceUnavailableException(targetName + " rejected the request (" + e.getStatusCode() + ").", e);
             } catch (HttpServerErrorException.NotImplemented e) {
-                // the other service is up but doesn't have this endpoint yet (docs/service-contracts.md)
+                // the other service doesn't have this endpoint yet
                 throw new ServiceUnavailableException(targetName + " does not implement GET " + path + " yet (501).", e);
             } catch (CircuitOpenException e) {
                 log.debug("{} instance {} skipped for {}: circuit open", targetName, instance.health().url(), path);

@@ -16,13 +16,11 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Validates and issues HS256 JWTs. All three services share the same secret (env JWT_SECRET),
- * so a token issued by one service is accepted by the others.
- * Human users carry roles such as ATCC; service-to-service calls carry the role SERVICE.
+ * Issues and validates HS256 JWTs. All three services share the secret (JWT_SECRET), so a token issued by one is
+ * accepted by the others. Users carry roles such as ATCC; service-to-service calls carry the role SERVICE.
  *
- * <p>Performance: the key and the parser are built once (jjwt does a ServiceLoader scan every time a parser or
- * builder is created, which is slow inside a Spring Boot jar), and service tokens are reused until shortly before
- * they expire instead of being signed for every call. Both were found by load testing.
+ * <p>The parser is built once (jjwt scans for services every time one is created, which is slow) and service tokens
+ * are reused until shortly before they expire.
  */
 @Component
 public class JwtUtils {

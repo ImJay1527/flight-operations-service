@@ -61,8 +61,6 @@ class ScheduledFlightServiceTest {
         aircraft = new AircraftInfo("CS-TPA", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160);
     }
 
-    // ------------------------------------------------------------------ sharding by aircraft (P1 p.15)
-
     private final FlightView booked = new FlightView("F-1", "route-opo-lis", "CS-TPC", "A320neo", "OPO", "LIS",
             277.0, 3.8, dep, arr, "SCHEDULED");
 

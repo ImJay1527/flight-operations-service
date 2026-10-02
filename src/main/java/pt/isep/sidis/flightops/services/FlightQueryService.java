@@ -18,8 +18,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Read side of the service. Every query is answered from the local shard first and then completed with what the
- * peer replicas hold, so the client sees one coherent answer no matter which replica it hit.
+ * Reads: answered from this instance's data first, then completed with what the peers hold, so the client gets the
+ * same answer whichever instance it asks.
  */
 @Service
 @RequiredArgsConstructor
@@ -31,7 +31,7 @@ public class FlightQueryService {
     private final PeerClient peers;
     private final FlightOpsMetrics metrics;
 
-    // ---------------------------------------------------------------- local-only (used by /internal endpoints)
+    // local data only - used by the /internal endpoints
 
     @Transactional(readOnly = true)
     public FlightView localById(String flightNumber) {
@@ -53,7 +53,7 @@ public class FlightQueryService {
         return repository.findUpcomingDepartures(originIata, from, to).stream().map(FlightView::of).toList();
     }
 
-    // ---------------------------------------------------------------- distributed (local + peers)
+    // local + peers
 
     /** PL3 p.11: local store first; if not there, ask the peers one by one; first answer wins. */
     public FlightLookup findById(String flightNumber) {
@@ -69,8 +69,7 @@ public class FlightQueryService {
             return FlightLookup.fromPeer(remote.items().get(0), remote.answeredBy());
         }
         metrics.recordLookup(FlightOpsMetrics.NOT_FOUND, start);
-        // PL3 p.11: "Return first successful result or 404 if all peers fail". The message still says when a peer
-        // was unreachable, because then the flight may exist on that peer.
+        // 404 as in PL3 p.11; the message says when a peer was unreachable, since the flight may be there
         throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
     }
 
@@ -79,12 +78,12 @@ public class FlightQueryService {
         return merge(localByAircraft(registration), remote.items());
     }
 
-    /** All non-cancelled flights (optionally of one aircraft) across every replica. */
+    /** Non-cancelled flights (optionally of one aircraft) on all instances. */
     public List<FlightView> findActive(String registrationOrNull) {
         return merge(localActive(registrationOrNull), activeOnPeers(registrationOrNull));
     }
 
-    /** Non-cancelled flights held ONLY by peer replicas. */
+    /** Non-cancelled flights on the peers only. */
     public List<FlightView> activeOnPeers(String registrationOrNull) {
         PeerResult<FlightView> remote = registrationOrNull == null
                 ? peers.getList("/internal/flights/active", FLIGHT_LIST)
@@ -100,7 +99,7 @@ public class FlightQueryService {
         return merge(localDepartures(originIata, now, end), remote.items());
     }
 
-    /** Union of both lists without duplicates (same flightNumber), ordered by departure time. */
+    /** Union without duplicates, by departure time. */
     private List<FlightView> merge(List<FlightView> local, List<FlightView> remote) {
         Map<String, FlightView> byNumber = new LinkedHashMap<>();
         local.forEach(f -> byNumber.put(f.flightNumber(), f));

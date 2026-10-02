@@ -1,9 +1,6 @@
 package pt.isep.sidis.flightops.clients;
 
-/**
- * Where this service gets route and airport data from. Normally the Airports &amp; Routes service over HTTP
- * ({@link AirportsRoutesClient}); with the "stub" profile built-in sample data ({@code stub.StubRouteDirectory}).
- */
+/** Route and airport data: from the Airports &amp; Routes service ({@link AirportsRoutesClient}), or built in with the "stub" profile. */
 public interface RouteDirectory {
 
     /** @throws pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException if it does not exist */

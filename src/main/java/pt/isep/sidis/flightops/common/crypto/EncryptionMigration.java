@@ -13,10 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 
-/**
- * At startup, encrypts rows that were stored before encryption at rest was enabled (existing PostgreSQL volumes),
- * so every instance ends up with only encrypted values. Runs before the sample-data bootstrap.
- */
+/** Encrypts, at startup, rows stored before encryption at rest existed. Runs before the sample-data bootstrap. */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class EncryptionMigration implements ApplicationRunner {
@@ -48,7 +45,7 @@ public class EncryptionMigration implements ApplicationRunner {
             jdbc.update("UPDATE scheduled_flight SET " + String.join(" = ?, ", COLUMNS) + " = ? WHERE flight_number = ?",
                     values);
         }
-        // the per-aircraft lock rows are keyed by the (now encrypted) registration; old plaintext keys are not needed
+        // lock rows are keyed by the encrypted registration now; plaintext keys are obsolete
         int oldLocks = jdbc.update("DELETE FROM aircraft_booking_lock WHERE aircraft_registration NOT LIKE ?",
                 FieldEncryption.PREFIX + "%");
         if (!plain.isEmpty() || oldLocks > 0) {

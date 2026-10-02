@@ -33,19 +33,13 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Peer-to-peer access to the other instances of THIS service.
- *
- * <p>Data is partitioned: a flight lives on the instance that created it. When a read hits an instance that does not
- * hold the data, it asks its peers on their /internal/flights/** endpoints. Those internal endpoints answer from
- * local data only and never forward again, so a query can never loop. A peer that is down is skipped and counted
- * (partial availability instead of failure), which favours availability over consistency (AP in CAP).
- *
- * <p>Every call goes through {@link ResilientCaller} (retry with backoff, circuit breaker; PL3 p.14).
+ * Calls the other instances of this service on their /internal/flights/** endpoints. Those endpoints answer from
+ * local data only and never forward again, so a query can't loop. A peer that is down is skipped and counted
+ * instead of failing the request (AP in CAP). Every call goes through {@link ResilientCaller} (PL3 p.14).
  * <ul>
- *   <li>Lists (all flights of an aircraft, departures, reports) need every peer: they are asked <b>in parallel</b>
- *       (P1 p.12 "Parallel Querying"). Unreachable peers are reported to the client ({@link PartialResults}).</li>
- *   <li>One flight: the peers are asked <b>one by one</b> until one has it (PL3 p.11); the peer asked first rotates
- *       from request to request, spreading the load across the healthy peers (PL3 p.12 "Load Balancing").</li>
+ *   <li>Lists need every peer, so they are asked in parallel (P1 p.12).</li>
+ *   <li>A single flight: peers are asked one by one until one has it (PL3 p.11); the first peer asked rotates per
+ *       request to spread the load (PL3 p.12).</li>
  * </ul>
  */
 @Component
@@ -57,7 +51,7 @@ public class PeerClient {
     private final JwtUtils jwtUtils;
     private final ResilientCaller caller;
     private final AtomicInteger nextFirst = new AtomicInteger();
-    /** One cheap virtual thread per peer call (Java 21), so list queries reach all peers at the same time. */
+    /** Virtual threads (Java 21): one per peer call, so list queries reach all peers at the same time. */
     private final ExecutorService parallel = Executors.newVirtualThreadPerTaskExecutor();
 
     private record Peer(String name, EndpointHealth health, RestClient client, RestClient writeClient) {
@@ -83,9 +77,8 @@ public class PeerClient {
     }
 
     /**
-     * POST to one specific peer (used to forward a booking to the instance that owns the aircraft). Never retried:
-     * the peer may already have stored it. Errors are passed on unchanged: {@link CircuitOpenException},
-     * {@link HttpClientErrorException} (the peer refused), other {@link RestClientException}s (not reached / no answer).
+     * Forwards a booking to the aircraft's owner. Never retried: the peer may already have stored it.
+     * Errors are passed on unchanged so the caller can tell "refused" (4xx) from "not reached" / "no answer".
      */
     public <T> T postTo(String peerName, String path, Object body, Class<T> type) {
         Peer peer = peers.stream().filter(p -> p.name().equals(peerName)).findFirst()
@@ -103,12 +96,9 @@ public class PeerClient {
         return !peers.isEmpty();
     }
 
-    /**
-     * Asks EVERY peer for a list, all at the same time (P1 p.12 "Parallel Querying"), and concatenates the answers.
-     * The request takes as long as the slowest peer, not the sum of all of them.
-     */
+    /** Asks every peer at the same time and concatenates the answers. */
     public <T> PeerResult<T> getList(String path, ParameterizedTypeReference<List<T>> type, Object... uriVariables) {
-        Map<String, String> logContext = MDC.getCopyOfContextMap();   // request id + instance name for the log lines
+        Map<String, String> logContext = MDC.getCopyOfContextMap();   // keeps the request id in the peer threads' logs
         List<Future<List<T>>> answers = new ArrayList<>();
         for (Peer peer : peers) {
             answers.add(parallel.submit(() -> withLogContext(logContext, () -> listFrom(peer, path, type, uriVariables))));
@@ -131,7 +121,7 @@ public class PeerClient {
                 unreachable++;
             }
         }
-        PartialResults.record(unreachable);   // -> X-Partial-Result / X-Unreachable-Peers response headers
+        PartialResults.record(unreachable);
         return new PeerResult<>(all, unreachable);
     }
 
@@ -169,12 +159,12 @@ public class PeerClient {
         parallel.shutdownNow();
     }
 
-    /** Asks peers one by one until one of them owns the resource (a 404 means "not mine"). */
+    /** Asks peers one by one until one has the resource (a 404 means "not mine"). */
     public <T> PeerResult<T> getOne(String path, Class<T> type, Object... uriVariables) {
         return findOwner(false, path, type, uriVariables);
     }
 
-    /** Sends a PATCH to the peer that owns the resource (used to cancel a flight stored elsewhere). Never retried. */
+    /** PATCH to the peer that has the resource (cancel a flight stored elsewhere). Never retried. */
     public <T> PeerResult<T> patchOne(String path, Class<T> type, Object... uriVariables) {
         return findOwner(true, path, type, uriVariables);
     }
@@ -210,7 +200,6 @@ public class PeerClient {
         return new PeerResult<>(List.of(), unreachable);
     }
 
-    /** The peers, starting at a different one each time (round-robin). */
     private List<Peer> rotated() {
         if (peers.size() < 2) {
             return peers;

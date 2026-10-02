@@ -15,13 +15,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Seeds users and sample flights. Route IDs, registrations and model data must match the bootstrap data of the
- * other two services (docs/service-contracts.md, "Shared bootstrap data").
- *
- * <p>Sharding of the sample data: every instance loads the users, but each of the 10 sample flights is loaded only by
- * the instance that owns its aircraft ({@link Cluster#ownerOf}), so a peer query is needed to see all of them.
- * Without a cluster list: instance {@code shard} (1..shard-count) loads flights i with
- * {@code i % shard-count == shard - 1}; {@code shard = 0} loads everything (standalone instance).
+ * Seeds users and sample flights. Ids must match the other services' bootstrap data (docs/service-contracts.md).
+ * Every instance loads the users; each sample flight is loaded only by the owner of its aircraft. Without a cluster
+ * list, {@code shard} 1..shard-count picks a slice and 0 loads everything.
  */
 @Component
 public class Bootstrapper implements CommandLineRunner {
@@ -93,8 +89,8 @@ public class Bootstrapper implements CommandLineRunner {
         for (int i = 0; i < sample.size(); i++) {
             ScheduledFlight flight = sample.get(i);
             boolean mine = cluster.isClustered()
-                    ? cluster.ownsLocally(flight.getAircraftRegistration())   // sharding by aircraft (P1 p.15)
-                    : shard == 0 || i % shardCount == shard - 1;            // no cluster list: old slice setting
+                    ? cluster.ownsLocally(flight.getAircraftRegistration())
+                    : shard == 0 || i % shardCount == shard - 1;
             if (mine) {
                 flightRepository.save(flight);
             }

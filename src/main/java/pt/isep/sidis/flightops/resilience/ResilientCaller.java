@@ -13,15 +13,12 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 /**
- * Wraps every call to a remote instance (PL3 p.14, "Error Handling and Resilience"):
+ * Every call to a remote instance (PL3 p.14):
  * <ul>
- *   <li><b>Circuit breaker</b>: an instance whose circuit is open is not called at all ({@link CircuitOpenException}).</li>
- *   <li><b>Retry with exponential backoff</b> for temporary failures (connection refused, timeout, 5xx):
- *       wait 100 ms, then 200 ms, ... (plus a little random jitter so instances don't retry in lock-step).
- *       Only for idempotent requests (GET); a PATCH is never repeated because the first attempt may have worked.
- *       Retrying stops as soon as the circuit opens, so a failing instance is not flooded.</li>
- *   <li>A 4xx answer (e.g. 404 "not here") or 501 (endpoint not implemented yet) is NOT a failure: the instance is
- *       alive and answered, and asking again would get the same answer.</li>
+ *   <li>circuit breaker: an instance whose circuit is open is not called at all;</li>
+ *   <li>retry with exponential backoff (100 ms, 200 ms, ... plus jitter) for temporary failures - only for idempotent
+ *       requests, since a POST/PATCH may already have worked; it stops as soon as the circuit opens;</li>
+ *   <li>a 4xx or 501 is not a failure: the instance is alive, and asking again would get the same answer.</li>
  * </ul>
  */
 @Component
@@ -44,7 +41,7 @@ public class ResilientCaller {
         this.metrics = metrics;
     }
 
-    /** Like {@link #attempt}, and records the call in the metrics (PL3 p.19: peer failure rates). */
+    /** {@link #attempt}, recorded in the metrics (PL3 p.19). */
     public <T> T call(EndpointHealth endpoint, boolean idempotent, Supplier<T> request) {
         long start = System.nanoTime();
         try {
@@ -78,7 +75,7 @@ public class ResilientCaller {
                 endpoint.recordSuccess();
                 return result;
             } catch (HttpClientErrorException | HttpServerErrorException.NotImplemented e) {
-                // it answered (4xx, or 501 "this endpoint doesn't exist yet"): alive, and repeating won't change the answer
+                // it answered: alive, and repeating won't change the answer
                 endpoint.recordSuccess();
                 throw e;
             } catch (RestClientException e) {

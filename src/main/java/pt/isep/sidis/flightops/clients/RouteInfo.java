@@ -1,9 +1,6 @@
 package pt.isep.sidis.flightops.clients;
 
-/**
- * Response of the Airports & Routes service: GET /internal/routes/{routeId}.
- * See docs/service-contracts.md.
- */
+/** GET /internal/routes/{routeId} of the Airports &amp; Routes service (docs/service-contracts.md). */
 public record RouteInfo(
         String routeId,
         String status,              // ACTIVE | DEACTIVATED

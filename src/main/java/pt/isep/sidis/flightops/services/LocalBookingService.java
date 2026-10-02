@@ -16,9 +16,9 @@ import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 import java.time.LocalDateTime;
 
 /**
- * Books a flight on THIS instance: all the scheduling rules, the per-aircraft lock and the overlap checks.
- * Called for aircraft this instance owns (or as a fallback when the owner can't be reached), either directly by
- * {@link ScheduledFlightService} or, for a booking forwarded by a peer, by POST /internal/flights.
+ * Books a flight on this instance: the scheduling rules, the per-aircraft lock and the overlap checks. Used for
+ * aircraft this instance owns (directly, or via POST /internal/flights from a peer) and as the fallback when the
+ * owner can't be reached.
  */
 @Service
 @RequiredArgsConstructor
@@ -78,17 +78,15 @@ public class LocalBookingService {
         LocalDateTime bufferedDeparture = departureTime.minusMinutes(TURNAROUND_BUFFER_MINUTES);
         LocalDateTime bufferedArrival = arrivalTime.plusMinutes(TURNAROUND_BUFFER_MINUTES);
 
-        // Bookings of the same aircraft on this instance run one after the other from here until commit, so the
-        // overlap check below always sees a flight that a concurrent booking has just saved (see AircraftBookingLocks).
+        // From here until commit, bookings of the same aircraft run one after the other, so the overlap check below
+        // sees a flight that a concurrent booking has just saved.
         aircraftBookingLocks.lock(aircraft.registrationNumber());
 
-        // This instance: normally the owner of the aircraft, so it holds all of its flights
         if (!scheduledFlightRepository.findOverlappingFlightsWithLock(
                 aircraft.registrationNumber(), bufferedDeparture, bufferedArrival).isEmpty()) {
             throw new IllegalStateException("The aircraft is already scheduled...");
         }
-        // Peers: flights of this aircraft can still be there (booked while the owner was down, or before sharding
-        // by aircraft) - best-effort check, see docs/architecture.md "Consistency model".
+        // Peers can still hold flights of this aircraft (booked while its owner was down): best-effort check
         boolean overlapsOnPeer = flightQueryService.activeOnPeers(aircraft.registrationNumber()).stream()
                 .anyMatch(f -> FlightStatus.SCHEDULED.name().equals(f.status())
                         && !f.scheduledDeparture().isAfter(bufferedArrival)

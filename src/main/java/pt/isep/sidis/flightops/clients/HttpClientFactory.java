@@ -16,14 +16,12 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 
 /**
- * Builds the HTTP clients used for service-to-service calls. When the "tls" profile sets
- * {@code sidis.tls.client-bundle}, the clients trust only certificates signed by the AISafe CA
- * (hostname verification stays on).
+ * HTTP clients for calls between services/instances. With the "tls" profile they trust only the AISafe CA (hostname
+ * verification stays on) and speak TLS 1.3 only.
  *
- * <p>Uses Apache HttpClient 5: pooled keep-alive connections and PATCH support (HttpURLConnection has no PATCH).
- * Not the JDK HttpClient: it completes responses asynchronously, and on a 1-CPU container the JDK runs those
- * completions on a new thread every time, which made each peer call far more expensive (found by load testing).
- * The pool is sized explicitly because the default (5 connections per destination) throttles peer calls under load.
+ * <p>Apache HttpClient 5: pooled connections and PATCH support. Not the JDK HttpClient: on a 1-CPU container it starts
+ * a new thread for every response, which made each peer call much more expensive. The pool is sized explicitly
+ * because the default (5 connections per destination) throttles peer calls under load.
  */
 @Component
 public class HttpClientFactory {
@@ -49,7 +47,7 @@ public class HttpClientFactory {
                     .setSslContext(sslBundle.createSslContext());
             String[] protocols = sslBundle.getOptions().getEnabledProtocols();
             if (protocols != null) {
-                tls.setTlsVersions(protocols);   // TLS 1.3 only, from the "tls" profile
+                tls.setTlsVersions(protocols);
             }
             pool.setSSLSocketFactory(tls.build());
         }

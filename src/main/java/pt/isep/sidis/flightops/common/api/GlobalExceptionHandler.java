@@ -45,7 +45,7 @@ public class GlobalExceptionHandler {
                 "Concurrency conflict: the record was modified by another user. Please refresh your data and try again.");
     }
 
-    // 409 - another booking for the same aircraft held the aircraft lock for too long (see AircraftBookingLocks)
+    // 409 - another booking held the aircraft lock for too long (AircraftBookingLocks)
     @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
     public ResponseEntity<Map<String, String>> handleLockTimeout(org.springframework.dao.PessimisticLockingFailureException ex) {
         return error(HttpStatus.CONFLICT, "Another booking for this aircraft is in progress. Please try again.");

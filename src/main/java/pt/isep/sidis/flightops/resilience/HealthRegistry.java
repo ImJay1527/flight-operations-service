@@ -33,11 +33,10 @@ public class HealthRegistry {
         this.metrics = metrics;
     }
 
-    /** Returns the (shared) health record of an instance, creating it the first time. */
     public synchronized EndpointHealth register(String group, String url) {
         return endpoints.computeIfAbsent(url, u -> {
             EndpointHealth health = new EndpointHealth(group, u, failureThreshold, openDuration, maxOpenDuration, clock);
-            metrics.registerHealthGauge(health);   // PL3 p.19: peer availability
+            metrics.registerHealthGauge(health);
             return health;
         });
     }

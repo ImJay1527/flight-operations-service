@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * US227 - fuel burn rate = fuelCapacity / maxRange of the aircraft model, captured on each flight when it was scheduled.
- * Computed over the flights of every replica.
+ * US227. Fuel burn rate = fuelCapacity / maxRange of the model, stored on each flight when it was scheduled.
+ * Computed over the flights of all instances.
  */
 @Service
 @RequiredArgsConstructor

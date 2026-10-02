@@ -15,7 +15,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Boots a standalone replica (no peers, bootstrap shard 0) and checks the access rules. */
+/** One standalone instance: the access rules. */
 @SpringBootTest
 @AutoConfigureMockMvc
 class SecurityIntegrationTest {

@@ -4,12 +4,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/**
- * One row per aircraft, used only as a lock: a booking locks its aircraft's row (SELECT ... FOR UPDATE) until its
- * transaction commits, so two bookings for the same aircraft on this instance run one after the other.
- * Locking the overlapping flights is not enough: when there are none yet, there is nothing to lock.
- * See docs/architecture.md, "Consistency model".
- */
+/** One row per aircraft, used only as a lock (see {@code AircraftBookingLocks}). */
 @Entity
 @Table(name = "aircraft_booking_lock")
 public class AircraftBookingLock {

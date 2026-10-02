@@ -16,13 +16,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Peer-to-peer endpoints between replicas of this service. They answer ONLY from the local shard and never forward,
- * which is what prevents query loops. Protected by SecurityConfig: requires role SERVICE.
+ * Endpoints for the other instances of this service (role SERVICE). They use local data only and never forward,
+ * which is what prevents query loops.
  */
 @RestController
 @RequestMapping("/internal/flights")
 @RequiredArgsConstructor
-@Tag(name = "Internal (replica-to-replica)", description = "Local-shard queries used by peer replicas. Role SERVICE only.")
+@Tag(name = "Internal (instance-to-instance)", description = "Local-data endpoints used by the other instances. Role SERVICE only.")
 public class InternalFlightController {
 
     private final FlightQueryService flightQueryService;
@@ -38,7 +38,7 @@ public class InternalFlightController {
         return ResponseEntity.status(HttpStatus.CREATED).body(flight);
     }
 
-    @Operation(summary = "Local flight by number (404 if not on this replica)")
+    @Operation(summary = "Local flight by number (404 if not on this instance)")
     @GetMapping("/{flightNumber}")
     public ResponseEntity<FlightView> byId(@PathVariable String flightNumber) {
         FlightView flight = flightQueryService.localById(flightNumber);
@@ -64,7 +64,7 @@ public class InternalFlightController {
         return flightQueryService.localDepartures(iata.toUpperCase(), now, now.plusHours(hours));
     }
 
-    @Operation(summary = "Cancel a flight stored on this replica (404 if not here)")
+    @Operation(summary = "Cancel a flight stored on this instance (404 if not here)")
     @PatchMapping("/{flightNumber}/cancel")
     public ResponseEntity<FlightView> cancel(@PathVariable String flightNumber) {
         FlightView flight = scheduledFlightService.cancelLocal(flightNumber);

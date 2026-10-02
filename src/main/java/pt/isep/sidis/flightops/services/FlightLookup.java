@@ -2,10 +2,7 @@ package pt.isep.sidis.flightops.services;
 
 import pt.isep.sidis.flightops.api.dto.FlightView;
 
-/**
- * A flight plus where it was found: {@code "local"} (this instance's database) or {@code "peer:<url>"}.
- * Sent to the client as the {@code X-Data-Source} header, so tests can see whether a request was forwarded.
- */
+/** A flight and where it was found ({@code local} or {@code peer:<url>}), sent as the {@code X-Data-Source} header. */
 public record FlightLookup(FlightView flight, String source) {
 
     public static final String LOCAL = "local";

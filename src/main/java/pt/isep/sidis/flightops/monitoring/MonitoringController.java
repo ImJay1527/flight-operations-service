@@ -19,11 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/**
- * PL3 p.19 "Monitoring Metrics" in one readable answer, for this instance since it started:
- * response times (local vs forwarded), forwarding success rate, peer health and failure rates, requests served
- * (compare the instances for load distribution).
- */
+/** PL3 p.19 monitoring metrics of this instance since it started, in one readable answer. */
 @RestController
 @RequestMapping("/api/cluster")
 @Tag(name = "Cluster")
@@ -59,8 +55,6 @@ public class MonitoringController {
                 remoteInstances());
     }
 
-    // ---------------------------------------------------------------------------------------------- helpers
-
     private TimerStats timerStats(String source) {
         Timer timer = registry.find(FlightOpsMetrics.LOOKUPS).tag("source", source).timer();
         if (timer == null || timer.count() == 0) {
@@ -79,7 +73,7 @@ public class MonitoringController {
                 round(timer.max(TimeUnit.MILLISECONDS)));
     }
 
-    /** Requests answered by this instance (from Spring Boot's http.server.requests), without actuator calls. */
+    /** Requests answered by this instance, without actuator calls. */
     private Served requestsServed() {
         long total = 0;
         Map<String, Long> byStatus = new LinkedHashMap<>();
@@ -118,21 +112,17 @@ public class MonitoringController {
         return Math.round(v * 100.0) / 100.0;
     }
 
-    // ---------------------------------------------------------------------------------------------- response
-
     public record Metrics(String instance, Served requestsServed, Lookups lookupResponseTimes,
                           Forwarding forwarding, List<RemoteInstance> remoteInstances) {
     }
 
-    /** Load distribution: compare this number between the instances. */
     public record Served(long total, Map<String, Long> byStatus) {
     }
 
-    /** Response times in ms: local vs forwarded (PL3 p.21: ~50 ms vs ~200 ms as reference). */
     public record Lookups(TimerStats local, TimerStats forwarded, TimerStats notFound) {
     }
 
-    /** medianMs is robust against a few slow calls (e.g. the very first one on a cold JVM); avgMs is not. */
+    /** Times in ms. medianMs is robust against a few slow calls (e.g. the first ones on a cold JVM); avgMs is not. */
     public record TimerStats(long count, Double avgMs, Double medianMs, Double p95Ms, Double maxMs) {
     }
 

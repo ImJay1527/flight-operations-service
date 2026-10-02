@@ -2,10 +2,7 @@ package pt.isep.sidis.flightops.clients;
 
 import java.util.List;
 
-/**
- * Response of the Airports & Routes service: GET /internal/airports/{iata}
- * (also embedded in {@link RouteInfo}). See docs/service-contracts.md.
- */
+/** GET /internal/airports/{iata} of the Airports &amp; Routes service (docs/service-contracts.md). */
 public record AirportInfo(
         String iataCode,
         String status,                  // OPERATIONAL | CLOSED | UNDER_MAINTENANCE

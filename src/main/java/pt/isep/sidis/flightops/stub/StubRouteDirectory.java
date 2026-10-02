@@ -13,9 +13,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * "stub" profile only: route and airport data built in, so this service can be run and tested without the
- * Airports &amp; Routes service. Same data as docs/service-contracts.md, plus route-opo-mad-old (deactivated)
- * for the negative tests.
+ * "stub" profile: built-in route and airport data, so this service can be tested without the Airports &amp; Routes
+ * service. The shared bootstrap data plus route-opo-mad-old (deactivated) for the negative tests.
  */
 @Component
 @Profile("stub")

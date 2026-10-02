@@ -14,29 +14,25 @@ import java.util.Arrays;
 import java.util.Base64;
 
 /**
- * Encryption at rest (P1 p.16 "AES encryption for stored data") of sensitive columns.
- *
- * <p>Deterministic authenticated encryption, SIV construction (RFC 5297 idea, built from JDK primitives):
+ * Encryption at rest of sensitive columns (P1 p.16). Deterministic authenticated encryption, SIV construction:
  * <ol>
  *   <li>IV = first 16 bytes of HMAC-SHA256(macKey, plaintext) - the "synthetic IV";</li>
  *   <li>ciphertext = AES-256-CBC(encKey, IV, plaintext);</li>
  *   <li>stored as {@code enc:v1:base64(IV || ciphertext)}.</li>
  * </ol>
- * The same plaintext always gives the same ciphertext, so the database can still find rows by equality
- * (aircraft registration, airport code) - the price is that it shows which rows share a value, not what it is.
- * On decryption the HMAC is recomputed and compared with the IV, so a changed ciphertext is detected.
+ * Deterministic, so the database can still find rows by equality (registration, airport code); the price is that it
+ * shows which rows share a value, not what the value is. Decryption recomputes the HMAC, so tampering is detected.
  *
- * <p>Key management: one 256-bit master key (env DATA_ENCRYPTION_KEY, base64); the encryption and MAC keys are
- * derived from it. The {@code v1} in every value is the key version, so a new key can be introduced as v2 and old
- * values re-encrypted (rotation; the re-encryption job is not implemented). Values without the {@code enc:} prefix
- * are treated as old, unencrypted data and returned as they are (see {@link EncryptionMigration}).
+ * <p>Keys are derived from one 256-bit master key (env DATA_ENCRYPTION_KEY). {@code v1} is the key version, so a new
+ * key can be introduced as v2 (rotation; re-encrypting old values is not implemented). Values without the
+ * {@code enc:} prefix are old, unencrypted data and are returned as they are (see {@link EncryptionMigration}).
  */
 @Component
 public class FieldEncryption {
 
     public static final String PREFIX = "enc:v1:";
 
-    /** Lets the JPA converter (created by Hibernate, not by Spring) reach the Spring-configured instance. */
+    /** For the JPA converter, which Hibernate creates outside Spring. */
     private static volatile FieldEncryption instance;
 
     private final SecretKeySpec encKey;

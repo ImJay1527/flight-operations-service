@@ -8,7 +8,7 @@
 #
 # Clients use the load balancer: https://localhost:8443 (nginx, lb/nginx.conf). The instances stay reachable directly
 # on 8083 / 8093 for tests that need a specific instance.
-# Only flight-operations-only demo:  docker compose up --build flightops-lb   (starts the 2 instances it needs)
+# Only flight ops:  docker compose up --build flightops-lb   (starts the 2 instances it needs)
 # Only the databases (for running the instances from VS Code / scripts/run-local.sh):
 #   docker compose up -d --wait flightops-db-1 flightops-db-2
 # Delete all stored data:  docker compose down -v

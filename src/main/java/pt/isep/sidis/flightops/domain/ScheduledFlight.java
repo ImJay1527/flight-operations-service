@@ -8,13 +8,9 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * A scheduled flight. In the monolith this entity pointed (JPA @ManyToOne) at FlightRoute and Aircraft;
- * those now live in other services, so we keep only their identifiers plus a snapshot of the few
- * values this service needs for its own queries (utilization, fuel efficiency, departures board).
- *
- * <p>The route assignment (route, aircraft, model, airports) is encrypted in the database (P1 p.16), see
- * {@link pt.isep.sidis.flightops.common.crypto.FieldEncryption}; times, status and numbers stay readable because
- * they are used in range queries.
+ * Route and aircraft live in other services, so a flight keeps their ids plus a snapshot of the values this service
+ * needs for its own queries. The route assignment is encrypted at rest (P1 p.16); times, status and numbers stay
+ * readable because they are used in range queries.
  */
 @Entity
 @Getter
@@ -25,24 +21,24 @@ public class ScheduledFlight {
     private String flightNumber;
 
     @Column(nullable = false)
-    @Convert(converter = EncryptedString.class)   // encrypted at rest
+    @Convert(converter = EncryptedString.class)
     private String routeId;
 
     @Column(nullable = false)
-    @Convert(converter = EncryptedString.class)   // encrypted at rest
+    @Convert(converter = EncryptedString.class)
     private String aircraftRegistration;
 
-    // ---- snapshot of remote data, captured when the flight is scheduled ----
+    // snapshot of the other services' data, taken when the flight is scheduled
     @Column(nullable = false)
-    @Convert(converter = EncryptedString.class)   // encrypted at rest
+    @Convert(converter = EncryptedString.class)
     private String aircraftModel;
 
     @Column(nullable = false)
-    @Convert(converter = EncryptedString.class)   // encrypted at rest
+    @Convert(converter = EncryptedString.class)
     private String originIata;
 
     @Column(nullable = false)
-    @Convert(converter = EncryptedString.class)   // encrypted at rest
+    @Convert(converter = EncryptedString.class)
     private String destinationIata;
 
     @Column(nullable = false)
@@ -51,7 +47,6 @@ public class ScheduledFlight {
     /** fuelCapacity / maxRange of the aircraft model. */
     @Column(nullable = false)
     private double fuelBurnRate;
-    // -------------------------------------------------------------------------
 
     @Column(nullable = false)
     private LocalDateTime scheduledDeparture;

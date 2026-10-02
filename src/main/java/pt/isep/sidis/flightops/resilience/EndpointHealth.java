@@ -8,7 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 /**
- * Health and circuit breaker of ONE remote instance (a peer, or one instance of another service). PL3 p.12 and p.14.
+ * Circuit breaker of one remote instance (a peer, or an instance of another service). PL3 p.12, p.14.
  *
  * <pre>
  *   CLOSED ──(failureThreshold failures in a row)──► OPEN ──(openDuration passed)──► HALF_OPEN
@@ -111,7 +111,6 @@ public class EndpointHealth {
                 openUntil, lastSuccess, lastFailure, lastError);
     }
 
-    /** Read-only view for the status endpoint. */
     public record Snapshot(String group, String url, State circuit, boolean healthy, int consecutiveFailures,
                            Instant openUntil, Instant lastSuccess, Instant lastFailure, String lastError) {
     }

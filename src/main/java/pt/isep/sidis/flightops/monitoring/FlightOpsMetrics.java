@@ -9,19 +9,14 @@ import pt.isep.sidis.flightops.resilience.EndpointHealth;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The monitoring metrics of PL3 p.19, recorded with Micrometer (Spring Boot's metrics library):
+ * The metrics of PL3 p.19 (Micrometer):
  * <ul>
- *   <li>{@value #LOOKUPS} (timer, tag {@code source} = local | forwarded | not_found):
- *       response time of a flight lookup, <b>local vs forwarded</b>, and how often forwarding found the flight
- *       (<b>forwarding success rate</b>).</li>
- *   <li>{@value #REMOTE_CALLS} (timer, tags {@code group}, {@code target}, {@code outcome} = success | not_found |
- *       failure | circuit_open): every call to a peer / another service's instance, including retries:
- *       <b>peer failure rates</b>.</li>
- *   <li>{@value #REMOTE_HEALTHY} (gauge 1/0, tags {@code group}, {@code target}): <b>peer availability</b>.</li>
- *   <li>{@code http.server.requests} (recorded by Spring Boot): requests served by this instance, for
- *       <b>load distribution</b>.</li>
+ *   <li>{@value #LOOKUPS}: lookup times local vs forwarded, and the forwarding success rate;</li>
+ *   <li>{@value #REMOTE_CALLS}: every call to another instance, by outcome - peer failure rates;</li>
+ *   <li>{@value #REMOTE_HEALTHY}: 1/0 per instance - peer availability;</li>
+ *   <li>Spring Boot's {@code http.server.requests}: requests served - load distribution.</li>
  * </ul>
- * Readable summary: GET /api/cluster/metrics. Raw values: GET /actuator/metrics/&lt;name&gt; (ADMIN).
+ * Summary: GET /api/cluster/metrics.
  */
 @Component
 public class FlightOpsMetrics {

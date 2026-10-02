@@ -16,11 +16,7 @@
 # left running when you press Ctrl+C, so the data is kept. Stop them: docker compose stop
 # Delete their data: docker compose down -v
 #
-# Each instance runs with its Spring profile instance<i> (src/main/resources/application-instance<i>.properties).
-#
-# Port scheme: 8083 + 10 * (i - 1). Every instance gets the list of all instances (CLUSTER); the aircraft, and
-# so the sample flights, are sharded over them by registration.
-# Logs: logs/flightops-<i>.log
+# Instance i runs with the Spring profile instance<i> on port 8083 + 10 * (i - 1). Logs: logs/flightops-<i>.log
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -67,8 +63,7 @@ echo "Building..."
 JAR=$(ls target/flight-operations-service-*.jar | head -1)
 mkdir -p logs
 
-# Each instance runs under a small supervisor loop: if it stops on its own (crash, or the Postman resilience test
-# shutting it down via /actuator/shutdown), it is started again after RESTART_DELAY seconds. Ctrl+C stops everything.
+# Each instance runs in a supervisor loop that restarts it when it stops on its own.
 SUPERVISORS=()
 stop_port() {
   if command -v taskkill >/dev/null; then   # Windows (Git Bash)
@@ -98,15 +93,14 @@ supervise() {   # $1 = instance number
   done
 }
 
-# All instances, by name - the same list for every instance (cluster.Cluster: peers + sharding by aircraft)
+# all instances by name, the same list for every instance
 members=()
 for j in $(seq 1 "$N"); do members+=("instance$j=$SCHEME://localhost:$(port "$j")"); done
 CLUSTER=$(IFS=,; echo "${members[*]}")
 
 for i in $(seq 1 "$N"); do
 
-  # Port, DB etc. come from application-instance<i>.properties. CLUSTER is passed because it depends on how many
-  # instances run (instances 1 and 2 must learn about instance 3 when N=3).
+  # CLUSTER depends on how many instances run (with -n 3, instances 1 and 2 must know instance 3)
   : > "logs/flightops-$i.log"
   supervise "$i" &
   SUPERVISORS+=($!)

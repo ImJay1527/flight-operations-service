@@ -56,7 +56,7 @@ public class ScheduledFlightController {
                 dto.getArrivalTime()
         );
 
-        // X-Stored-On: the instance that owns the aircraft and stores the flight (sharding by aircraft, P1 p.15)
+        // X-Stored-On: the aircraft's owner, which stores the flight
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header("X-Stored-On", booking.storedOn())
                 .body(assembler.toModel(booking.flight()));
@@ -98,7 +98,7 @@ public class ScheduledFlightController {
             @PathVariable String flightNumber) {
 
         FlightLookup lookup = scheduledFlightService.getFlightById(flightNumber);
-        // X-Data-Source: "local" or "peer:<url>" - shows whether the request was forwarded (PL3 p.16 tests 01/02)
+        // X-Data-Source: "local" or "peer:<url>" - shows whether the request was forwarded
         return ResponseEntity.ok()
                 .header("X-Data-Source", lookup.source())
                 .body(assembler.toModel(lookup.flight()));

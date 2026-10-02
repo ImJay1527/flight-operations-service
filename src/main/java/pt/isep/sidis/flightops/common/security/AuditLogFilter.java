@@ -14,9 +14,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * Audit trail: one line per request with who did what, the outcome and how long it took.
- * The instance name and request id are added to the line by the log pattern (see RequestTracingFilter).
- * Runs after the JWT filter so the authenticated principal is known. Logger name: AUDIT.
+ * Audit trail (logger AUDIT): one line per request - who, what, outcome, duration. Runs after the JWT filter so the
+ * authenticated user is known.
  */
 @Component
 public class AuditLogFilter extends OncePerRequestFilter {
@@ -25,7 +24,7 @@ public class AuditLogFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        // health checks every few seconds would flood the audit log; everything else (incl. shutdown) is audited
+        // health checks every few seconds would flood the audit log
         return request.getRequestURI().startsWith("/actuator/health");
     }
 

@@ -33,7 +33,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable())
-                .cors(cors -> { })   // uses the corsConfigurationSource bean below (PL2 p.9)
+                .cors(cors -> { })   // corsConfigurationSource below
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(e -> e.authenticationEntryPoint(
                         (req, res, ex) -> res.sendError(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
@@ -55,9 +55,8 @@ public class SecurityConfig {
     }
 
     /**
-     * CORS (PL2 p.9): lets a web frontend served from another origin (e.g. http://localhost:5173) call this API from
-     * the browser. Allowed origins: sidis.cors.allowed-origins. No cookies are used (the JWT is sent in the
-     * Authorization header), so credentials stay off. The custom response headers are exposed to the frontend.
+     * CORS (PL2 p.9): lets a web frontend on another origin call /api/** from the browser. No cookies are used (the JWT
+     * is in the Authorization header), so credentials stay off.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource(

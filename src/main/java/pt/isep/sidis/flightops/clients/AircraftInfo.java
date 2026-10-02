@@ -1,9 +1,6 @@
 package pt.isep.sidis.flightops.clients;
 
-/**
- * Response of the Aircraft & Maintenance service: GET /internal/aircraft/{registration}.
- * See docs/service-contracts.md.
- */
+/** GET /internal/aircraft/{registration} of the Aircraft &amp; Maintenance service (docs/service-contracts.md). */
 public record AircraftInfo(
         String registrationNumber,
         String status,          // AVAILABLE | IN_FLIGHT | UNDER_MAINTENANCE | INACTIVE

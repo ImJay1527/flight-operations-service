@@ -4,10 +4,7 @@ import pt.isep.sidis.flightops.domain.ScheduledFlight;
 
 import java.time.LocalDateTime;
 
-/**
- * Plain, serialisable view of a flight. It is what replicas exchange with each other on
- * /internal/flights/** and what the services use to merge local and remote results.
- */
+/** A flight as exchanged between instances on /internal/flights/** and merged from local and remote results. */
 public record FlightView(
         String flightNumber,
         String routeId,

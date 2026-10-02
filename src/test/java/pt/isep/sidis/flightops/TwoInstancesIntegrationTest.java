@@ -30,10 +30,8 @@ import java.util.concurrent.Future;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * End-to-end test of the distributed behaviour (PL3 p.15 "integration tests for end-to-end distributed behavior",
- * p.16 test cases): two REAL instances (profiles instance1 / instance2, each with its own in-memory database and the
- * "stub" profile for aircraft/route data) are started on free ports and talk to each other over HTTP.
- * The tests run in order; the last ones stop instance 2.
+ * End-to-end test (PL3 p.15-16): two real instances, each with its own in-memory database and stub data, started on
+ * free ports and talking over HTTP. The tests run in order; the last ones stop instance 2.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @ExtendWith(OutputCaptureExtension.class)
@@ -209,8 +207,6 @@ class TwoInstancesIntegrationTest {
                     assertThat(e.get("healthy")).isEqualTo(false);
                 });
     }
-
-    // ------------------------------------------------------------------------------------------------ helpers
 
     private static String login(String baseUrl) {
         Map<?, ?> body = http.post().uri(baseUrl + "/api/auth/login")

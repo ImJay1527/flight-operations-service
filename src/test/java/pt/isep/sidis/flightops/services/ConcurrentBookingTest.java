@@ -16,8 +16,8 @@ import java.util.concurrent.Future;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Two bookings for the SAME aircraft in the SAME time window, sent to the same instance at the same moment:
- * exactly one may succeed (docs/architecture.md, "Consistency model"). Real database (H2), real transactions.
+ * Two bookings of the same aircraft for the same time, sent to one instance at the same moment: exactly one may
+ * succeed. Real database (H2), real transactions.
  */
 @SpringBootTest
 @ActiveProfiles("stub")

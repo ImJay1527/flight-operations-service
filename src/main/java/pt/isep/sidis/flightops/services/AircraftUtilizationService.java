@@ -12,7 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** US223 - computed over the flights of every replica (see {@link FlightQueryService#findActive}). */
+/** US223, computed over the flights of all instances. */
 @Service
 public class AircraftUtilizationService {
 

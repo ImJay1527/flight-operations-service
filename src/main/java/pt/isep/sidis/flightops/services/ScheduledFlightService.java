@@ -27,9 +27,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Scheduled flights across the instances. Bookings are sharded by aircraft registration (P1 p.15): a booking is made
- * on the instance that owns the aircraft ({@link Cluster#ownerOf}), forwarding it there if needed, so all flights of
- * an aircraft are on one instance and its per-aircraft lock prevents double-booking across instances too.
+ * Bookings are sharded by aircraft (P1 p.15): a booking is made on the aircraft's owner ({@link Cluster#ownerOf}),
+ * forwarded there if needed, so the owner's per-aircraft lock prevents double-booking across instances too.
  */
 @Service
 @RequiredArgsConstructor
@@ -46,9 +45,8 @@ public class ScheduledFlightService {
     private final Cluster cluster;
 
     /**
-     * Books on the owner of the aircraft. If the owner can't be reached and the request certainly did not get there
-     * (connection refused, circuit open), the booking is made here instead - availability first (AP), with the
-     * best-effort overlap check. If the owner was reached but did not answer in time, the outcome is unknown: 503,
+     * If the owner certainly did not get the request (connection refused, circuit open), the booking is made here
+     * instead - availability first (AP). If it was reached but did not answer in time the outcome is unknown: 503,
      * rather than risking a second booking.
      */
     public Booking scheduleFlight(String routeId, String aircraftRegistration,
@@ -62,7 +60,7 @@ public class ScheduledFlightService {
                     new InternalBookingRequest(routeId, aircraftRegistration, departureTime, arrivalTime), FlightView.class);
             return new Booking(flight, owner);
         } catch (HttpClientErrorException refused) {
-            throw ownersAnswer(refused);                  // e.g. 409 "already scheduled", 404 unknown aircraft
+            throw ownersAnswer(refused);
         } catch (HttpServerErrorException failed) {
             throw new ServiceUnavailableException(owner + ": " + errorMessage(failed.getResponseBodyAsString()));
         } catch (CircuitOpenException | ResourceAccessException e) {
@@ -77,7 +75,7 @@ public class ScheduledFlightService {
         }
     }
 
-    /** The owner's 4xx, as the same kind of error here (so the client gets the owner's status and message). */
+    /** The owner's 4xx as the same error here, so the client gets the owner's status and message. */
     private RuntimeException ownersAnswer(HttpClientErrorException e) {
         String message = errorMessage(e.getResponseBodyAsString());
         return switch (e.getStatusCode().value()) {
@@ -98,7 +96,7 @@ public class ScheduledFlightService {
         return end < 0 ? body.substring(start) : body.substring(start, end);
     }
 
-    /** True if the request certainly never reached the other instance (so trying elsewhere can't duplicate it). */
+    /** True if the request certainly never reached the other instance, so booking elsewhere can't duplicate it. */
     private static boolean neverDelivered(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             if (t instanceof ConnectException || t instanceof ConnectTimeoutException
@@ -118,7 +116,7 @@ public class ScheduledFlightService {
         return flightQueryService.findById(flightNumber);
     }
 
-    /** Cancels the flight on whichever replica holds it. */
+    /** Cancels the flight on whichever instance holds it. */
     public FlightView cancelFlight(String flightNumber) {
         FlightView local = cancelLocal(flightNumber);
         if (local != null) {
@@ -131,7 +129,7 @@ public class ScheduledFlightService {
         throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
     }
 
-    /** Cancels a flight stored on this replica; returns null if it is not here. */
+    /** Cancels a flight stored on this instance; null if it is not here. */
     @Transactional
     public FlightView cancelLocal(String flightNumber) {
         return scheduledFlightRepository.findById(flightNumber)

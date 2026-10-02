@@ -11,7 +11,6 @@ import pt.isep.sidis.flightops.resilience.ResilientCaller;
 import java.time.Duration;
 import java.util.List;
 
-/** HTTP client for the Aircraft & Maintenance service. */
 @Component
 @Profile("!stub")   // replaced by built-in data in the "stub" profile
 public class AircraftClient extends ReplicatedServiceClient implements AircraftDirectory {

@@ -9,9 +9,9 @@ import pt.isep.sidis.flightops.clients.HttpClientFactory;
 import java.time.Duration;
 
 /**
- * Active health checks (PL3 p.12 "Health Checks: monitor peer availability"): every few seconds, GET
- * /actuator/health on every known instance. A failure counts towards opening its circuit; a success closes it
- * again, so a recovered instance is used again automatically, without waiting for user traffic (PL3 p.14).
+ * Active health checks (PL3 p.12): GET /actuator/health on every known instance every few seconds. A failure counts
+ * towards opening its circuit; a success closes it, so a recovered instance is used again without waiting for
+ * user traffic (PL3 p.14).
  */
 @Component
 public class HealthChecker {

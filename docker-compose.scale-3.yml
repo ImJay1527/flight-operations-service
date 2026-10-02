@@ -3,8 +3,8 @@
 #   docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build
 #   (only flight ops:  ... up --build flightops-1 flightops-2 flightops-3)
 #
-# With a hardcoded instance list, scaling is a configuration change: every instance gets the 3-instance CLUSTER
-# list. Aircraft are re-sharded by rendezvous hashing: only those the new instance wins move to it. See docs/architecture.md, "Horizontal scaling".
+# Scaling is a configuration change: every instance gets the 3-instance CLUSTER list. Rendezvous hashing only
+# moves the aircraft the new instance wins (docs/architecture.md, "Horizontal scaling").
 
 services:
   flightops-1:

@@ -1,6 +1,6 @@
 package pt.isep.sidis.flightops.common.exceptions;
 
-/** A downstream service (or every replica of it) could not be reached. Mapped to HTTP 503. */
+/** Another service could not be used. Mapped to HTTP 503. */
 public class ServiceUnavailableException extends RuntimeException {
     public ServiceUnavailableException(String message, Throwable cause) {
         super(message, cause);

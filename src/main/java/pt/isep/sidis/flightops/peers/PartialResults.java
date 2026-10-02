@@ -11,13 +11,8 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
 /**
- * Tells the client when an answer is incomplete (P1 p.12 "Handle partial response scenarios"): if peers could not be
- * reached while building a response, it gets the headers
- * <pre>
- *   X-Partial-Result: true
- *   X-Unreachable-Peers: 1
- * </pre>
- * The answer is still 200 with everything the reachable instances had (availability first, AP in CAP).
+ * Flags incomplete answers (P1 p.12): if peers could not be reached while building a response, it still gets 200
+ * with what the reachable instances had, plus {@code X-Partial-Result: true} and {@code X-Unreachable-Peers: n}.
  */
 @RestControllerAdvice
 public class PartialResults implements ResponseBodyAdvice<Object> {
@@ -26,14 +21,13 @@ public class PartialResults implements ResponseBodyAdvice<Object> {
     public static final String UNREACHABLE_HEADER = "X-Unreachable-Peers";
     private static final String ATTRIBUTE = PartialResults.class.getName() + ".unreachable";
 
-    /** Remember, for the current request, that {@code unreachable} peers could not be asked. */
     public static void record(int unreachable) {
         RequestAttributes request = RequestContextHolder.getRequestAttributes();
         if (unreachable <= 0 || request == null) {
             return;
         }
         Integer before = (Integer) request.getAttribute(ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
-        // several peer queries in one request (e.g. a report): report the worst one
+        // several peer queries in one request: report the worst one
         request.setAttribute(ATTRIBUTE, Math.max(before == null ? 0 : before, unreachable), RequestAttributes.SCOPE_REQUEST);
     }
 

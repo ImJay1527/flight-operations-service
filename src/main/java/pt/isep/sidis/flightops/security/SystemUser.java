@@ -4,10 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/**
- * A user that can log in via /api/auth/login. This service is the identity provider for the whole system:
- * the JWT it issues is accepted by the other services (shared signing secret).
- */
+/** A user of /api/auth/login. This service issues the JWTs for the whole system (shared signing secret). */
 @Entity
 @Table(name = "\"system_user\"")
 @Getter

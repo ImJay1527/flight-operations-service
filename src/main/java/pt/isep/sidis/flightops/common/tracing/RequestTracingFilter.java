@@ -16,17 +16,10 @@ import java.io.IOException;
 import java.util.UUID;
 
 /**
- * Traces a request across instances (PL3 p.15 "structured logging to trace request flows across instances", p.19).
- *
- * <ul>
- *   <li>Every request gets a request id: the incoming {@code X-Request-Id} header if a caller (e.g. a peer instance)
- *       sent one, otherwise a new one. Outgoing calls to peers / other services pass it on
- *       ({@link RequestIdPropagation}), so one user request has the same id in the logs of every instance it touched.</li>
- *   <li>The instance name and the request id are put in the logging context (MDC), so every log line shows them:
- *       {@code INFO [instance1] [3f2a9c1e] ...}</li>
- *   <li>The response carries {@code X-Instance} (who answered) and {@code X-Request-Id}.</li>
- * </ul>
- * Runs before every other filter, including Spring Security.
+ * Traces a request across instances (PL3 p.15, p.19). The request id is the incoming {@code X-Request-Id} (e.g. from a
+ * peer) or a new one; outgoing calls pass it on ({@link RequestIdPropagation}), so one request has the same id in the
+ * logs of every instance it touched. Instance name and request id go into every log line (MDC) and into the
+ * {@code X-Instance} / {@code X-Request-Id} response headers. Runs before every other filter.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
