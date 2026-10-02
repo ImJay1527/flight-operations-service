@@ -1,0 +1,26 @@
+%% PL3 p.14: instance 2 fails - retries with backoff, circuit breaker, health check, automatic recovery
+sequenceDiagram
+    participant C as Client
+    participant I1 as instance1
+    participant I2 as instance2
+
+    Note over I2: instance 2 goes down
+    C->>I1: GET flight F (stored on instance 2)
+    I1-xI2: attempt 1: connection refused
+    Note over I1: wait ~100 ms
+    I1-xI2: attempt 2
+    Note over I1: wait ~200 ms
+    I1-xI2: attempt 3 - 3 failures in a row: circuit OPEN (10 s)
+    I1-->>C: 404 "... 1 peer instance could not be reached"
+    C->>I1: GET flight F again
+    Note over I1: circuit open: instance 2 skipped (fail fast, no flooding)
+    I1-->>C: 404 in a few ms
+    C->>I1: GET a flight stored on instance 1
+    I1-->>C: 200 (local data keeps working)
+    Note over I2: instance 2 restarts (data kept in its database)
+    I1->>I2: health check GET /actuator/health (every 5 s)
+    I2-->>I1: 200 UP - circuit CLOSED
+    C->>I1: GET flight F
+    I1->>I2: GET /internal/flights/F
+    I2-->>I1: 200 F
+    I1-->>C: 200 F (recovered automatically)

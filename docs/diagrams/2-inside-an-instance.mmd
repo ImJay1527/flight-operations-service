@@ -1,0 +1,46 @@
+%% One flight-operations instance: what a request goes through (packages in brackets)
+flowchart TB
+    req(["HTTP request"])
+
+    subgraph F["Filters (common.tracing, common.security)"]
+        direction LR
+        f1["RequestTracingFilter<br/>request id, X-Instance"] --> f2["AuthTokenFilter<br/>JWT -> roles"] --> f3["AuditLogFilter<br/>who, what, status, duration"]
+    end
+
+    subgraph C["Controllers (api, security, resilience, monitoring)"]
+        direction LR
+        c1["/api/scheduled-flights<br/>/api/aircraft-utilization<br/>/api/fuel-efficiency"]
+        c2["/internal/flights/**<br/>role SERVICE, local data only"]
+        c3["/api/auth/login<br/>/api/cluster/health, /metrics"]
+    end
+
+    subgraph S["Services (services)"]
+        direction LR
+        s1["ScheduledFlightService<br/>scheduling rules"]
+        s2["FlightQueryService<br/>local first, then peers"]
+        s3["Utilization / FuelEfficiency"]
+    end
+
+    repo[("ScheduledFlightRepository<br/>own database")]
+    peers["PeerClient (peers)<br/>other instances of this service"]
+    dirs["AircraftDirectory / RouteDirectory (clients)<br/>HTTP clients, or built-in data in stub mode"]
+
+    subgraph R["Resilience (resilience)"]
+        direction LR
+        r1["ResilientCaller<br/>retry + backoff"] --> r2["EndpointHealth<br/>circuit breaker"]
+        r3["HealthChecker<br/>/actuator/health every 5 s"] --> r2
+    end
+
+    m["FlightOpsMetrics (monitoring)<br/>timers, counters, health gauges"]
+
+    req --> F --> C
+    c1 --> S
+    c2 --> S
+    S --> repo
+    s2 --> peers
+    s1 --> dirs
+    peers --> R
+    dirs --> R
+    R -->|"HTTPS + SERVICE JWT<br/>+ X-Request-Id"| out(["peers / other services"])
+    R -.-> m
+    s2 -.-> m

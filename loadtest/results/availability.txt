@@ -1,0 +1,152 @@
+
+
+  █ THRESHOLDS 
+
+    ok_first_try{w:000}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_first_try{w:010}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_first_try{w:020}
+    ✓ 'rate>=0' rate=93.50%
+
+    ok_first_try{w:030}
+    ✓ 'rate>=0' rate=22.15%
+
+    ok_first_try{w:040}
+    ✓ 'rate>=0' rate=25.00%
+
+    ok_first_try{w:050}
+    ✓ 'rate>=0' rate=28.49%
+
+    ok_first_try{w:060}
+    ✓ 'rate>=0' rate=22.00%
+
+    ok_first_try{w:070}
+    ✓ 'rate>=0' rate=24.50%
+
+    ok_first_try{w:080}
+    ✓ 'rate>=0' rate=27.00%
+
+    ok_first_try{w:090}
+    ✓ 'rate>=0' rate=33.50%
+
+    ok_first_try{w:100}
+    ✓ 'rate>=0' rate=97.50%
+
+    ok_first_try{w:110}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_first_try{w:120}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_first_try{w:130}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_first_try{w:140}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_with_failover{w:000}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_with_failover{w:010}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_with_failover{w:020}
+    ✓ 'rate>=0' rate=96.00%
+
+    ok_with_failover{w:030}
+    ✓ 'rate>=0' rate=41.91%
+
+    ok_with_failover{w:040}
+    ✓ 'rate>=0' rate=51.04%
+
+    ok_with_failover{w:050}
+    ✓ 'rate>=0' rate=47.50%
+
+    ok_with_failover{w:060}
+    ✓ 'rate>=0' rate=44.50%
+
+    ok_with_failover{w:070}
+    ✓ 'rate>=0' rate=48.00%
+
+    ok_with_failover{w:080}
+    ✓ 'rate>=0' rate=53.00%
+
+    ok_with_failover{w:090}
+    ✓ 'rate>=0' rate=58.50%
+
+    ok_with_failover{w:100}
+    ✓ 'rate>=0' rate=97.50%
+
+    ok_with_failover{w:110}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_with_failover{w:120}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_with_failover{w:130}
+    ✓ 'rate>=0' rate=100.00%
+
+    ok_with_failover{w:140}
+    ✓ 'rate>=0' rate=100.00%
+
+
+  █ TOTAL RESULTS 
+
+    CUSTOM
+    fail_data_unavailable..........: 701     4.651925/s
+    fail_instance_down.............: 663     4.399752/s
+    ok_first_try...................: 65.50%  1939 out of 2960
+      { w:000 }....................: 100.00% 201 out of 201
+      { w:010 }....................: 100.00% 200 out of 200
+      { w:020 }....................: 93.50%  187 out of 200
+      { w:030 }....................: 22.15%  37 out of 167
+      { w:040 }....................: 25.00%  48 out of 192
+      { w:050 }....................: 28.49%  57 out of 200
+      { w:060 }....................: 22.00%  44 out of 200
+      { w:070 }....................: 24.50%  49 out of 200
+      { w:080 }....................: 27.00%  54 out of 200
+      { w:090 }....................: 33.50%  67 out of 200
+      { w:100 }....................: 97.50%  195 out of 200
+      { w:110 }....................: 100.00% 200 out of 200
+      { w:120 }....................: 100.00% 200 out of 200
+      { w:130 }....................: 100.00% 200 out of 200
+      { w:140 }....................: 100.00% 200 out of 200
+    ok_with_failover...............: 76.31%  2259 out of 2960
+      { w:000 }....................: 100.00% 201 out of 201
+      { w:010 }....................: 100.00% 200 out of 200
+      { w:020 }....................: 96.00%  192 out of 200
+      { w:030 }....................: 41.91%  70 out of 167
+      { w:040 }....................: 51.04%  98 out of 192
+      { w:050 }....................: 47.50%  95 out of 200
+      { w:060 }....................: 44.50%  89 out of 200
+      { w:070 }....................: 48.00%  96 out of 200
+      { w:080 }....................: 53.00%  106 out of 200
+      { w:090 }....................: 58.50%  117 out of 200
+      { w:100 }....................: 97.50%  195 out of 200
+      { w:110 }....................: 100.00% 200 out of 200
+      { w:120 }....................: 100.00% 200 out of 200
+      { w:130 }....................: 100.00% 200 out of 200
+      { w:140 }....................: 100.00% 200 out of 200
+
+    HTTP
+    http_req_duration..............: avg=161.42ms min=0s     med=5.18ms max=5s    p(90)=14.75ms p(95)=498.22ms
+      { expected_response:true }...: avg=72.5ms   min=2.17ms med=6.41ms max=4.89s p(90)=14.79ms p(95)=23.82ms 
+    http_req_failed................: 37.43%  1364 out of 3644
+    http_reqs......................: 3644    24.182047/s
+
+    EXECUTION
+    dropped_iterations.............: 41      0.272081/s
+    iteration_duration.............: avg=782.03ms min=2.91ms med=7.91ms max=7.39s p(90)=5s      p(95)=5s      
+    iterations.....................: 2960    19.642936/s
+    vus............................: 1       min=0            max=61
+    vus_max........................: 61      min=20           max=61
+
+    NETWORK
+    data_received..................: 3.5 MB  23 kB/s
+    data_sent......................: 1.7 MB  12 kB/s
+
+
+

@@ -8,6 +8,10 @@ fuel efficiency (US227), departures board, and **user login** for the whole syst
 Other services: [`aircraft-maintenance-service`](../aircraft-maintenance-service),
 [`airports-routes-service`](../airports-routes-service). Contract between them: [docs/service-contracts.md](docs/service-contracts.md).
 
+![System overview](docs/diagrams/1-system-overview.png)
+
+Architecture diagrams, key benefits, performance measurements and scaling decisions: [docs/architecture.md](docs/architecture.md).
+
 ## Run
 
 ```bash
@@ -198,4 +202,5 @@ isolated from the others and **survives restarts**:
 - [ ] HTTPS on aircraft-maintenance-service and airports-routes-service (their owners), then switch the URLs in docker-compose to `https://`
 - [x] PostgreSQL container per instance in docker-compose
 - [x] Postman collection (postman/)
-- [ ] Design document (consistency model, failure scenarios)
+- [x] Architecture diagrams and performance analysis (docs/architecture.md)
+- [ ] Design document: consistency model, failure scenarios (partly in docs/architecture.md)

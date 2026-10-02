@@ -1,0 +1,19 @@
+%% PL3 p.11: HTTP GET forwarding - the flight is stored on instance 2 only, the client asks instance 1
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant I1 as instance1
+    participant DB1 as flightops-db-1
+    participant I2 as instance2
+    participant DB2 as flightops-db-2
+
+    C->>I1: GET /api/scheduled-flights/F<br/>user JWT, X-Request-Id: abc
+    I1->>DB1: find F
+    DB1-->>I1: not here
+    Note over I1: ask the peers one by one<br/>(first peer rotates per request)
+    I1->>I2: GET /internal/flights/F<br/>SERVICE JWT, X-Request-Id: abc
+    I2->>DB2: find F (local only, never forwards again)
+    DB2-->>I2: F
+    I2-->>I1: 200 F
+    I1-->>C: 200 F<br/>X-Data-Source: peer:instance2
+    Note over I1,I2: both logs show [abc]: one request traced across instances

@@ -1,5 +1,108 @@
 # Flight Operations – architecture notes
 
+Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Horizontal scaling](#horizontal-scaling)
+
+## System architecture (PL3 p.20)
+
+Three components, each running as **2 instances** with their **own database**. Instances of the same component
+forward GET requests to each other (peer forwarding); components call each other over HTTPS with a service token.
+Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
+`npx @mermaid-js/mermaid-cli -i <file>.mmd -o <file>.png -b white -s 2`.
+
+### 1. The system
+
+![System overview](diagrams/1-system-overview.png)
+
+### 2. Inside one instance
+
+![Inside an instance](diagrams/2-inside-an-instance.png)
+
+### 3. HTTP GET forwarding (PL3 p.11)
+
+![Forwarding](diagrams/3-forwarding.png)
+
+### 4. Failure and automatic recovery (PL3 p.14)
+
+![Failure and recovery](diagrams/4-failure-and-recovery.png)
+
+### Key architectural benefits (PL3 p.20)
+
+| Benefit | How this system provides it | Limit (honest) |
+|---|---|---|
+| **High availability**: the service continues if instances fail | 2 instances per component; any instance answers any request (stateless JWT); retries, circuit breaker and failover between instances; health checks bring a recovered instance back automatically | Data stored only on the failed instance is unavailable until it is back (no replication); clients must retry on the other instance (no load balancer yet). Measured below. |
+| **Horizontal scalability**: add instances as load grows | Instance profiles + `docker-compose.scale-3.yml`; sample data split over N instances; requests spread round-robin | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
+| **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); the failure is contained to its share of the data | Instances of one component share the same code, so a bug can affect all of them |
+| **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
+
+## Performance (PL3 p.21)
+
+Measured with `./loadtest/performance.sh latency` and `./loadtest/performance.sh availability` (k6 in Docker;
+every flight-ops instance limited to 1 CPU, HTTPS, PostgreSQL per instance; all on one laptop).
+Raw output: `loadtest/results/latency.txt`, `loadtest/results/availability.txt`.
+
+### Local vs forwarded response time
+
+Each request looks up a flight either on the instance that stores it (**local**) or on the other one
+(**forwarded**: one extra HTTPS call to the peer + its database lookup). Every answer was checked to really be
+local / forwarded (`X-Data-Source` header): 100 % of 55 000 checks passed.
+
+| | Local | Forwarded | Slide reference |
+|---|---|---|---|
+| 1 user, average (pure latency) | **4.1 ms** | **8.7 ms** | ~50 ms local, ~200 ms forwarded |
+| 1 user, median / p95 | 3.4 / 6.3 ms | 7.3 / 20 ms | |
+| 5 users (~310 req/s), average | 9.2 ms | 21.7 ms | |
+| 5 users, median / p95 | 2.9 / 70 ms | 6.9 / 78 ms | |
+
+* A forwarded request costs about **2×** a local one: the extra network hop and the peer's work (confirms quiz Q6:
+  forwarded requests have higher latency).
+* Both are far below the slide's reference values because all instances run on **one machine**: the "network" is
+  local, a few tenths of a millisecond. Between machines or regions every forwarded request pays the real network
+  round trip (~1 ms in a data centre, 20–150 ms between regions), which is why the slide expects ~200 ms.
+* Under load the p95 of both rises to ~70–80 ms: that is queueing on a 1-CPU instance, not forwarding.
+
+### Availability while an instance fails
+
+A steady 20 requests/s for 150 s, each asking a random instance for a random flight (half the flights are stored on
+each instance). Instance 2 is **killed** (like a crash) at ~30 s and started again at ~50 s; it is ready ~45 s later.
+
+| Window | ok on first try | ok with client failover |
+|---|---|---|
+| 0–30 s (both up) | 100 % | 100 % |
+| 30–100 s (instance 2 down) | ~25 % | ~50 % |
+| 100–150 s (instance 2 back) | 100 % | 100 % |
+| **Whole run (150 s)** | **65.5 %** | **76.3 %** |
+
+"Client failover": when the instance asked first cannot be reached, the client asks the other one (what a load
+balancer would do).
+
+Why ~25 % / ~50 % during the outage: half the requests go to the dead instance (fail, unless the client fails over);
+of the requests that reach instance 1, half ask for a flight stored on instance 2, which gets a 404 "could not be
+reached" until instance 2 is back. Instance 1's own data stays 100 % available the whole time, and recovery is
+automatic: as soon as instance 2 answers again, everything is back to 100 % within one 10-s window.
+
+### What 99.9 % would need (slide: "with proper instance distribution and health monitoring")
+
+99.9 % allows ~43 minutes of failures per month. With a single instance failure, this system reaches 100 % for the
+data of the surviving instance, but not for the whole service. The three gaps and their fixes:
+
+| Gap | Effect measured | Fix |
+|---|---|---|
+| Clients send requests to a dead instance | 25 % → 50 % with client failover | A **load balancer** with health checks in front of the instances (nginx / HAProxy, PL3 p.25) |
+| Each flight exists on one instance only | the other 50 % (404 for the dead instance's data) | **Replication**: store every flight on 2 instances (replication factor 2), so a single failure loses no data |
+| Restart takes ~30–50 s (JVM start on 1 CPU) | length of the outage | An orchestrator that restarts / replaces instances automatically (Docker restart policy, Kubernetes), and a spare instance |
+
+With a load balancer and replication factor 2, the measured scenario (one instance down) would stay at ~100 %.
+
+### Other considerations from the slide
+
+* **Request timeouts**: every remote call has one (peers 1.5 s, other services 2 s, health checks 1 s), and the
+  circuit breaker turns a dead instance from "wait for the timeout" into "skip immediately" (diagram 4).
+* **Caching**: forwarded lookups could be cached for a few seconds to save the extra hop, at the cost of possibly
+  serving a stale status (e.g. a flight cancelled on the other instance a moment ago). Not done: correctness of the
+  flight status was preferred over the ~4 ms saved.
+* **Geographic placement**: put the instances that forward to each other close together (same region), or replicate
+  the data to each region so reads stay local.
+
 ## Horizontal scaling
 
 ### Instances and ports

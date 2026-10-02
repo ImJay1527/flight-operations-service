@@ -1,0 +1,9 @@
+# Performance-test override: stub (test) mode, so the k6 scripts can create their own flights without the other
+# two services. Used by loadtest/performance.sh.
+services:
+  flightops-1:
+    environment:
+      SPRING_PROFILES_ACTIVE: instance1,tls,postgres,stub
+  flightops-2:
+    environment:
+      SPRING_PROFILES_ACTIVE: instance2,tls,postgres,stub
