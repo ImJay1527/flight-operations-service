@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "d3260b36-48a0-4933-8c17-684c34c6b27c",
+    "_postman_id": "a96ebe14-e11c-407c-bb65-bf8b563a07d7",
     "name": "Flight Operations - distributed tests (SIDIS PL3)",
     "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -1332,7 +1332,7 @@
     },
     {
       "name": "07 Three instances",
-      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh -n 3 --stub); otherwise its tests are skipped. Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy.",
+      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh -n 3 --stub); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy.",
       "item": [
         {
           "name": "Create flight on instance 3",
@@ -1572,10 +1572,13 @@
           "script": {
             "type": "text/javascript",
             "exec": [
+              "// Only 2 instances running? Then don't send this folder's requests at all (they would fail with",
+              "// 'could not be sent'): skip the request; its tests report 'SKIPPED: instance 3 is not running'.",
               "const url = pm.environment.get('instance3');",
-              "if (!url) { pm.variables.set('instance3Up', false); } else {",
+              "const skip = () => { pm.variables.set('instance3Up', false); pm.execution.skipRequest(); };",
+              "if (!url) { skip(); } else {",
               "  pm.sendRequest({ url: url + '/actuator/health', method: 'GET' }, (err, res) => {",
-              "    pm.variables.set('instance3Up', !err && res && res.code === 200);",
+              "    if (!err && res && res.code === 200) { pm.variables.set('instance3Up', true); } else { skip(); }",
               "  });",
               "}"
             ]
