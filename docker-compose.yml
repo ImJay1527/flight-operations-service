@@ -10,27 +10,40 @@
 x-common-env: &common-env
   JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
 
+# HTTPS (encryption in transit). Run ./scripts/generate-dev-certs.sh once before `docker compose up`.
+x-tls-env: &tls-env
+  SPRING_PROFILES_ACTIVE: tls
+  SSL_TRUSTSTORE: file:/certs/truststore.p12
+  SSL_PASSWORD: ${SSL_PASSWORD:-changeit}
+
 services:
   # ---------------- Flight Operations (this repo) ----------------
   flightops-1:
     build: .
+    volumes: ["./certs:/certs:ro"]
     ports: ["8083:8083"]
     environment:
-      <<: *common-env
-      PEERS: http://flightops-2:8083
+      <<: [*common-env, *tls-env]
+      SSL_KEYSTORE: file:/certs/flightops.p12
+      PEERS: https://flightops-2:8083
       BOOTSTRAP_SHARD: 1
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
 
   flightops-2:
     build: .
+    volumes: ["./certs:/certs:ro"]
     ports: ["8093:8083"]
     environment:
-      <<: *common-env
-      PEERS: http://flightops-1:8083
+      <<: [*common-env, *tls-env]
+      SSL_KEYSTORE: file:/certs/flightops.p12
+      PEERS: https://flightops-1:8083
       BOOTSTRAP_SHARD: 2
       AIRCRAFT_SERVICE_URLS: http://aircraft-2:8081,http://aircraft-1:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-2:8082,http://airports-1:8082
+
+  # The two services below still serve plain HTTP. When they enable their "tls" profile, mount ./certs the same way,
+  # set SSL_KEYSTORE to certs/aircraft.p12 / certs/airports.p12, and switch the URLs above to https://.
 
   # ---------------- Aircraft & Maintenance ----------------
   aircraft-1:

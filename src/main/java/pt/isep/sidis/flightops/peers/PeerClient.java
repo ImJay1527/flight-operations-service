@@ -5,11 +5,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import pt.isep.sidis.flightops.clients.HttpClientFactory;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
 
 import java.time.Duration;
@@ -35,12 +36,10 @@ public class PeerClient {
 
     public PeerClient(@Value("${flightops.peers:}") List<String> peerUrls,
                       @Value("${flightops.peers-timeout-ms:1500}") long timeoutMs,
-                      JwtUtils jwtUtils, RestClient.Builder builder) {
+                      JwtUtils jwtUtils, RestClient.Builder builder, HttpClientFactory httpClientFactory) {
         this.peerUrls = peerUrls.stream().filter(u -> !u.isBlank()).toList();
         this.jwtUtils = jwtUtils;
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofMillis(timeoutMs));
-        factory.setReadTimeout(Duration.ofMillis(timeoutMs));
+        ClientHttpRequestFactory factory = httpClientFactory.create(Duration.ofMillis(timeoutMs));
         for (String url : this.peerUrls) {
             peers.add(builder.clone().baseUrl(url).requestFactory(factory).build());
         }

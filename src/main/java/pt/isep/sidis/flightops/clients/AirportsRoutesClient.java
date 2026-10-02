@@ -14,9 +14,9 @@ public class AirportsRoutesClient extends ReplicatedServiceClient {
 
     public AirportsRoutesClient(@Value("${flightops.services.airports-routes.urls:}") List<String> urls,
                                 @Value("${flightops.services.timeout-ms:2000}") long timeoutMs,
-                                JwtUtils jwtUtils, RestClient.Builder builder) {
+                                JwtUtils jwtUtils, RestClient.Builder builder, HttpClientFactory httpClientFactory) {
         super("airports-routes-service", urls.stream().filter(u -> !u.isBlank()).toList(),
-                jwtUtils, builder, Duration.ofMillis(timeoutMs));
+                jwtUtils, builder, httpClientFactory, Duration.ofMillis(timeoutMs));
     }
 
     public RouteInfo getRoute(String routeId) {

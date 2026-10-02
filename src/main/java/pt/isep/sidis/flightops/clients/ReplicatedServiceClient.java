@@ -3,7 +3,7 @@ package pt.isep.sidis.flightops.clients;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -34,13 +34,11 @@ public abstract class ReplicatedServiceClient {
     private final AtomicInteger next = new AtomicInteger();
 
     protected ReplicatedServiceClient(String targetName, List<String> baseUrls, JwtUtils jwtUtils,
-                                      RestClient.Builder builder, Duration timeout) {
+                                      RestClient.Builder builder, HttpClientFactory httpClientFactory, Duration timeout) {
         this.targetName = targetName;
         this.jwtUtils = jwtUtils;
         this.replicaUrls = baseUrls;
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(timeout);
-        factory.setReadTimeout(timeout);
+        ClientHttpRequestFactory factory = httpClientFactory.create(timeout);
         for (String url : baseUrls) {
             replicas.add(builder.clone().baseUrl(url).requestFactory(factory).build());
         }

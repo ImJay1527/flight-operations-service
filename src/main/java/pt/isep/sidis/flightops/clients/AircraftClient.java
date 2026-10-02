@@ -14,9 +14,9 @@ public class AircraftClient extends ReplicatedServiceClient {
 
     public AircraftClient(@Value("${flightops.services.aircraft.urls:}") List<String> urls,
                           @Value("${flightops.services.timeout-ms:2000}") long timeoutMs,
-                          JwtUtils jwtUtils, RestClient.Builder builder) {
+                          JwtUtils jwtUtils, RestClient.Builder builder, HttpClientFactory httpClientFactory) {
         super("aircraft-maintenance-service", urls.stream().filter(u -> !u.isBlank()).toList(),
-                jwtUtils, builder, Duration.ofMillis(timeoutMs));
+                jwtUtils, builder, httpClientFactory, Duration.ofMillis(timeoutMs));
     }
 
     public AircraftInfo getAircraft(String registration) {

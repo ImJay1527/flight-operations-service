@@ -11,8 +11,11 @@ Other services: [`aircraft-maintenance-service`](../aircraft-maintenance-service
 ## Run
 
 ```bash
-# one standalone replica, H2 in memory (port 8083)
+# one standalone replica, plain HTTP, H2 in memory (port 8083) - handy while developing
 ./mvnw spring-boot:run
+
+# certificates for HTTPS (once; output in certs/, which is git-ignored)
+./scripts/generate-dev-certs.sh
 
 # whole system, 2 replicas per service (needs the 3 repos side by side)
 docker compose up --build
@@ -21,7 +24,11 @@ docker compose up --build
 docker compose up --build flightops-1 flightops-2
 ```
 
-Swagger UI: http://localhost:8083/swagger-ui.html
+In docker-compose the flight-ops replicas serve **HTTPS only**: https://localhost:8083 and https://localhost:8093.
+Swagger UI: https://localhost:8083/swagger-ui.html
+
+To trust the dev CA: import `certs/ca.crt` into Postman (Settings → Certificates → CA certificates) or use
+`curl --cacert certs/ca.crt` (on Windows also add `--ssl-no-revoke`, because a dev CA has no revocation list).
 
 Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (also `operator/operator123`, `admin/admin123`).
 
@@ -42,6 +49,15 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
   best-effort check on peers. Two simultaneous requests on different replicas could still double-book. That trade-off
   is documented, not a bug.
 
+## Security
+
+| Requirement | How |
+|---|---|
+| Encryption in transit | `tls` profile: HTTPS server (keystore `certs/flightops.p12`). Outgoing calls to peers and other services trust **only** the AISafe dev CA (`certs/truststore.p12`), and hostname verification stays on. Certificates come from `scripts/generate-dev-certs.sh` (one CA, one certificate per service). |
+| Inter-service authentication | Every service-to-service call carries a JWT with role `SERVICE`. `/internal/**` accepts only that role. |
+| Access control | User roles from the login JWT (`@PreAuthorize`). A service token can't call `/api/**`, and a user token can't call `/internal/**`. |
+| Audit logging | `AUDIT` logger: user, roles, method, URI, status and client address for every request. |
+
 ## Database
 
 H2 in memory by default. For a real DB, set `SPRING_PROFILES_ACTIVE=postgres` and `DB_URL`/`DB_USER`/`DB_PASSWORD`
@@ -49,7 +65,8 @@ H2 in memory by default. For a real DB, set `SPRING_PROFILES_ACTIVE=postgres` an
 
 ## TODO
 
-- [ ] HTTPS between services (TLS keystore + `server.ssl.*`) – encryption in transit
+- [x] HTTPS for flight-ops replicas and their outgoing calls
+- [ ] HTTPS on aircraft-maintenance-service and airports-routes-service (their owners), then switch the URLs in docker-compose to `https://`
 - [ ] Postgres containers in docker-compose (one per replica)
 - [ ] Postman collection for the demo
 - [ ] Design document (consistency model, failure scenarios)
