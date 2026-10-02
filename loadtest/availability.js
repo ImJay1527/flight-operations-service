@@ -13,6 +13,9 @@ import { Rate, Counter } from 'k6/metrics';
 
 const I1 = __ENV.I1 || 'https://flightops-1:8083';
 const I2 = __ENV.I2 || 'https://flightops-2:8083';
+// LB set (./loadtest/performance.sh availability-lb): every request goes to the load balancer instead of a random
+// instance; the flights are still created directly on each instance.
+const LB = __ENV.LB || '';
 
 const okFirstTry = new Rate('ok_first_try');
 const okWithFailover = new Rate('ok_with_failover');
@@ -74,7 +77,7 @@ function ask(base, flight, token) {
 
 export default function (data) {
     const flight = data.flights[Math.floor(Math.random() * data.flights.length)];
-    const [first, second] = Math.random() < 0.5 ? [I1, I2] : [I2, I1];
+    const [first, second] = LB ? [LB, LB] : (Math.random() < 0.5 ? [I1, I2] : [I2, I1]);
 
     const w = { w: windowName(Math.min(WINDOWS - 1, Math.floor((Date.now() - data.start) / 10000))) };
 

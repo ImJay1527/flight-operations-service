@@ -19,6 +19,13 @@ services:
 
   flightops-3:
     build: .
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsk https://localhost:8083/actuator/health || curl -fs http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+      retries: 3
     depends_on:
       flightops-db-3: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
@@ -49,6 +56,13 @@ services:
       timeout: 3s
       retries: 30
     volumes: ["flightops-db-3-data:/var/lib/postgresql/data"]
+
+
+  flightops-lb:
+    volumes:
+      - ./lb/nginx-3.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/certs:ro
+    depends_on: [flightops-1, flightops-2, flightops-3]
 
 volumes:
   flightops-db-3-data:

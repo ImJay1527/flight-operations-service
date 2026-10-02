@@ -2,8 +2,10 @@
 # PL3 p.21 performance measurements, in Docker (1 CPU per flight-ops instance, HTTPS, PostgreSQL, stub mode):
 #
 #   ./loadtest/performance.sh latency        local vs forwarded response times      -> loadtest/results/latency.txt
-#   ./loadtest/performance.sh availability   kill instance 2 during steady traffic  -> loadtest/results/availability.txt
-#                                            (per 10-s window: before / during / after the outage)
+#   ./loadtest/performance.sh availability     kill instance 2 during steady traffic -> loadtest/results/availability.txt
+#                                              (per 10-s window: before / during / after the outage)
+#   ./loadtest/performance.sh availability-lb  the same, but the clients go through the nginx load balancer
+#                                              -> loadtest/results/availability-lb.txt
 #
 # Needs: Docker, and ./scripts/generate-dev-certs.sh run once. Uses its own Docker project, so it can run while
 # your normal setup is up; everything (including its databases) is removed at the end.
@@ -12,7 +14,10 @@ cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1   # Git Bash on Windows: don't rewrite /scripts paths
 
 MODE="${1:-}"
-[[ "$MODE" == latency || "$MODE" == availability ]] || { echo "usage: $0 latency|availability"; exit 1; }
+[[ "$MODE" == latency || "$MODE" == availability || "$MODE" == availability-lb ]] \
+  || { echo "usage: $0 latency|availability|availability-lb"; exit 1; }
+LB_URL=""
+[[ "$MODE" == availability-lb ]] && LB_URL="https://flightops-lb:8443"
 
 PROJECT=flightops-perf
 FILES=(-f docker-compose.yml -f loadtest/limits.yml -f loadtest/stub.yml)
@@ -22,12 +27,13 @@ trap 'compose down -v >/dev/null 2>&1 || true' EXIT
 k6() {   # $1 = script, $2 = duration, $3 = virtual users (optional, default 5)
   docker run --rm --network "${PROJECT}_default" \
     -v "$(pwd -W 2>/dev/null || pwd)/loadtest:/scripts" \
-    -e DURATION="$2" -e VUS="${3:-5}" \
+    -e DURATION="$2" -e VUS="${3:-5}" -e LB="$LB_URL" \
     grafana/k6:latest run --quiet "/scripts/$1"
 }
 
 echo "Starting 2 instances..."
 compose up --build -d flightops-1 flightops-2
+if [[ -n "$LB_URL" ]]; then compose up -d flightops-lb; fi
 for svc in flightops-1 flightops-2; do
   until compose exec -T "$svc" bash -c 'exec 3<>/dev/tcp/127.0.0.1/8083' 2>/dev/null; do sleep 2; done
 done

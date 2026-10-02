@@ -15,3 +15,5 @@ services:
     ports: !reset []
   flightops-db-2:
     ports: !reset []
+  flightops-lb:
+    ports: !reset []

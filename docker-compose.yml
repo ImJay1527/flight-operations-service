@@ -6,7 +6,9 @@
 #     airports-routes-service/
 #     flight-operations-service/   <- run `docker compose up --build` here
 #
-# Only flight-operations-only demo:  docker compose up --build flightops-1 flightops-2
+# Clients use the load balancer: https://localhost:8443 (nginx, lb/nginx.conf). The instances stay reachable directly
+# on 8083 / 8093 for tests that need a specific instance.
+# Only flight-operations-only demo:  docker compose up --build flightops-lb   (starts the 2 instances it needs)
 # Only the databases (for running the instances from VS Code / scripts/run-local.sh):
 #   docker compose up -d --wait flightops-db-1 flightops-db-2
 # Delete all stored data:  docker compose down -v
@@ -27,6 +29,17 @@ x-flightops-db: &flightops-db
     timeout: 3s
     retries: 30
 
+# Flight-ops instances: restarted automatically if they stop on their own (crash, out of memory) - P1 p.10 "Failure
+# Recovery" - and checked by Docker every 10 s (state shown in `docker compose ps`).
+x-flightops-instance: &flightops-instance
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsk https://localhost:8083/actuator/health || curl -fs http://localhost:8083/actuator/health"]
+    interval: 10s
+    timeout: 3s
+    start_period: 60s
+    retries: 3
+
 # HTTPS (encryption in transit). Run ./scripts/generate-dev-certs.sh once before `docker compose up`.
 x-tls-env: &tls-env
   SPRING_PROFILES_ACTIVE: tls
@@ -36,6 +49,7 @@ x-tls-env: &tls-env
 services:
   # ---------------- Flight Operations (this repo) ----------------
   flightops-1:
+    <<: *flightops-instance
     build: .
     depends_on:
       flightops-db-1: { condition: service_healthy }
@@ -53,6 +67,7 @@ services:
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
 
   flightops-2:
+    <<: *flightops-instance
     build: .
     depends_on:
       flightops-db-2: { condition: service_healthy }
@@ -68,6 +83,15 @@ services:
       PEERS: https://flightops-1:8083
       AIRCRAFT_SERVICE_URLS: http://aircraft-2:8081,http://aircraft-1:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-2:8082,http://airports-1:8082
+
+  flightops-lb:
+    image: nginx:1.27-alpine
+    ports: ["8443:8443"]
+    volumes:
+      - ./lb/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/certs:ro
+    depends_on: [flightops-1, flightops-2]
+    restart: unless-stopped
 
   flightops-db-1:
     <<: *flightops-db

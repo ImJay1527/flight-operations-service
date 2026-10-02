@@ -5,18 +5,20 @@
 #   certs/ca.crt           dev CA certificate (PEM) - import into Postman / browser to trust the services
 #   certs/truststore.p12   contains only the CA certificate; used by clients to verify servers
 #   certs/<svc>.p12        key + certificate (signed by the CA) for each service
+#   certs/flightops-lb.crt / .key   the same for the nginx load balancer, as PEM files (nginx can't read .p12)
 #
-# Each service certificate is valid for localhost, 127.0.0.1 and the docker-compose hostnames <svc>-1 .. <svc>-3.
+# Each certificate is valid for localhost, 127.0.0.1 and the docker-compose hostnames <svc>, <svc>-1 .. <svc>-3
+# (the load balancer verifies the instances under the name "flightops").
 # Usage: ./scripts/generate-dev-certs.sh            (password defaults to "changeit", override with SSL_PASSWORD)
 set -euo pipefail
 
 OUT="$(cd "$(dirname "$0")/.." && pwd)/certs"
 PASS="${SSL_PASSWORD:-changeit}"
-SERVICES=(flightops aircraft airports)
+SERVICES=(flightops aircraft airports flightops-lb)
 
 mkdir -p "$OUT"
 cd "$OUT"
-rm -f ./*.p12 ./*.crt ./*.csr
+rm -f ./*.p12 ./*.crt ./*.csr ./*.key
 
 echo "-> CA"
 keytool -genkeypair -alias ca -keyalg RSA -keysize 2048 -validity 3650 \
@@ -34,12 +36,16 @@ for svc in "${SERVICES[@]}"; do
   keytool -certreq -alias "$svc" -keystore "$svc.p12" -storepass "$PASS" -file "$svc.csr"
   keytool -gencert -alias ca -keystore ca.p12 -storepass "$PASS" -rfc -validity 825 \
     -infile "$svc.csr" -outfile "$svc.crt" \
-    -ext "SAN=dns:localhost,ip:127.0.0.1,dns:$svc-1,dns:$svc-2,dns:$svc-3" \
+    -ext "SAN=dns:localhost,ip:127.0.0.1,dns:$svc,dns:$svc-1,dns:$svc-2,dns:$svc-3" \
     -ext "KU=digitalSignature,keyEncipherment" -ext "EKU=serverAuth,clientAuth"
   # install the chain (CA first, then the signed certificate as reply to the key entry)
   keytool -importcert -noprompt -alias aisafe-ca -file ca.crt -keystore "$svc.p12" -storepass "$PASS"
   keytool -importcert -noprompt -alias "$svc" -file "$svc.crt" -keystore "$svc.p12" -storepass "$PASS"
   rm -f "$svc.csr"
 done
+
+# nginx needs the load balancer's key and certificate chain as PEM files
+openssl pkcs12 -in flightops-lb.p12 -passin "pass:$PASS" -nocerts -nodes 2>/dev/null | openssl pkey -out flightops-lb.key
+cat flightops-lb.crt ca.crt > flightops-lb-chain.crt
 
 echo "Done. Files in $OUT"
