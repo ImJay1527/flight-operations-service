@@ -12,6 +12,9 @@
 # An instance that stops on its own (crash, or POST /actuator/shutdown in stub mode - the Postman resilience test does
 # that to instance 2) is started again after RESTART_DELAY seconds (default 10).
 #
+# "READY FOR TESTS" is printed once every instance has fully started (scripts/wait-ready.sh), and
+# "flightops-<i> ready" again after an instance was restarted.
+#
 # PostgreSQL: the database containers (flightops-db-<i>, ports 5433/5434/5435) are started with docker compose and
 # left running when you press Ctrl+C, so the data is kept. Stop them: docker compose stop
 # Delete their data: docker compose down -v
@@ -27,10 +30,11 @@ DB=postgres
 STUB=""
 RESTART=yes
 RESTART_DELAY="${RESTART_DELAY:-10}"
+TLS_FLAG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n) N="$2"; [[ "$N" =~ ^[123]$ ]] || { echo "-n must be 1, 2 or 3 (one instance profile each)"; exit 1; }; shift 2 ;;
-    --tls) SCHEME=https; PROFILE=tls; shift ;;
+    --tls) SCHEME=https; PROFILE=tls; TLS_FLAG=--tls; shift ;;
     --h2) DB=h2; shift ;;
     --stub) STUB=stub; shift ;;
     --no-restart) RESTART=no; shift ;;
@@ -90,6 +94,7 @@ supervise() {   # $1 = instance number
     echo "flightops-$1 stopped - starting it again in ${RESTART_DELAY}s"
     sleep "$RESTART_DELAY"
     echo "flightops-$1 restarting"
+    ./scripts/wait-ready.sh --instance "$1" $TLS_FLAG &
   done
 }
 
@@ -109,4 +114,5 @@ done
 
 echo "cluster: $CLUSTER"
 echo "All $N instances starting. Ctrl+C to stop."
+./scripts/wait-ready.sh -n "$N" $TLS_FLAG || echo "Not all instances are ready - check the logs above. Still running; Ctrl+C to stop."
 wait

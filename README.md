@@ -22,7 +22,11 @@ Architecture diagrams, key benefits, performance measurements and scaling decisi
 ./scripts/generate-dev-certs.sh
 
 # 2 instances without Docker (8083, 8093); Ctrl+C stops both. Add --tls for HTTPS, -n 3 for a third instance.
+# Prints "READY FOR TESTS" once every instance has fully started.
 ./scripts/run-local.sh
+
+# instances started another way (e.g. VS Code): wait until they are ready (-n 3, --tls as above)
+./scripts/wait-ready.sh
 
 # whole system, 2 instances per service (needs the 3 repos side by side)
 docker compose up --build
@@ -135,6 +139,7 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
    two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "2 instances for the Postman tests".
+   Wait for **READY FOR TESTS** (from VS Code: run `./scripts/wait-ready.sh` in a terminal).
 2. Select the environment "Flight Ops - local (2 instances)".
 3. Run the whole collection (about 30 s). Nothing to do by hand: folder **03 Resilience** stops instance 2 itself
    (`POST /actuator/shutdown`, only possible in stub/test mode and only for ADMIN), checks the failure behaviour, then
