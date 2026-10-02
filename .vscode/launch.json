@@ -1,12 +1,51 @@
 {
     // Run and Debug panel -> pick a compound to start both instances at once.
     // Each instance is a Spring profile: src/main/resources/application-instance<N>.properties
-    // HTTPS variants need the certificates first: ./scripts/generate-dev-certs.sh
+    //   PostgreSQL variants: each instance gets its own database container (needs Docker Desktop running);
+    //                        the containers are started automatically and keep their data.
+    //   H2 variant:          in-memory databases, no Docker needed, data is lost when you stop.
+    //   HTTPS variants need the certificates first: ./scripts/generate-dev-certs.sh
     "version": "0.2.0",
     "configurations": [
         {
             "type": "java",
-            "name": "flightops-1 (HTTP :8083)",
+            "name": "flightops-1 (HTTP, PostgreSQL :8083)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "args": "--spring.profiles.active=instance1,postgres"
+        },
+        {
+            "type": "java",
+            "name": "flightops-2 (HTTP, PostgreSQL :8093)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "args": "--spring.profiles.active=instance2,postgres"
+        },
+        {
+            "type": "java",
+            "name": "flightops-1 (HTTPS, PostgreSQL :8083)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "args": "--spring.profiles.active=instance1,tls,postgres"
+        },
+        {
+            "type": "java",
+            "name": "flightops-2 (HTTPS, PostgreSQL :8093)",
+            "request": "launch",
+            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
+            "projectName": "flight-operations-service",
+            "cwd": "${workspaceFolder}",
+            "args": "--spring.profiles.active=instance2,tls,postgres"
+        },
+        {
+            "type": "java",
+            "name": "flightops-1 (HTTP, H2 in-memory :8083)",
             "request": "launch",
             "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
             "projectName": "flight-operations-service",
@@ -15,41 +54,30 @@
         },
         {
             "type": "java",
-            "name": "flightops-2 (HTTP :8093)",
+            "name": "flightops-2 (HTTP, H2 in-memory :8093)",
             "request": "launch",
             "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
             "projectName": "flight-operations-service",
             "cwd": "${workspaceFolder}",
             "args": "--spring.profiles.active=instance2"
-        },
-        {
-            "type": "java",
-            "name": "flightops-1 (HTTPS :8083)",
-            "request": "launch",
-            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
-            "projectName": "flight-operations-service",
-            "cwd": "${workspaceFolder}",
-            "args": "--spring.profiles.active=instance1,tls"
-        },
-        {
-            "type": "java",
-            "name": "flightops-2 (HTTPS :8093)",
-            "request": "launch",
-            "mainClass": "pt.isep.sidis.flightops.FlightOperationsApplication",
-            "projectName": "flight-operations-service",
-            "cwd": "${workspaceFolder}",
-            "args": "--spring.profiles.active=instance2,tls"
         }
     ],
     "compounds": [
         {
-            "name": "Flight Ops: 2 instances (HTTP)",
-            "configurations": ["flightops-1 (HTTP :8083)", "flightops-2 (HTTP :8093)"],
+            "name": "Flight Ops: 2 instances (HTTP, PostgreSQL)",
+            "configurations": ["flightops-1 (HTTP, PostgreSQL :8083)", "flightops-2 (HTTP, PostgreSQL :8093)"],
+            "preLaunchTask": "Start databases (flightops-db-1, flightops-db-2)",
             "stopAll": true
         },
         {
-            "name": "Flight Ops: 2 instances (HTTPS)",
-            "configurations": ["flightops-1 (HTTPS :8083)", "flightops-2 (HTTPS :8093)"],
+            "name": "Flight Ops: 2 instances (HTTPS, PostgreSQL)",
+            "configurations": ["flightops-1 (HTTPS, PostgreSQL :8083)", "flightops-2 (HTTPS, PostgreSQL :8093)"],
+            "preLaunchTask": "Start databases (flightops-db-1, flightops-db-2)",
+            "stopAll": true
+        },
+        {
+            "name": "Flight Ops: 2 instances (HTTP, H2 in-memory, no Docker)",
+            "configurations": ["flightops-1 (HTTP, H2 in-memory :8083)", "flightops-2 (HTTP, H2 in-memory :8093)"],
             "stopAll": true
         }
     ]

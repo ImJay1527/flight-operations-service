@@ -19,15 +19,36 @@ services:
 
   flightops-3:
     build: .
+    depends_on:
+      flightops-db-3: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
     ports: ["8103:8083"]
     environment:
       JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
-      SPRING_PROFILES_ACTIVE: instance3,tls
+      SPRING_PROFILES_ACTIVE: instance3,tls,postgres
       PORT: 8083
+      DB_URL: jdbc:postgresql://flightops-db-3:5432/flightops
+      DB_PASSWORD: ${DB_PASSWORD:-flightops}
       SSL_TRUSTSTORE: file:/certs/truststore.p12
       SSL_PASSWORD: ${SSL_PASSWORD:-changeit}
       SSL_KEYSTORE: file:/certs/flightops.p12
       PEERS: https://flightops-1:8083,https://flightops-2:8083
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
+
+  flightops-db-3:
+    image: postgres:16-alpine
+    ports: ["5435:5432"]
+    environment:
+      POSTGRES_DB: flightops
+      POSTGRES_USER: flightops
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-flightops}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flightops -d flightops"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes: ["flightops-db-3-data:/var/lib/postgresql/data"]
+
+volumes:
+  flightops-db-3-data:

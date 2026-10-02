@@ -1,0 +1,15 @@
+{
+    // Used by .vscode/launch.json: the PostgreSQL configurations start their database containers first.
+    // Needs Docker Desktop running. The containers keep running (and keep their data) after you stop debugging;
+    // stop them with `docker compose stop`, delete their data with `docker compose down -v`.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start databases (flightops-db-1, flightops-db-2)",
+            "type": "shell",
+            "command": "docker compose up -d --wait flightops-db-1 flightops-db-2",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        }
+    ]
+}

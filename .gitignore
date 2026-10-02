@@ -3,6 +3,7 @@ target/
 *.iml
 .vscode/*
 !.vscode/launch.json
+!.vscode/tasks.json
 logs/
 .env
 *.log

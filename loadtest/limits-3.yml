@@ -1,5 +1,8 @@
-# Load-test override for the third instance (used together with limits.yml and docker-compose.scale-3.yml).
+# Load-test overrides for the third instance (used together with limits.yml and docker-compose.scale-3.yml).
 services:
   flightops-3:
     cpus: 1.0
     mem_limit: 768m
+    ports: !reset []
+  flightops-db-3:
+    ports: !reset []

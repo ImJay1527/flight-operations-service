@@ -4,7 +4,7 @@
 
 ### Instances and ports
 
-Every component starts with **2 instances**, as recommended. More are added only when load testing shows they help.
+Every component starts with **2 instances**, as recommended in the practical session (PL3, page 7). More are added only when load testing shows they help.
 
 | Component | Instance 1 | Instance 2 | Instance 3 (scale-up) |
 |---|---|---|---|
@@ -13,7 +13,8 @@ Every component starts with **2 instances**, as recommended. More are added only
 | flight-operations-service | 8083 | 8093 | 8103 |
 
 Port scheme: base port + 10 per extra instance. Each instance has its own database (data isolation), so instances
-share nothing except the network.
+share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on host ports 5433/5434/5435
+(in-memory H2 `flightops_db_1/2/3` when run without the `postgres` profile, e.g. in the automated tests).
 
 ### What makes it scalable
 
@@ -57,12 +58,14 @@ Tool: [k6](https://k6.io), run in Docker (`./loadtest/run.sh 2` and `./loadtest/
   * HTTPS between all parties.
   * 2 × 30 s warm-up before measuring: on 1 CPU the JVM's JIT compilation otherwise dominates the first minute.
 
-**Results (2026-10-02):**
+**Results (2026-10-02), each instance with its own PostgreSQL container:**
 
 | Instances | Throughput | Median latency | p95 | p99 | Errors |
 |---|---|---|---|---|---|
-| 2 | **59 req/s** | 705 ms | 1.78 s | 2.19 s | 0 % |
-| 3 | **53 req/s** | 805 ms | 1.99 s | 2.60 s | 0 % |
+| 2 | **57 req/s** | 798 ms | 1.79 s | 2.29 s | 0 % |
+| 3 | **57 req/s** | 766 ms | 2.08 s | 2.69 s | 0 % |
+
+(An earlier run with in-memory H2 gave the same picture: 59 req/s with 2 instances, 53 with 3.)
 
 Raw output: `loadtest/results/`.
 
@@ -70,8 +73,7 @@ Raw output: `loadtest/results/`.
 
 **For this workload, a third instance does not increase capacity.** Every request is a scatter-gather read:
 the receiving instance does its local query *and* asks each of the other N−1 instances. The total work per request
-therefore grows with N, at the same rate as the capacity added by the new instance. Throughput stays flat, and the
-extra network hop costs a little, so 3 instances are slightly slower than 2.
+therefore grows with N, at the same rate as the capacity added by the new instance, so throughput stays flat.
 
 Conclusion: stay at **2 instances**. Adding instances only pays off once most reads stop fanning out to every peer:
 

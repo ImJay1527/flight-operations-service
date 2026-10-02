@@ -27,7 +27,7 @@ elif [[ "$N" != "2" ]]; then
 fi
 
 compose() { docker compose -p "$PROJECT" "${FILES[@]}" "$@"; }
-trap 'compose down >/dev/null 2>&1 || true' EXIT
+trap 'compose down -v >/dev/null 2>&1 || true' EXIT   # -v: also delete the test databases
 
 echo "Starting $N instances..."
 compose up --build -d "${SERVICES[@]}"

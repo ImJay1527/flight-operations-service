@@ -1,4 +1,5 @@
-# Whole AISafe system: 3 services x 2 replicas, each replica with its own in-memory DB (its shard).
+# Whole AISafe system: 3 services x 2 instances. Each flight-ops instance has its own PostgreSQL container
+# (its shard of the data), whose data survives restarts in a named volume.
 # Expects the three repos cloned side by side:
 #   IdeaProjects/
 #     aircraft-maintenance-service/
@@ -6,9 +7,25 @@
 #     flight-operations-service/   <- run `docker compose up --build` here
 #
 # Only flight-operations-only demo:  docker compose up --build flightops-1 flightops-2
+# Only the databases (for running the instances from VS Code / scripts/run-local.sh):
+#   docker compose up -d --wait flightops-db-1 flightops-db-2
+# Delete all stored data:  docker compose down -v
 
 x-common-env: &common-env
   JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+
+# One PostgreSQL server per flight-ops instance. Dev credentials; override with DB_PASSWORD.
+x-flightops-db: &flightops-db
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_DB: flightops
+    POSTGRES_USER: flightops
+    POSTGRES_PASSWORD: ${DB_PASSWORD:-flightops}
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U flightops -d flightops"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
 
 # HTTPS (encryption in transit). Run ./scripts/generate-dev-certs.sh once before `docker compose up`.
 x-tls-env: &tls-env
@@ -20,12 +37,16 @@ services:
   # ---------------- Flight Operations (this repo) ----------------
   flightops-1:
     build: .
+    depends_on:
+      flightops-db-1: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
     ports: ["8083:8083"]
     environment:
       <<: [*common-env, *tls-env]
-      SPRING_PROFILES_ACTIVE: instance1,tls
+      SPRING_PROFILES_ACTIVE: instance1,tls,postgres
       PORT: 8083                       # inside the container; host port above is unique per instance
+      DB_URL: jdbc:postgresql://flightops-db-1:5432/flightops
+      DB_PASSWORD: ${DB_PASSWORD:-flightops}
       SSL_KEYSTORE: file:/certs/flightops.p12
       PEERS: https://flightops-2:8083
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
@@ -33,16 +54,30 @@ services:
 
   flightops-2:
     build: .
+    depends_on:
+      flightops-db-2: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
     ports: ["8093:8083"]
     environment:
       <<: [*common-env, *tls-env]
-      SPRING_PROFILES_ACTIVE: instance2,tls
+      SPRING_PROFILES_ACTIVE: instance2,tls,postgres
       PORT: 8083                       # inside the container; host port above is unique per instance
+      DB_URL: jdbc:postgresql://flightops-db-2:5432/flightops
+      DB_PASSWORD: ${DB_PASSWORD:-flightops}
       SSL_KEYSTORE: file:/certs/flightops.p12
       PEERS: https://flightops-1:8083
       AIRCRAFT_SERVICE_URLS: http://aircraft-2:8081,http://aircraft-1:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-2:8082,http://airports-1:8082
+
+  flightops-db-1:
+    <<: *flightops-db
+    ports: ["5433:5432"]               # host port = the one in application-instance1.properties
+    volumes: ["flightops-db-1-data:/var/lib/postgresql/data"]
+
+  flightops-db-2:
+    <<: *flightops-db
+    ports: ["5434:5432"]
+    volumes: ["flightops-db-2-data:/var/lib/postgresql/data"]
 
   # The two services below still serve plain HTTP. When they enable their "tls" profile, mount ./certs the same way,
   # set SSL_KEYSTORE to certs/aircraft.p12 / certs/airports.p12, and switch the URLs above to https://.
@@ -76,3 +111,7 @@ services:
     environment:
       <<: *common-env
       PEERS: http://airports-1:8082
+
+volumes:
+  flightops-db-1-data:
+  flightops-db-2-data:

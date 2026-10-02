@@ -1,9 +1,17 @@
-# Load-test override: every flight-ops instance gets 1 CPU and 768 MB, to simulate one small machine per instance.
-# Without limits all containers share the host's cores and adding an instance shows nothing about scaling.
+# Load-test overrides:
+# - every flight-ops instance gets 1 CPU and 768 MB, to simulate one small machine per instance
+#   (without limits all containers share the host's cores and adding an instance shows nothing about scaling)
+# - no host ports: k6 runs inside the Docker network, so the test can run while your normal setup is up
 services:
   flightops-1:
     cpus: 1.0
     mem_limit: 768m
+    ports: !reset []
   flightops-2:
     cpus: 1.0
     mem_limit: 768m
+    ports: !reset []
+  flightops-db-1:
+    ports: !reset []
+  flightops-db-2:
+    ports: !reset []

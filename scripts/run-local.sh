@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Starts N flight-operations instances locally, without Docker. Ctrl+C stops all of them.
+# Starts N flight-operations instances locally (the Java apps run outside Docker). Ctrl+C stops all of them.
 #
-#   ./scripts/run-local.sh            2 instances, plain HTTP  (8083, 8093)
+#   ./scripts/run-local.sh            2 instances, plain HTTP  (8083, 8093), each with its own PostgreSQL container
 #   ./scripts/run-local.sh --tls      2 instances, HTTPS       (needs ./scripts/generate-dev-certs.sh first)
 #   ./scripts/run-local.sh -n 3       3 instances              (8083, 8093, 8103)
+#   ./scripts/run-local.sh --h2       in-memory H2 instead of PostgreSQL (no Docker needed; data is lost on stop)
+#
+# PostgreSQL: the database containers (flightops-db-<i>, ports 5433/5434/5435) are started with docker compose and
+# left running when you press Ctrl+C, so the data is kept. Stop them: docker compose stop
+# Delete their data: docker compose down -v
 #
 # Each instance runs with its Spring profile instance<i> (src/main/resources/application-instance<i>.properties).
 #
@@ -15,15 +20,24 @@ cd "$(dirname "$0")/.."
 N=2
 SCHEME=http
 PROFILE=""
+DB=postgres
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n) N="$2"; [[ "$N" =~ ^[123]$ ]] || { echo "-n must be 1, 2 or 3 (one instance profile each)"; exit 1; }; shift 2 ;;
     --tls) SCHEME=https; PROFILE=tls; shift ;;
+    --h2) DB=h2; shift ;;
     *) echo "unknown option: $1"; exit 1 ;;
   esac
 done
 
 port() { echo $((8083 + 10 * ($1 - 1))); }
+
+if [[ "$DB" == postgres ]]; then
+  DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i"); done
+  echo "Starting databases: ${DBS[*]}"
+  docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up -d --wait "${DBS[@]}"
+  PROFILE="${PROFILE:+$PROFILE,}postgres"
+fi
 
 echo "Building..."
 ./mvnw -q -B package -DskipTests

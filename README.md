@@ -81,13 +81,28 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 ## Database
 
-H2 in memory by default. For a real DB, set `SPRING_PROFILES_ACTIVE=postgres` and `DB_URL`/`DB_USER`/`DB_PASSWORD`
-(any PostgreSQL works, e.g. a container or Supabase). Each replica needs its **own** database or schema.
+Each instance has **its own PostgreSQL database**, running in its own container, so the data of one instance is
+isolated from the others and **survives restarts**:
+
+| Instance | Database container | Host port | Stored in (Docker volume) |
+|---|---|---|---|
+| 1 | `flightops-db-1` | 5433 | `flightops-db-1-data` |
+| 2 | `flightops-db-2` | 5434 | `flightops-db-2-data` |
+| 3 (scale-up) | `flightops-db-3` | 5435 | `flightops-db-3-data` |
+
+* `docker compose up`, `./scripts/run-local.sh` and the VS Code "PostgreSQL" configurations start the database
+  containers automatically. Docker Desktop must be running.
+* The sample data is loaded only into an **empty** database, so restarts don't duplicate it.
+* Stop the databases: `docker compose stop`. **Delete all data** (start fresh): `docker compose down -v`.
+* Look inside a database: `docker compose exec flightops-db-1 psql -U flightops -d flightops`,
+  then e.g. `select flight_number, status from scheduled_flight;`
+* Without Docker: `./scripts/run-local.sh --h2` or the VS Code "H2 in-memory" configuration (data is lost on stop).
+  The automated tests always use in-memory H2, so they need no setup.
 
 ## TODO
 
 - [x] HTTPS for flight-ops replicas and their outgoing calls
 - [ ] HTTPS on aircraft-maintenance-service and airports-routes-service (their owners), then switch the URLs in docker-compose to `https://`
-- [ ] Postgres containers in docker-compose (one per replica)
+- [x] PostgreSQL container per instance in docker-compose
 - [ ] Postman collection for the demo
 - [ ] Design document (consistency model, failure scenarios)
