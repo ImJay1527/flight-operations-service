@@ -48,14 +48,14 @@ Raw output: `loadtest/results/latency.txt`, `loadtest/results/availability.txt`.
 
 Each request looks up a flight either on the instance that stores it (**local**) or on the other one
 (**forwarded**: one extra HTTPS call to the peer + its database lookup). Every answer was checked to really be
-local / forwarded (`X-Data-Source` header): 100 % of 55 000 checks passed.
+local / forwarded (`X-Data-Source` header): 100 % of 61 000 checks passed (run of 2026-10-02, after sharding by aircraft).
 
 | | Local | Forwarded | Slide reference |
 |---|---|---|---|
-| 1 user, average (pure latency) | **4.1 ms** | **8.7 ms** | ~50 ms local, ~200 ms forwarded |
-| 1 user, median / p95 | 3.4 / 6.3 ms | 7.3 / 20 ms | |
-| 5 users (~310 req/s), average | 9.2 ms | 21.7 ms | |
-| 5 users, median / p95 | 2.9 / 70 ms | 6.9 / 78 ms | |
+| 1 user, average (pure latency) | **2.5 ms** | **5.4 ms** | ~50 ms local, ~200 ms forwarded |
+| 1 user, median / p95 | 1.9 / 3.8 ms | 4.0 / 9.5 ms | |
+| 5 users (~264 req/s), average | 11.2 ms | 25.2 ms | |
+| 5 users, median / p95 | 4.3 / 72 ms | 9.2 / 80 ms | |
 
 * A forwarded request costs about **2×** a local one: the extra network hop and the peer's work (confirms quiz Q6:
   forwarded requests have higher latency).

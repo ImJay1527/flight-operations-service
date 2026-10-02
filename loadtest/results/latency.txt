@@ -9,32 +9,32 @@
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 17754   291.975704/s
-    checks_succeeded...: 100.00% 17754 out of 17754
-    checks_failed......: 0.00%   0 out of 17754
+    checks_total.......: 29098   478.786197/s
+    checks_succeeded...: 100.00% 29098 out of 29098
+    checks_failed......: 0.00%   0 out of 29098
 
     ✓ status 200
     ✓ answered local / forwarded as intended
 
     CUSTOM
-    lookup_forwarded_ms............: avg=8.74ms med=7.33ms p(95)=20.01ms p(99)=44.65ms max=249.29ms
-    lookup_local_ms................: avg=4.13ms med=3.4ms  p(95)=6.28ms  p(99)=33.7ms  max=62.43ms 
+    lookup_forwarded_ms............: avg=5.35ms med=3.99ms p(95)=9.51ms p(99)=40.67ms max=182.83ms
+    lookup_local_ms................: avg=2.48ms med=1.92ms p(95)=3.75ms p(99)=26.25ms max=60.57ms 
 
     HTTP
-    http_req_duration..............: avg=6.49ms med=4.71ms p(95)=12.54ms p(99)=40.92ms max=249.29ms
-      { expected_response:true }...: avg=6.49ms med=4.71ms p(95)=12.54ms p(99)=40.92ms max=249.29ms
-    http_req_failed................: 0.00%  0 out of 8898
-    http_reqs......................: 8898   146.33321/s
+    http_req_duration..............: avg=3.96ms med=2.87ms p(95)=7.18ms p(99)=35.9ms  max=182.83ms
+      { expected_response:true }...: avg=3.96ms med=2.87ms p(95)=7.18ms p(99)=35.9ms  max=182.83ms
+    http_req_failed................: 0.00%  0 out of 14570
+    http_reqs......................: 14570  239.738638/s
 
     EXECUTION
-    iteration_duration.............: avg=6.74ms med=5.02ms p(95)=13.01ms p(99)=40.95ms max=249.84ms
-    iterations.....................: 8877   145.987852/s
-    vus............................: 1      min=1         max=1
-    vus_max........................: 1      min=1         max=1
+    iteration_duration.............: avg=4.11ms med=3.02ms p(95)=7.59ms p(99)=35.55ms max=182.99ms
+    iterations.....................: 14549  239.393098/s
+    vus............................: 1      min=1          max=1
+    vus_max........................: 1      min=1          max=1
 
     NETWORK
-    data_received..................: 9.4 MB 155 kB/s
-    data_sent......................: 3.9 MB 64 kB/s
+    data_received..................: 16 MB  255 kB/s
+    data_sent......................: 6.4 MB 105 kB/s
 
 
 
@@ -50,32 +50,32 @@
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 37678   623.01794/s
-    checks_succeeded...: 100.00% 37678 out of 37678
-    checks_failed......: 0.00%   0 out of 37678
+    checks_total.......: 31976   528.611992/s
+    checks_succeeded...: 100.00% 31976 out of 31976
+    checks_failed......: 0.00%   0 out of 31976
 
     ✓ status 200
     ✓ answered local / forwarded as intended
 
     CUSTOM
-    lookup_forwarded_ms............: avg=21.67ms med=6.86ms p(95)=77.75ms p(99)=83.27ms max=99.82ms 
-    lookup_local_ms................: avg=9.16ms  med=2.92ms p(95)=69.96ms p(99)=75.19ms max=87.49ms 
+    lookup_forwarded_ms............: avg=25.17ms med=9.23ms p(95)=79.7ms  p(99)=85.77ms max=99.35ms
+    lookup_local_ms................: avg=11.15ms med=4.25ms p(95)=71.68ms p(99)=76.6ms  max=92.03ms
 
     HTTP
-    http_req_duration..............: avg=15.43ms med=4.74ms p(95)=75.19ms p(99)=80.99ms max=99.82ms 
-      { expected_response:true }...: avg=15.43ms med=4.74ms p(95)=75.19ms p(99)=80.99ms max=99.82ms 
-    http_req_failed................: 0.00%  0 out of 18860
-    http_reqs......................: 18860  311.856212/s
+    http_req_duration..............: avg=18.18ms med=5.53ms p(95)=77.15ms p(99)=82.83ms max=99.35ms
+      { expected_response:true }...: avg=18.18ms med=5.53ms p(95)=77.15ms p(99)=82.83ms max=99.35ms
+    http_req_failed................: 0.00%  0 out of 16009
+    http_reqs......................: 16009  264.653158/s
 
     EXECUTION
-    iteration_duration.............: avg=15.91ms med=5.05ms p(95)=75.7ms  p(99)=81.99ms max=100.39ms
-    iterations.....................: 18839  311.50897/s
+    iteration_duration.............: avg=18.74ms med=5.94ms p(95)=77.79ms p(99)=84.07ms max=161.6ms
+    iterations.....................: 15988  264.305996/s
     vus............................: 5      min=5          max=5
     vus_max........................: 5      min=5          max=5
 
     NETWORK
-    data_received..................: 20 MB  331 kB/s
-    data_sent......................: 8.3 MB 137 kB/s
+    data_received..................: 17 MB  281 kB/s
+    data_sent......................: 7.0 MB 116 kB/s
 
 
 
