@@ -17,9 +17,11 @@ import java.util.Optional;
  * <p>{@code flightops.cluster = instance1=url,instance2=url} is the same list on every instance (hardcoded peer list,
  * PL3 p.12); this instance is the entry named {@code flightops.instance-name}.
  *
- * <p>Owner = rendezvous hashing: the instance with the highest SHA-256(name + "|" + registration) wins. All instances
- * agree without talking to each other, and adding an instance only moves the aircraft the new one wins.
- * Without a cluster list (standalone, or the old {@code flightops.peers}) this instance owns everything.
+ * <p>Rendezvous hashing ranks the instances for each aircraft by SHA-256(name + "|" + registration). All instances
+ * agree on the ranking without talking to each other, and adding an instance only moves the aircraft the new one wins.
+ * The first {@code flightops.replication.factor} instances of the ranking hold the aircraft's flights (its replicas);
+ * the first of them is the owner, where bookings go.
+ * Without a cluster list (standalone, or the old {@code flightops.peers}) this instance holds everything.
  */
 @Component
 public class Cluster {
@@ -30,10 +32,15 @@ public class Cluster {
     private final String self;
     private final List<Member> members;   // all instances, including this one; empty = not clustered
     private final List<Member> peers;
+    private final int replicationFactor;
 
     public Cluster(@Value("${flightops.instance-name}") String self,
                    @Value("${flightops.cluster:}") List<String> entries,
-                   @Value("${flightops.peers:}") List<String> legacyPeers) {
+                   @Value("${flightops.peers:}") List<String> legacyPeers,
+                   @Value("${flightops.replication.factor:2}") int replicationFactor) {
+        if (replicationFactor < 1) {
+            throw new IllegalArgumentException("flightops.replication.factor must be at least 1");
+        }
         this.self = self;
         List<Member> parsed = new ArrayList<>();
         for (String entry : entries) {
@@ -55,6 +62,7 @@ public class Cluster {
             }
             this.peers = members.stream().filter(m -> !m.name().equals(self)).toList();
         }
+        this.replicationFactor = members.isEmpty() ? 1 : Math.min(replicationFactor, members.size());
     }
 
     public String self() {
@@ -77,26 +85,36 @@ public class Cluster {
         return members.stream().filter(m -> m.name().equals(name)).findFirst();
     }
 
-    /** The instance that stores the flights of this aircraft. */
-    public String ownerOf(String registration) {
+    /** How many instances hold each flight (1 = no copies). Never more than the number of instances. */
+    public int replicationFactor() {
+        return replicationFactor;
+    }
+
+    /** The instances that hold the flights of this aircraft, best-ranked first; the first one is the owner. */
+    public List<String> replicasOf(String registration) {
         if (members.isEmpty()) {
-            return self;
+            return List.of(self);
         }
         String reg = registration.trim().toUpperCase();
-        Member best = null;
-        long bestScore = 0;
-        for (Member m : members) {
-            long score = score(m.name(), reg);
-            if (best == null || Long.compareUnsigned(score, bestScore) > 0) {
-                best = m;
-                bestScore = score;
-            }
-        }
-        return best.name();
+        return members.stream()
+                .sorted((a, b) -> Long.compareUnsigned(score(b.name(), reg), score(a.name(), reg)))
+                .limit(replicationFactor)
+                .map(Member::name)
+                .toList();
+    }
+
+    /** The instance where bookings of this aircraft are made. */
+    public String ownerOf(String registration) {
+        return replicasOf(registration).get(0);
     }
 
     public boolean ownsLocally(String registration) {
         return self.equals(ownerOf(registration));
+    }
+
+    /** True if this instance keeps a copy of this aircraft's flights (as owner or as backup). */
+    public boolean holdsLocally(String registration) {
+        return replicasOf(registration).contains(self);
     }
 
     private static long score(String instanceName, String registration) {

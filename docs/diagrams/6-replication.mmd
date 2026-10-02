@@ -1,0 +1,18 @@
+%% Replication: how a change reaches every copy (eventual consistency, P1 p.11)
+flowchart TB
+    change["Booking or cancel on instance A<br/>(the aircraft's owner, or its backup)"]
+    tx["One database transaction on A:<br/>save the flight (revision n)<br/>+ outbox task 'send it to B'"]
+    send["ReplicationSender (A)<br/>right after the commit,<br/>then every 1 s while B is down"]
+    recv["B: POST /internal/replicas<br/>keep the copy only if newer:<br/>higher revision wins"]
+    done["task deleted<br/>(GET /api/cluster/health:<br/>replicationBacklog)"]
+    sync["Catch-up (anti-entropy) on B:<br/>at startup, before 'ready',<br/>and every 60 s:<br/>GET /internal/replicas?for=B on every peer"]
+    conflict["New copy overlaps a flight of the<br/>same aircraft booked on B?<br/>(only after a network partition)<br/>keep both, log REPLICATION CONFLICT"]
+
+    change --> tx --> send
+    send -->|"B reachable"| recv --> done
+    send -->|"B down: task stays"| send
+    sync --> recv
+    recv -.-> conflict
+
+    classDef store fill:#eef6ff,stroke:#5b8def
+    class tx,done store

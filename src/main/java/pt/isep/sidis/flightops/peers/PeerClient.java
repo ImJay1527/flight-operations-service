@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.clients.HttpClientFactory;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
@@ -40,6 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>Lists need every peer, so they are asked in parallel (P1 p.12).</li>
  *   <li>A single flight: peers are asked one by one until one has it (PL3 p.11); the first peer asked rotates per
  *       request to spread the load (PL3 p.12).</li>
+ *   <li>Copies of flights (replication): pushed to the instances that hold them, and fetched when catching up.</li>
  * </ul>
  */
 @Component
@@ -48,6 +50,7 @@ public class PeerClient {
     private static final Logger log = LoggerFactory.getLogger(PeerClient.class);
 
     private final List<Peer> peers = new ArrayList<>();
+    private final int replicationFactor;
     private final JwtUtils jwtUtils;
     private final ResilientCaller caller;
     private final AtomicInteger nextFirst = new AtomicInteger();
@@ -64,6 +67,7 @@ public class PeerClient {
                       HealthRegistry registry, ResilientCaller caller) {
         this.jwtUtils = jwtUtils;
         this.caller = caller;
+        this.replicationFactor = cluster.replicationFactor();
         ClientHttpRequestFactory reads = httpClientFactory.create(Duration.ofMillis(timeoutMs));
         // forwarded bookings: the owner itself calls the other services before answering, so allow more time
         ClientHttpRequestFactory writes = httpClientFactory.create(Duration.ofMillis(writeTimeoutMs));
@@ -81,8 +85,7 @@ public class PeerClient {
      * Errors are passed on unchanged so the caller can tell "refused" (4xx) from "not reached" / "no answer".
      */
     public <T> T postTo(String peerName, String path, Object body, Class<T> type) {
-        Peer peer = peers.stream().filter(p -> p.name().equals(peerName)).findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown peer " + peerName));
+        Peer peer = peer(peerName);
         T answer = caller.call(peer.health(), false, () -> peer.writeClient().post().uri(path)
                 .header(HttpHeaders.AUTHORIZATION, bearer())
                 .body(body)
@@ -92,8 +95,41 @@ public class PeerClient {
         return answer;
     }
 
+    /** Sends the current state of a flight to an instance that keeps a copy. Safe to repeat, so it is retried. */
+    public void pushCopy(String peerName, FlightView flight) {
+        Peer peer = peer(peerName);
+        caller.call(peer.health(), true, () -> peer.client().post().uri("/internal/replicas")
+                .header(HttpHeaders.AUTHORIZATION, bearer())
+                .body(flight)
+                .retrieve()
+                .toBodilessEntity());
+    }
+
+    /**
+     * The flights a peer holds that the given instance should also hold; null if the peer could not be asked.
+     * One attempt only: at startup the peers may still be starting too, and retries would open their circuit.
+     */
+    public List<FlightView> copiesFor(String peerName, String instanceName) {
+        Peer peer = peer(peerName);
+        try {
+            return caller.call(peer.health(), false, () -> peer.client().get()
+                    .uri("/internal/replicas?for={instance}", instanceName)
+                    .header(HttpHeaders.AUTHORIZATION, bearer())
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<FlightView>>() {}));
+        } catch (CircuitOpenException | RestClientException e) {
+            log.debug("Could not fetch copies from {}: {}", peer.health().url(), e.getMessage());
+            return null;
+        }
+    }
+
     public boolean hasPeers() {
         return !peers.isEmpty();
+    }
+
+    private Peer peer(String name) {
+        return peers.stream().filter(p -> p.name().equals(name)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unknown peer " + name));
     }
 
     /** Asks every peer at the same time and concatenates the answers. */
@@ -121,7 +157,9 @@ public class PeerClient {
                 unreachable++;
             }
         }
-        PartialResults.record(unreachable);
+        // Every flight is on replicationFactor instances, this one included. Data can only be missing if at least
+        // that many peers did not answer.
+        PartialResults.record(unreachable, unreachable >= replicationFactor);
         return new PeerResult<>(all, unreachable);
     }
 

@@ -73,7 +73,7 @@ ask its peers **before** answering 404 (so callers can treat 404 as final).
 
 ### Flight Operations (replica-to-replica only)
 
-| Endpoint | Does (local shard only, never forwards) |
+| Endpoint | Does (local data only, never forwards) |
 |---|---|
 | `GET /internal/flights/{flightNumber}` | one flight or 404 |
 | `GET /internal/flights?aircraft=REG` | flights of an aircraft |
@@ -81,6 +81,11 @@ ask its peers **before** answering 404 (so callers can treat 404 as final).
 | `GET /internal/flights/departures/{iata}?hours=N` | upcoming departures |
 | `PATCH /internal/flights/{flightNumber}/cancel` | cancelled flight, 404 if not here, 409 if not cancellable |
 | `POST /internal/flights` `{routeId, aircraftRegistration, departureTime, arrivalTime}` | books the flight on THIS instance (the aircraft's owner - sharding by registration); 201 + flight, or the same 4xx a normal booking gets |
+| `POST /internal/replicas` `{flight, with revision}` | stores or updates this instance's copy of a flight (replication); kept only if newer (higher revision); 204 |
+| `GET /internal/replicas?for=NAME` | the flights here that instance NAME should also hold (its catch-up after a restart, and the periodic repair) |
+
+Every flight is kept on the first `flightops.replication.factor` (default 2) instances of its aircraft's
+rendezvous-hash ranking; the flight JSON exchanged on these endpoints carries a `revision` number.
 
 ## Shared bootstrap data
 

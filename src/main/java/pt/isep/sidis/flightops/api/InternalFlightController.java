@@ -10,7 +10,6 @@ import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.services.FlightQueryService;
 import pt.isep.sidis.flightops.services.InternalBookingRequest;
 import pt.isep.sidis.flightops.services.LocalBookingService;
-import pt.isep.sidis.flightops.services.ScheduledFlightService;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,11 +25,10 @@ import java.util.List;
 public class InternalFlightController {
 
     private final FlightQueryService flightQueryService;
-    private final ScheduledFlightService scheduledFlightService;
     private final LocalBookingService localBookings;
 
     @Operation(summary = "Book a flight on THIS instance (a booking forwarded by the peer that received it, "
-            + "because this instance owns the aircraft). Never forwarded again.")
+            + "because this instance holds the aircraft). Never forwarded again.")
     @PostMapping
     public ResponseEntity<FlightView> book(@RequestBody InternalBookingRequest request) {
         FlightView flight = localBookings.book(request.routeId(), request.aircraftRegistration(),
@@ -64,10 +62,10 @@ public class InternalFlightController {
         return flightQueryService.localDepartures(iata.toUpperCase(), now, now.plusHours(hours));
     }
 
-    @Operation(summary = "Cancel a flight stored on this instance (404 if not here)")
+    @Operation(summary = "Cancel this instance's copy of a flight (404 if not here); the other copies are updated from here")
     @PatchMapping("/{flightNumber}/cancel")
     public ResponseEntity<FlightView> cancel(@PathVariable String flightNumber) {
-        FlightView flight = scheduledFlightService.cancelLocal(flightNumber);
+        FlightView flight = localBookings.cancel(flightNumber);
         return flight == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(flight);
     }
 }

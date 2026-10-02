@@ -1,5 +1,6 @@
 package pt.isep.sidis.flightops.monitoring;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -14,6 +15,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@value #LOOKUPS}: lookup times local vs forwarded, and the forwarding success rate;</li>
  *   <li>{@value #REMOTE_CALLS}: every call to another instance, by outcome - peer failure rates;</li>
  *   <li>{@value #REMOTE_HEALTHY}: 1/0 per instance - peer availability;</li>
+ *   <li>{@value #REPLICATION}: copies sent to and applied from other instances, and conflicts found;</li>
  *   <li>Spring Boot's {@code http.server.requests}: requests served - load distribution.</li>
  * </ul>
  * Summary: GET /api/cluster/metrics.
@@ -24,6 +26,7 @@ public class FlightOpsMetrics {
     public static final String LOOKUPS = "flightops.lookups";
     public static final String REMOTE_CALLS = "flightops.remote.calls";
     public static final String REMOTE_HEALTHY = "flightops.remote.healthy";
+    public static final String REPLICATION = "flightops.replication";
 
     public static final String LOCAL = "local";
     public static final String FORWARDED = "forwarded";
@@ -58,6 +61,15 @@ public class FlightOpsMetrics {
                 .tag("outcome", outcome)
                 .register(registry)
                 .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+    }
+
+    /** @param event sent | applied | conflict */
+    public void recordReplication(String event) {
+        Counter.builder(REPLICATION)
+                .description("Copies of flights sent to / applied from other instances, and conflicts found")
+                .tag("event", event)
+                .register(registry)
+                .increment();
     }
 
     public void registerHealthGauge(EndpointHealth endpoint) {

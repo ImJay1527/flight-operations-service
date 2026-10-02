@@ -61,10 +61,25 @@ public class ScheduledFlight {
     @Version
     private Long version;
 
+    /**
+     * Grows with every change, on whichever instance makes it. Copies of a flight on different instances are
+     * reconciled by keeping the one with the highest revision.
+     */
+    @Column(nullable = false, columnDefinition = "bigint default 1")
+    private long revision = 1;
+
     protected ScheduledFlight() {
     }
 
     public ScheduledFlight(String routeId, String aircraftRegistration, String aircraftModel,
+                           String originIata, String destinationIata, double distanceKm, double fuelBurnRate,
+                           LocalDateTime scheduledDeparture, LocalDateTime scheduledArrival) {
+        this(UUID.randomUUID().toString(), routeId, aircraftRegistration, aircraftModel, originIata, destinationIata,
+                distanceKm, fuelBurnRate, scheduledDeparture, scheduledArrival);
+    }
+
+    /** With a given flight number: sample data gets the same number on every instance that holds it. */
+    public ScheduledFlight(String flightNumber, String routeId, String aircraftRegistration, String aircraftModel,
                            String originIata, String destinationIata, double distanceKm, double fuelBurnRate,
                            LocalDateTime scheduledDeparture, LocalDateTime scheduledArrival) {
         if (routeId == null || routeId.isBlank()) throw new IllegalArgumentException("Flight route cannot be null.");
@@ -72,7 +87,7 @@ public class ScheduledFlight {
         if (scheduledDeparture == null || scheduledArrival == null) throw new IllegalArgumentException("Departure and arrival times must be provided.");
         if (!scheduledArrival.isAfter(scheduledDeparture)) throw new IllegalArgumentException("Arrival time must be after departure time.");
 
-        this.flightNumber = UUID.randomUUID().toString();
+        this.flightNumber = flightNumber;
         this.routeId = routeId;
         this.aircraftRegistration = aircraftRegistration;
         this.aircraftModel = aircraftModel;
@@ -93,5 +108,28 @@ public class ScheduledFlight {
             throw new IllegalStateException("Cannot cancel a completed flight.");
         }
         this.status = FlightStatus.CANCELED;
+        this.revision++;
+    }
+
+    /** Sets the state of a copy received from another instance, before it is first saved here. */
+    public void restoreCopyState(FlightStatus status, long revision) {
+        this.status = status;
+        this.revision = revision;
+    }
+
+    /**
+     * Takes over the state of another instance's copy if that one is newer: higher revision, or on a tie a later
+     * status (a flight only ever goes from SCHEDULED to CANCELED or COMPLETED). Every instance applies the same rule,
+     * so all copies end up equal whatever order the updates arrive in. False if nothing changed.
+     */
+    public boolean updateFromCopy(FlightStatus otherStatus, long otherRevision) {
+        boolean newer = otherRevision > revision
+                || (otherRevision == revision && otherStatus.ordinal() > status.ordinal());
+        if (!newer) {
+            return false;
+        }
+        this.status = otherStatus;
+        this.revision = otherRevision;
+        return true;
     }
 }

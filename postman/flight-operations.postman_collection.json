@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "4a987f85-999a-4c5f-8b6e-88992bcd2a48",
+    "_postman_id": "a98f0721-ae5f-491c-8128-4fb6699172ed",
     "name": "Flight Operations - distributed tests (SIDIS PL3)",
-    "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
+    "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases - plus replication (every flight is kept on 2 instances; folder 03 shows the data of a stopped instance staying readable).\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -184,6 +184,48 @@
               }
             }
           ]
+        },
+        {
+          "name": "Replication factor (copies of each flight)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const rf = pm.response.json().replicationFactor;",
+                  "pm.test(\"replication factor reported (\" + rf + \")\", () => pm.expect(rf).to.be.at.least(1));",
+                  "pm.environment.set(\"replicationFactor\", rf);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -245,6 +287,7 @@
                 "exec": [
                   "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
                   "pm.test(\"answered by instance1 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance1\"));",
+                  "pm.environment.set(\"replicas_flight1\", pm.response.headers.get(\"X-Replicas\") || \"\");",
                   "pm.environment.set(\"flight_on_instance1\", pm.response.json().flightNumber);"
                 ]
               }
@@ -288,7 +331,7 @@
     },
     {
       "name": "02 Successful Forwarding",
-      "description": "PL3 p.16 test 02: data created on instance 2 ONLY, then requested from instance 1. Expected 200 with the forwarded data; X-Data-Source is \"peer:<instance 2 URL>\". Both instances' logs show the request id \"postman-forwarding-1\".",
+      "description": "PL3 p.16 test 02: data created on instance 2, then requested from instance 1. Expected 200 with the data. With replication every flight is also kept on a second instance (the booking's X-Replicas header): with 2 instances that is the other one, so instance 1 answers from its own copy (X-Data-Source \"local\"). Without a copy (REPLICATION_FACTOR=1, or 3 instances - folder 07) the read is forwarded: X-Data-Source \"peer:<URL>\". Both instances' logs show the request id \"postman-forwarding-1\".",
       "item": [
         {
           "name": "Create flight on instance 2 only",
@@ -344,6 +387,7 @@
                 "exec": [
                   "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
                   "pm.test(\"answered by instance2 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance2\"));",
+                  "pm.environment.set(\"replicas_flight2\", pm.response.headers.get(\"X-Replicas\") || \"\");",
                   "pm.environment.set(\"flight_on_instance2\", pm.response.json().flightNumber);"
                 ]
               }
@@ -351,7 +395,7 @@
           ]
         },
         {
-          "name": "GET it via instance 1 (forwarded)",
+          "name": "GET it via instance 1 (own copy, or forwarded)",
           "request": {
             "method": "GET",
             "header": [
@@ -380,7 +424,17 @@
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"answered by instance1 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance1\"));",
-                  "pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance2\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance2\")));",
+                  "(() => {",
+                  "  const copies = String(pm.environment.get(\"replicas_flight2\") || \"\").split(\",\");",
+                  "  const source = pm.response.headers.get(\"X-Data-Source\");",
+                  "  if (copies.includes(\"instance1\")) {",
+                  "    pm.test(\"X-Data-Source: local (instance1 keeps a copy - replication)\", () => pm.expect(source).to.eql(\"local\"));",
+                  "  } else {",
+                  "    const holders = copies.map(c => \"peer:\" + pm.environment.get(c));",
+                  "    pm.test(\"X-Data-Source: forwarded from an instance with a copy (\" + holders.join(\" or \") + \")\", () =>",
+                  "      pm.expect(holders).to.include(source));",
+                  "  }",
+                  "})();",
                   "pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
                   "pm.test(\"request id echoed (search both logs for it)\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.eql(\"postman-forwarding-1\"));"
                 ]
@@ -413,7 +467,17 @@
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"answered by instance2 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance2\"));",
-                  "pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance1\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance1\")));"
+                  "(() => {",
+                  "  const copies = String(pm.environment.get(\"replicas_flight1\") || \"\").split(\",\");",
+                  "  const source = pm.response.headers.get(\"X-Data-Source\");",
+                  "  if (copies.includes(\"instance2\")) {",
+                  "    pm.test(\"X-Data-Source: local (instance2 keeps a copy - replication)\", () => pm.expect(source).to.eql(\"local\"));",
+                  "  } else {",
+                  "    const holders = copies.map(c => \"peer:\" + pm.environment.get(c));",
+                  "    pm.test(\"X-Data-Source: forwarded from an instance with a copy (\" + holders.join(\" or \") + \")\", () =>",
+                  "      pm.expect(holders).to.include(source));",
+                  "  }",
+                  "})();"
                 ]
               }
             }
@@ -483,7 +547,7 @@
           ]
         },
         {
-          "name": "Cancel instance 2's flight via instance 1 (PATCH forwarded)",
+          "name": "Cancel instance 2's flight via instance 1 (own copy, or PATCH forwarded)",
           "request": {
             "method": "PATCH",
             "header": [],
@@ -1275,10 +1339,14 @@
                   "console.log(\"instance 1 metrics\", JSON.stringify(m, null, 2));",
                   "pm.environment.set(\"served_by_instance1\", m.requestsServed.total);",
                   "pm.test(\"local lookups counted\", () => pm.expect(m.lookupResponseTimes.local.count).to.be.above(0));",
-                  "pm.test(\"forwarded lookups counted\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));",
-                  "pm.test(\"forwarded lookups are slower than local ones (median, network hop)\", () =>",
-                  "  pm.expect(m.lookupResponseTimes.forwarded.medianMs).to.be.above(m.lookupResponseTimes.local.medianMs));",
-                  "pm.test(\"forwarding success rate reported\", () => pm.expect(m.forwarding.successRatePercent).to.be.a(\"number\"));",
+                  "if (String(pm.environment.get(\"replicas_flight2\")).split(\",\").includes(\"instance1\")) {",
+                  "  pm.test.skip(\"SKIPPED forwarded-lookup checks: instance 1 keeps a copy of every flight (2 instances, 2 copies), so no read is forwarded - run with 3 instances or REPLICATION_FACTOR=1\", () => {});",
+                  "} else {",
+                  "  pm.test(\"forwarded lookups counted\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));",
+                  "  pm.test(\"forwarded lookups are slower than local ones (median, network hop)\", () =>",
+                  "    pm.expect(m.lookupResponseTimes.forwarded.medianMs).to.be.above(m.lookupResponseTimes.local.medianMs));",
+                  "  pm.test(\"forwarding success rate reported\", () => pm.expect(m.forwarding.successRatePercent).to.be.a(\"number\"));",
+                  "}",
                   "pm.test(\"peer instance 2: healthy, calls and failure rate reported\", () => {",
                   "  const peer = m.remoteInstances.find(r => r.url === pm.environment.get(\"instance2\"));",
                   "  pm.expect(peer, \"instance 2 in remoteInstances\").to.exist;",
@@ -1322,7 +1390,9 @@
                   "  pm.expect(Number(pm.environment.get(\"served_by_instance1\"))).to.be.above(0);",
                   "  pm.expect(m.requestsServed.total).to.be.above(0);",
                   "});",
-                  "pm.test(\"instance 2 also forwarded lookups to instance 1\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));"
+                  "if (!String(pm.environment.get(\"replicas_flight1\")).split(\",\").includes(\"instance2\")) {",
+                  "  pm.test(\"instance 2 also forwarded lookups to instance 1\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));",
+                  "}"
                 ]
               }
             }
@@ -1332,7 +1402,7 @@
     },
     {
       "name": "07 Three instances",
-      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh -n 3 --stub); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy.",
+      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh -n 3 --stub); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy. With 3 instances and 2 copies, each flight is on 2 of them: the instance without a copy forwards the read to one that has it.",
       "item": [
         {
           "name": "Create flight on instance 3",
@@ -1391,6 +1461,7 @@
                   "} else {",
                   "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
                   "  pm.test(\"answered by instance3 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance3\"));",
+                  "  pm.environment.set(\"replicas_flight3\", pm.response.headers.get(\"X-Replicas\") || \"\");",
                   "  pm.environment.set(\"flight_on_instance3\", pm.response.json().flightNumber);",
                   "}"
                 ]
@@ -1399,7 +1470,7 @@
           ]
         },
         {
-          "name": "GET it via instance 1 (forwarded from 3)",
+          "name": "GET it via instance 1 (own copy, or forwarded)",
           "request": {
             "method": "GET",
             "header": [],
@@ -1425,7 +1496,17 @@
                   "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance3\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance3\")));",
+                  "  (() => {",
+                  "    const copies = String(pm.environment.get(\"replicas_flight3\") || \"\").split(\",\");",
+                  "    const source = pm.response.headers.get(\"X-Data-Source\");",
+                  "    if (copies.includes(\"instance1\")) {",
+                  "      pm.test(\"X-Data-Source: local (instance1 keeps a copy - replication)\", () => pm.expect(source).to.eql(\"local\"));",
+                  "    } else {",
+                  "      const holders = copies.map(c => \"peer:\" + pm.environment.get(c));",
+                  "      pm.test(\"X-Data-Source: forwarded from an instance with a copy (\" + holders.join(\" or \") + \")\", () =>",
+                  "        pm.expect(holders).to.include(source));",
+                  "    }",
+                  "  })();",
                   "}"
                 ]
               }
@@ -1433,7 +1514,7 @@
           ]
         },
         {
-          "name": "GET it via instance 2 (forwarded from 3)",
+          "name": "GET it via instance 2 (own copy, or forwarded)",
           "request": {
             "method": "GET",
             "header": [],
@@ -1459,7 +1540,17 @@
                   "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance3\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance3\")));",
+                  "  (() => {",
+                  "    const copies = String(pm.environment.get(\"replicas_flight3\") || \"\").split(\",\");",
+                  "    const source = pm.response.headers.get(\"X-Data-Source\");",
+                  "    if (copies.includes(\"instance2\")) {",
+                  "      pm.test(\"X-Data-Source: local (instance2 keeps a copy - replication)\", () => pm.expect(source).to.eql(\"local\"));",
+                  "    } else {",
+                  "      const holders = copies.map(c => \"peer:\" + pm.environment.get(c));",
+                  "      pm.test(\"X-Data-Source: forwarded from an instance with a copy (\" + holders.join(\" or \") + \")\", () =>",
+                  "        pm.expect(holders).to.include(source));",
+                  "    }",
+                  "  })();",
                   "}"
                 ]
               }
@@ -1493,13 +1584,20 @@
                   "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance1\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance1\")));",
+                  "  (() => {",
+                  "    const copies = String(pm.environment.get(\"replicas_flight1\") || \"\").split(\",\");",
+                  "    const source = pm.response.headers.get(\"X-Data-Source\");",
+                  "    if (copies.includes(\"instance3\")) {",
+                  "      pm.test(\"X-Data-Source: local (instance3 keeps a copy - replication)\", () => pm.expect(source).to.eql(\"local\"));",
+                  "    } else {",
+                  "      const holders = copies.map(c => \"peer:\" + pm.environment.get(c));",
+                  "      pm.test(\"X-Data-Source: forwarded from an instance with a copy (\" + holders.join(\" or \") + \")\", () =>",
+                  "        pm.expect(holders).to.include(source));",
+                  "    }",
+                  "  })();",
                   "  pm.sendRequest({ url: pm.environment.get(\"instance3\") + \"/api/scheduled-flights/\" + pm.environment.get(\"flight_on_instance2\"),",
                   "                   header: [{ key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") }] }, (err, res) => {",
-                  "    pm.test(\"instance 2's flight via instance 3: 200 from peer instance 2\", () => {",
-                  "      pm.expect(res.code).to.eql(200);",
-                  "      pm.expect(res.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance2\"));",
-                  "    });",
+                  "    pm.test(\"instance 2's flight via instance 3: 200\", () => pm.expect(res.code).to.eql(200));",
                   "  });",
                   "}"
                 ]
@@ -1724,7 +1822,7 @@
     },
     {
       "name": "09 Sharding by aircraft",
-      "description": "P1 p.15 data-based sharding: every aircraft has an owner instance (rendezvous hashing over the instance names) that stores all of its flights. A booking sent to another instance is forwarded to the owner (X-Stored-On), and the owner's per-aircraft lock prevents double-booking even when the requests arrive at different instances.",
+      "description": "P1 p.15 data-based sharding: every aircraft has an owner instance (rendezvous hashing over the instance names) that takes all of its bookings; the next instance in the ranking keeps a copy (replication). A booking sent to another instance is forwarded to the owner (X-Stored-On), and the owner's per-aircraft lock prevents double-booking even when the requests arrive at different instances.",
       "item": [
         {
           "name": "Who owns CS-TPC?",
@@ -1812,6 +1910,7 @@
                   "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
                   "pm.test(\"answered by instance1 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance1\"));",
                   "pm.test(\"X-Stored-On: instance2 (the owner)\", () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(\"instance2\"));",
+                  "pm.test(\"X-Replicas lists the owner first\", () => pm.expect(String(pm.response.headers.get(\"X-Replicas\")).split(\",\")[0]).to.eql(\"instance2\"));",
                   "pm.environment.set(\"flight_sharded\", pm.response.json().flightNumber);"
                 ]
               }
@@ -1912,7 +2011,7 @@
     },
     {
       "name": "03 Resilience - instance 2 is stopped and restarted",
-      "description": "PL3 p.16 test 03 and PL3 p.14 (automatic recovery). Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Instance 1 still serves its own data; data stored only on instance 2 gives 404 (PL3 p.11) with \"could not be reached\"; the circuit breaker reports instance 2 as down.\n3. Waits for instance 2 to come back (up to 90 s) and checks that instance 1 trusts it again and forwards to it again. The flight stored on instance 2 is still there: its data survived the restart (PostgreSQL).\n\nIf instance 2 cannot be stopped (not in stub mode) the tests of step 2 are skipped; stop it by hand and run this folder again.",
+      "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication; with 2 instances the copies are on instance 1). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and instance 1's outbox is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2. If instance 2 cannot be stopped (not in stub mode) step 2 is skipped; stop it by hand and run this folder again.",
       "item": [
         {
           "name": "Stop instance 2 (POST /actuator/shutdown)",
@@ -1941,6 +2040,15 @@
             }
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set(\"storedWhileDownUrl\", pm.environment.get(\"instance1\"));"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1996,7 +2104,7 @@
           ]
         },
         {
-          "name": "Instance 2's flight -> 404 (peer unreachable)",
+          "name": "Instance 2's flight is still readable (from its copy)",
           "request": {
             "method": "GET",
             "header": [],
@@ -2021,8 +2129,17 @@
                   "if (pm.variables.get(\"instance2Up\") === true) {",
                   "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "} else {",
-                  "  pm.test(\"status 404\", () => pm.response.to.have.status(404));",
-                  "  pm.test(\"error mentions: could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));",
+                  "  const others = String(pm.environment.get(\"replicas_flight2\") || \"\").split(\",\").filter(c => c && c !== \"instance2\");",
+                  "  if (others.length > 0) {",
+                  "    pm.test(\"status 200: a copy is on \" + others.join(\", \"), () => pm.response.to.have.status(200));",
+                  "    const expected = others.includes(\"instance1\") ? [\"local\"] : others.map(c => \"peer:\" + pm.environment.get(c));",
+                  "    pm.test(\"X-Data-Source: \" + expected.join(\" or \"), () => pm.expect(expected).to.include(pm.response.headers.get(\"X-Data-Source\")));",
+                  "    pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
+                  "  } else {",
+                  "    // no copy anywhere else (REPLICATION_FACTOR=1): PL3 p.11 404",
+                  "    pm.test(\"status 404 (no other copy)\", () => pm.response.to.have.status(404));",
+                  "    pm.test(\"error mentions: could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));",
+                  "  }",
                   "}"
                 ]
               }
@@ -2030,7 +2147,7 @@
           ]
         },
         {
-          "name": "A list while instance 2 is down says it's partial",
+          "name": "A list while instance 2 is down: complete, one peer unreachable",
           "request": {
             "method": "GET",
             "header": [],
@@ -2057,8 +2174,14 @@
                   "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Partial-Result: true (P1 p.12 partial responses)\", () => pm.expect(pm.response.headers.get(\"X-Partial-Result\")).to.eql(\"true\"));",
                   "  pm.test(\"X-Unreachable-Peers: 1\", () => pm.expect(pm.response.headers.get(\"X-Unreachable-Peers\")).to.eql(\"1\"));",
+                  "  // data can only be missing if at least as many instances are down as there are copies",
+                  "  const incomplete = 1 >= Number(pm.environment.get(\"replicationFactor\") || 1);",
+                  "  if (incomplete) {",
+                  "    pm.test(\"X-Partial-Result: true (no copies: P1 p.12 partial responses)\", () => pm.expect(pm.response.headers.get(\"X-Partial-Result\")).to.eql(\"true\"));",
+                  "  } else {",
+                  "    pm.test(\"no X-Partial-Result: every flight has a copy on a running instance\", () => pm.expect(pm.response.headers.has(\"X-Partial-Result\")).to.eql(false));",
+                  "  }",
                   "}"
                 ]
               }
@@ -2066,14 +2189,82 @@
           ]
         },
         {
-          "name": "Cluster health: instance 2 is down",
+          "name": "Book an aircraft owned by instance 2 while it is down: its backup takes it",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCSeconds(0, 0);",
+                  "const arr = new Date(dep.getTime() + 45 * 60000);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set('departure', fmt(dep));",
+                  "pm.variables.set('arrival', fmt(arr));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance2Up\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "  const replicas = String(pm.response.headers.get(\"X-Replicas\") || \"\").split(\",\");",
+                  "  const expected = replicas.find(r => r !== \"instance2\") || \"instance1\";",
+                  "  pm.test(\"X-Stored-On: \" + expected + \" (instance 2, the owner, is down)\", () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(expected));",
+                  "  pm.environment.set(\"flight_booked_while_down\", pm.response.json().flightNumber);",
+                  "  pm.environment.set(\"storedWhileDownUrl\", pm.environment.get(pm.response.headers.get(\"X-Stored-On\")));",
+                  "  pm.environment.set(\"replicas_while_down\", pm.response.headers.get(\"X-Replicas\") || \"\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cluster health: instance 2 down, its copy waiting in the outbox",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{instance1}}/api/cluster/health",
+              "raw": "{{storedWhileDownUrl}}/api/cluster/health",
               "host": [
-                "{{instance1}}"
+                "{{storedWhileDownUrl}}"
               ],
               "path": [
                 "api",
@@ -2107,6 +2298,10 @@
                   "    pm.expect(peer, \"instance 2 in the list\").to.exist;",
                   "    pm.expect(peer.healthy).to.eql(false);",
                   "  });",
+                  "  if (String(pm.environment.get(\"replicas_while_down\") || \"\").split(\",\").includes(\"instance2\")) {",
+                  "    pm.test(\"the new booking is queued for instance 2 (replicationBacklog)\", () => pm.expect(pm.response.json().replicationBacklog.instance2).to.be.at.least(1));",
+                  "  } else {",
+                  "  }",
                   "}"
                 ]
               }
@@ -2114,19 +2309,19 @@
           ]
         },
         {
-          "name": "Instance 2 is back: forwarding works again (automatic recovery)",
+          "name": "Instance 2 is back and has caught up (automatic recovery)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{instance1}}/api/scheduled-flights/{{flight_on_instance2}}",
+              "raw": "{{instance2}}/api/scheduled-flights/{{flight_booked_while_down}}",
               "host": [
-                "{{instance1}}"
+                "{{instance2}}"
               ],
               "path": [
                 "api",
                 "scheduled-flights",
-                "{{flight_on_instance2}}"
+                "{{flight_booked_while_down}}"
               ]
             }
           },
@@ -2152,8 +2347,19 @@
                   "  pm.sendRequest({ url: env('instance1') + '/api/cluster/health', method: 'GET',",
                   "                   header: [{ key: 'Authorization', value: 'Bearer ' + env('adminToken') }] }, (err, res) => {",
                   "    const peer = !err && res.code === 200 && res.json().endpoints.find(e => e.url === env('instance2'));",
-                  "    if (peer && peer.healthy) { pm.variables.set('peerHealthy', true); return; }",
+                  "    if (peer && peer.healthy) { pm.variables.set('peerHealthy', true); waitForCopy(Date.now() + 10000); return; }",
                   "    if (Date.now() < deadline) setTimeout(() => waitForHealthyPeer(deadline), 1000);",
+                  "  });",
+                  "}",
+                  "// then (max 10 s) until the booking made while it was down is on instance 2 - fetched at startup, or",
+                  "// delivered from the outbox about a second after the peer trusts it again",
+                  "function waitForCopy(deadline) {",
+                  "  const flight = env('flight_booked_while_down');",
+                  "  if (!flight) return;",
+                  "  pm.sendRequest({ url: env('instance2') + '/api/scheduled-flights/' + flight, method: 'GET',",
+                  "                   header: [{ key: 'Authorization', value: 'Bearer ' + env('atccToken') }] }, (err, res) => {",
+                  "    const local = !err && res.code === 200 && res.headers.get('X-Data-Source') === 'local';",
+                  "    if (!local && Date.now() < deadline) setTimeout(() => waitForCopy(deadline), 500);",
                   "  });",
                   "}",
                   "waitForInstance2();"
@@ -2170,9 +2376,77 @@
                   "} else {",
                   "  pm.test(\"instance 1 trusts instance 2 again (circuit closed by the health check)\", () => pm.expect(pm.variables.get(\"peerHealthy\")).to.eql(true));",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance2\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance2\")));",
-                  "  pm.test(\"the flight stored on instance 2 survived the restart\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
+                  "  if (String(pm.environment.get(\"replicas_while_down\") || \"\").split(\",\").includes(\"instance2\")) {",
+                  "    pm.test(\"the booking made while it was down is now on instance 2 itself\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));",
+                  "  } else {",
+                  "  }",
+                  "  pm.sendRequest({ url: pm.environment.get(\"instance2\") + \"/api/scheduled-flights/\" + pm.environment.get(\"flight_on_instance2\"),",
+                  "                   header: [{ key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") }] }, (err, res) => {",
+                  "    if (Number(pm.environment.get(\"replicationFactor\")) >= 2) {",
+                  "      pm.test(\"instance 2's own earlier flight is there too (kept in PostgreSQL, or fetched from its copy)\", () => pm.expect(res.code).to.eql(200));",
+                  "    } else {",
+                  "      pm.test.skip(\"no copies: instance 2's earlier flight survives a restart only with PostgreSQL (not --h2)\", () => {});",
+                  "    }",
+                  "  });",
                   "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The outbox is empty again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{storedWhileDownUrl}}/api/cluster/health",
+              "host": [
+                "{{storedWhileDownUrl}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the copy is delivered within ~1 s once that instance trusts instance 2 again; wait up to 15 s",
+                  "const env = k => pm.environment.get(k);",
+                  "const deadline = Date.now() + 15000;",
+                  "(function poll() {",
+                  "  pm.sendRequest({ url: env('storedWhileDownUrl') + '/api/cluster/health',",
+                  "                   header: [{ key: 'Authorization', value: 'Bearer ' + env('adminToken') }] }, (err, res) => {",
+                  "    const empty = !err && res.code === 200 && !res.json().replicationBacklog.instance2;",
+                  "    if (!empty && Date.now() < deadline) setTimeout(poll, 1000);",
+                  "  });",
+                  "})();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"nothing waiting for instance 2\", () => pm.expect(pm.response.json().replicationBacklog.instance2 || 0).to.eql(0));"
                 ]
               }
             }

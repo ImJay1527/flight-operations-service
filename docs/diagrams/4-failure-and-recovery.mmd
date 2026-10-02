@@ -1,26 +1,25 @@
-%% PL3 p.14: instance 2 fails - retries with backoff, circuit breaker, health check, automatic recovery
+%% PL3 p.14 + P1 p.2: instance 2 fails - its data stays readable from the copies, circuit breaker, automatic recovery
 sequenceDiagram
     participant C as Client
-    participant I1 as instance1
-    participant I2 as instance2
+    participant I1 as instance1 (copy of F)
+    participant I2 as instance2 (owner of F)
 
     Note over I2: instance 2 goes down
-    C->>I1: GET flight F (stored on instance 2)
+    C->>I1: GET flight F (owned by instance 2)
+    Note over I1: F is in instance 1's own database (copy)
+    I1-->>C: 200 F, X-Data-Source: local (no outage for the client)
+    C->>I1: GET flights of an aircraft (list)
     I1-xI2: attempt 1: connection refused
-    Note over I1: wait ~100 ms
-    I1-xI2: attempt 2
-    Note over I1: wait ~200 ms
-    I1-xI2: attempt 3 - 3 failures in a row: circuit OPEN (10 s)
-    I1-->>C: 404 "... 1 peer instance could not be reached"
-    C->>I1: GET flight F again
-    Note over I1: circuit open: instance 2 skipped (fail fast, no flooding)
-    I1-->>C: 404 in a few ms
-    C->>I1: GET a flight stored on instance 1
-    I1-->>C: 200 (local data keeps working)
-    Note over I2: instance 2 restarts (data kept in its database)
+    Note over I1: wait ~100 ms, then ~200 ms
+    I1-xI2: attempts 2 and 3 - 3 failures in a row: circuit OPEN (10 s)
+    I1-->>C: 200 complete list, X-Unreachable-Peers: 1 (every flight has a running copy)
+    C->>I1: POST booking for an aircraft owned by instance 2
+    Note over I1: circuit open: instance 2 skipped (fail fast)<br/>instance 1 is the aircraft's backup - booked here
+    Note over I1: outbox: "send flight G to instance 2" (same transaction)
+    I1-->>C: 201 G, X-Stored-On: instance1
+    Note over I2: instance 2 restarts (even with an empty database)
+    I2->>I1: catch-up: GET /internal/replicas?for=instance2
+    I1-->>I2: its flights, incl. G - applied before instance 2 reports ready
     I1->>I2: health check GET /actuator/health (every 5 s)
     I2-->>I1: 200 UP - circuit CLOSED
-    C->>I1: GET flight F
-    I1->>I2: GET /internal/flights/F
-    I2-->>I1: 200 F
-    I1-->>C: 200 F (recovered automatically)
+    I1->>I2: outbox: POST /internal/replicas G (already there: no change) - task deleted

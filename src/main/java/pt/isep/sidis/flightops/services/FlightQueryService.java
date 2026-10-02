@@ -19,7 +19,8 @@ import java.util.Map;
 
 /**
  * Reads: answered from this instance's data first, then completed with what the peers hold, so the client gets the
- * same answer whichever instance it asks.
+ * same answer whichever instance it asks. A flight is on several instances (replication); when copies differ
+ * because an update is still on its way, the newest one is returned.
  */
 @Service
 @RequiredArgsConstructor
@@ -99,11 +100,11 @@ public class FlightQueryService {
         return merge(localDepartures(originIata, now, end), remote.items());
     }
 
-    /** Union without duplicates, by departure time. */
+    /** Union without duplicates (newest copy of each flight), by departure time. */
     private List<FlightView> merge(List<FlightView> local, List<FlightView> remote) {
         Map<String, FlightView> byNumber = new LinkedHashMap<>();
         local.forEach(f -> byNumber.put(f.flightNumber(), f));
-        remote.forEach(f -> byNumber.putIfAbsent(f.flightNumber(), f));
+        remote.forEach(f -> byNumber.merge(f.flightNumber(), f, FlightView::newest));
         return byNumber.values().stream()
                 .sorted(Comparator.comparing(FlightView::scheduledDeparture))
                 .toList();
