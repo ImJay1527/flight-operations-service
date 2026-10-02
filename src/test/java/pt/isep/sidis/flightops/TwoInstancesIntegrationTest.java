@@ -123,6 +123,14 @@ class TwoInstancesIntegrationTest {
 
     @Test
     @Order(5)
+    void completeListHasNoPartialHeader() {
+        ResponseEntity<Map> res = get(url1 + "/api/scheduled-flights/aircraft/CS-TPA");
+        assertThat(res.getStatusCode().value()).isEqualTo(200);
+        assertThat(res.getHeaders().containsKey("X-Partial-Result")).isFalse();
+    }
+
+    @Test
+    @Order(5)
     void unknownIdIs404() {
         // PL3 p.16 test 05
         assertThat(get(url1 + "/api/scheduled-flights/does-not-exist").getStatusCode().value()).isEqualTo(404);
@@ -139,6 +147,12 @@ class TwoInstancesIntegrationTest {
         ResponseEntity<Map> remote = get(url1 + "/api/scheduled-flights/" + flightOn2);
         assertThat(remote.getStatusCode().value()).isEqualTo(404);
         assertThat((String) remote.getBody().get("error")).contains("could not be reached");
+
+        // lists still answer (200), but say they are incomplete (P1 p.12 "partial response scenarios")
+        ResponseEntity<Map> list = get(url1 + "/api/scheduled-flights/aircraft/CS-TPA");
+        assertThat(list.getStatusCode().value()).isEqualTo(200);
+        assertThat(list.getHeaders().getFirst("X-Partial-Result")).isEqualTo("true");
+        assertThat(list.getHeaders().getFirst("X-Unreachable-Peers")).isEqualTo("1");
     }
 
     @Test

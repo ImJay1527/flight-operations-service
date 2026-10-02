@@ -9,6 +9,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -68,5 +70,24 @@ class SecurityIntegrationTest {
         String userToken = jwtUtils.generateToken("atcc", "ATCC");
         mvc.perform(get("/api/aircraft-utilization").header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void corsPreflightFromAllowedFrontendIsAccepted() throws Exception {
+        // PL2 p.9: a browser asks first (OPTIONS) whether a page from another origin may call the API
+        mvc.perform(options("/api/aircraft-utilization")
+                        .header("Origin", "http://localhost:5173")
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"));
+    }
+
+    @Test
+    void corsPreflightFromUnknownOriginIsRefused() throws Exception {
+        mvc.perform(options("/api/aircraft-utilization")
+                        .header("Origin", "http://evil.example")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isForbidden());
     }
 }

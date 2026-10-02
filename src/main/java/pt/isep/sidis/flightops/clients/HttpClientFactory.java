@@ -45,9 +45,13 @@ public class HttpClientFactory {
                 .setMaxConnTotal(maxConnectionsPerDestination * 4)
                 .setDefaultConnectionConfig(ConnectionConfig.custom().setConnectTimeout(t).setSocketTimeout(t).build());
         if (sslBundle != null) {
-            pool.setSSLSocketFactory(SSLConnectionSocketFactoryBuilder.create()
-                    .setSslContext(sslBundle.createSslContext())
-                    .build());
+            SSLConnectionSocketFactoryBuilder tls = SSLConnectionSocketFactoryBuilder.create()
+                    .setSslContext(sslBundle.createSslContext());
+            String[] protocols = sslBundle.getOptions().getEnabledProtocols();
+            if (protocols != null) {
+                tls.setTlsVersions(protocols);   // TLS 1.3 only, from the "tls" profile
+            }
+            pool.setSSLSocketFactory(tls.build());
         }
         return new HttpComponentsClientHttpRequestFactory(HttpClients.custom()
                 .setConnectionManager(pool.build())

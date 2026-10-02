@@ -1,7 +1,9 @@
 package pt.isep.sidis.flightops.peers;
 
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
@@ -21,6 +23,12 @@ import pt.isep.sidis.flightops.resilience.ResilientCaller;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -31,9 +39,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * local data only and never forward again, so a query can never loop. A peer that is down is skipped and counted
  * (partial availability instead of failure), which favours availability over consistency (AP in CAP).
  *
- * <p>Every call goes through {@link ResilientCaller} (retry with backoff, circuit breaker; PL3 p.14). When looking
- * for the owner of one flight, the peer asked first rotates from request to request, spreading the load across the
- * healthy peers (PL3 p.12 "Load Balancing").
+ * <p>Every call goes through {@link ResilientCaller} (retry with backoff, circuit breaker; PL3 p.14).
+ * <ul>
+ *   <li>Lists (all flights of an aircraft, departures, reports) need every peer: they are asked <b>in parallel</b>
+ *       (P1 p.12 "Parallel Querying"). Unreachable peers are reported to the client ({@link PartialResults}).</li>
+ *   <li>One flight: the peers are asked <b>one by one</b> until one has it (PL3 p.11); the peer asked first rotates
+ *       from request to request, spreading the load across the healthy peers (PL3 p.12 "Load Balancing").</li>
+ * </ul>
  */
 @Component
 public class PeerClient {
@@ -44,6 +56,8 @@ public class PeerClient {
     private final JwtUtils jwtUtils;
     private final ResilientCaller caller;
     private final AtomicInteger nextFirst = new AtomicInteger();
+    /** One cheap virtual thread per peer call (Java 21), so list queries reach all peers at the same time. */
+    private final ExecutorService parallel = Executors.newVirtualThreadPerTaskExecutor();
 
     private record Peer(EndpointHealth health, RestClient client) {
     }
@@ -66,29 +80,70 @@ public class PeerClient {
         return !peers.isEmpty();
     }
 
-    /** Asks every peer for a list and concatenates the answers. */
+    /**
+     * Asks EVERY peer for a list, all at the same time (P1 p.12 "Parallel Querying"), and concatenates the answers.
+     * The request takes as long as the slowest peer, not the sum of all of them.
+     */
     public <T> PeerResult<T> getList(String path, ParameterizedTypeReference<List<T>> type, Object... uriVariables) {
+        Map<String, String> logContext = MDC.getCopyOfContextMap();   // request id + instance name for the log lines
+        List<Future<List<T>>> answers = new ArrayList<>();
+        for (Peer peer : peers) {
+            answers.add(parallel.submit(() -> withLogContext(logContext, () -> listFrom(peer, path, type, uriVariables))));
+        }
+
         List<T> all = new ArrayList<>();
         int unreachable = 0;
-        for (Peer peer : peers) {
+        for (Future<List<T>> answer : answers) {
             try {
-                List<T> part = caller.call(peer.health(), true, () -> peer.client().get().uri(path, uriVariables)
-                        .header(HttpHeaders.AUTHORIZATION, bearer())
-                        .retrieve()
-                        .body(type));
-                if (part != null) {
+                List<T> part = answer.get();
+                if (part == null) {
+                    unreachable++;
+                } else {
                     all.addAll(part);
                 }
-                log.debug("Peer {} answered GET {} with {} item(s)", peer.health().url(), path, part == null ? 0 : part.size());
-            } catch (CircuitOpenException e) {
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 unreachable++;
-                log.debug("Peer {} skipped for GET {}: circuit open", peer.health().url(), path);
-            } catch (RestClientException e) {
+            } catch (ExecutionException e) {
                 unreachable++;
-                log.warn("Peer {} unreachable for GET {}: {}", peer.health().url(), path, e.getMessage());
             }
         }
+        PartialResults.record(unreachable);   // -> X-Partial-Result / X-Unreachable-Peers response headers
         return new PeerResult<>(all, unreachable);
+    }
+
+    /** One peer's list, or null if it could not be asked (down, timeout, circuit open). */
+    private <T> List<T> listFrom(Peer peer, String path, ParameterizedTypeReference<List<T>> type, Object[] uriVariables) {
+        try {
+            List<T> part = caller.call(peer.health(), true, () -> peer.client().get().uri(path, uriVariables)
+                    .header(HttpHeaders.AUTHORIZATION, bearer())
+                    .retrieve()
+                    .body(type));
+            log.debug("Peer {} answered GET {} with {} item(s)", peer.health().url(), path, part == null ? 0 : part.size());
+            return part == null ? List.of() : part;
+        } catch (CircuitOpenException e) {
+            log.debug("Peer {} skipped for GET {}: circuit open", peer.health().url(), path);
+            return null;
+        } catch (RestClientException e) {
+            log.warn("Peer {} unreachable for GET {}: {}", peer.health().url(), path, e.getMessage());
+            return null;
+        }
+    }
+
+    private static <V> V withLogContext(Map<String, String> context, Callable<V> task) throws Exception {
+        if (context != null) {
+            MDC.setContextMap(context);
+        }
+        try {
+            return task.call();
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    @PreDestroy
+    void shutdown() {
+        parallel.shutdownNow();
     }
 
     /** Asks peers one by one until one of them owns the resource (a 404 means "not mine"). */
