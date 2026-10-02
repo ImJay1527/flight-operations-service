@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "83061fc9-dc81-4a46-ac88-b3234147078f",
+    "_postman_id": "6fa8383f-340e-4f90-9b37-7431f358cf61",
     "name": "Flight Operations - distributed tests (SIDIS PL3)",
-    "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) needs instance 2 STOPPED: while instance 2 is running its tests are shown as skipped. Stop instance 2, then run folder 03 on its own.\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
+    "description": "Tests from the Week 3 practical session (PL3 p.15-17): local data access, forwarding, resilience, load distribution, edge cases.\n\n**Before running**: start two instances in stub mode (built-in aircraft/route data, so flights can be created without the other two services):\n\n    ./scripts/run-local.sh --stub\n\nSelect the environment \"Flight Ops - local (2 instances)\" and run the whole collection. Folder 03 (resilience) runs last: it stops instance 2 by itself, checks the failure behaviour, and waits for run-local.sh to restart instance 2 (the whole run takes about a minute).\n\nPostman on the web (browser) reaches localhost only through the Postman Desktop Agent.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1226,9 +1226,56 @@
       ]
     },
     {
-      "name": "03 Resilience - STOP INSTANCE 2 FIRST",
-      "description": "PL3 p.16 test 03. Run this folder ON ITS OWN: after 01 and 02, STOP INSTANCE 2 (Ctrl+C its terminal, or stop it in VS Code), then run. Expected: instance 1 still serves its own data; data stored only on instance 2 gives 404 (PL3 p.11) with \"could not be reached\" in the message; the circuit breaker reports instance 2 as down. Start instance 2 again afterwards: within ~5 s instance 1's health check marks it healthy again.",
+      "name": "03 Resilience - instance 2 is stopped and restarted",
+      "description": "PL3 p.16 test 03 and PL3 p.14 (automatic recovery). Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Instance 1 still serves its own data; data stored only on instance 2 gives 404 (PL3 p.11) with \"could not be reached\"; the circuit breaker reports instance 2 as down.\n3. Waits for instance 2 to come back (up to 90 s) and checks that instance 1 trusts it again and forwards to it again. The flight stored on instance 2 is still there: its data survived the restart (PostgreSQL).\n\nIf instance 2 cannot be stopped (not in stub mode) the tests of step 2 are skipped; stop it by hand and run this folder again.",
       "item": [
+        {
+          "name": "Stop instance 2 (POST /actuator/shutdown)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/actuator/shutdown",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "actuator",
+                "shutdown"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "// wait (max 20 s) until instance 2 really stops answering",
+                  "const deadline = Date.now() + 20000;",
+                  "(function waitDown() {",
+                  "  pm.sendRequest(pm.environment.get('instance2') + '/actuator/health', (err, res) => {",
+                  "    if (err) { pm.test('instance 2 is down', () => {}); return; }",
+                  "    if (Date.now() < deadline) { setTimeout(waitDown, 500); return; }",
+                  "    pm.test('instance 2 is down', () => pm.expect.fail('instance 2 still answers after 20 s'));",
+                  "  });",
+                  "})();"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Instance 1's own flight still works",
           "request": {
@@ -1253,7 +1300,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running - stop it, then run folder 03 again\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  pm.test(\"X-Data-Source = \" + \"local\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));",
@@ -1287,7 +1334,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running - stop it, then run folder 03 again\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "} else {",
                   "  pm.test(\"status 404\", () => pm.response.to.have.status(404));",
                   "  pm.test(\"error mentions: could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));",
@@ -1331,7 +1378,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running - stop it, then run folder 03 again\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  pm.test(\"instance 2 reported unhealthy (circuit open)\", () => {",
@@ -1339,6 +1386,71 @@
                   "    pm.expect(peer, \"instance 2 in the list\").to.exist;",
                   "    pm.expect(peer.healthy).to.eql(false);",
                   "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Instance 2 is back: forwarding works again (automatic recovery)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/{{flight_on_instance2}}",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{flight_on_instance2}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// wait (max 90 s) until instance 2 answers again - scripts/run-local.sh restarts it automatically -",
+                  "// and then (max 20 s) until instance 1's health check (every 5 s) trusts it again",
+                  "const env = k => pm.environment.get(k);",
+                  "const backDeadline = Date.now() + 90000;",
+                  "pm.variables.set('instance2Back', false);",
+                  "pm.variables.set('peerHealthy', false);",
+                  "function waitForInstance2() {",
+                  "  pm.sendRequest(env('instance2') + '/actuator/health', (err, res) => {",
+                  "    if (!err && res.code === 200) { pm.variables.set('instance2Back', true); waitForHealthyPeer(Date.now() + 20000); }",
+                  "    else if (Date.now() < backDeadline) setTimeout(waitForInstance2, 2000);",
+                  "  });",
+                  "}",
+                  "function waitForHealthyPeer(deadline) {",
+                  "  pm.sendRequest({ url: env('instance1') + '/api/cluster/health', method: 'GET',",
+                  "                   header: [{ key: 'Authorization', value: 'Bearer ' + env('adminToken') }] }, (err, res) => {",
+                  "    const peer = !err && res.code === 200 && res.json().endpoints.find(e => e.url === env('instance2'));",
+                  "    if (peer && peer.healthy) { pm.variables.set('peerHealthy', true); return; }",
+                  "    if (Date.now() < deadline) setTimeout(() => waitForHealthyPeer(deadline), 1000);",
+                  "  });",
+                  "}",
+                  "waitForInstance2();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.variables.get(\"instance2Back\") !== true) {",
+                  "  pm.test.skip(\"instance 2 did not come back within 90 s - start it again (scripts/run-local.sh does that automatically)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"instance 1 trusts instance 2 again (circuit closed by the health check)\", () => pm.expect(pm.variables.get(\"peerHealthy\")).to.eql(true));",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Data-Source = \" + \"peer:\" + pm.environment.get(\"instance2\"), () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"peer:\" + pm.environment.get(\"instance2\")));",
+                  "  pm.test(\"the flight stored on instance 2 survived the restart\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
                   "}"
                 ]
               }
@@ -1352,7 +1464,6 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "// This folder needs instance 2 STOPPED. Check it, so the tests can be skipped (not failed) if it is still up.",
               "pm.sendRequest({ url: pm.environment.get('instance2') + '/actuator/health', method: 'GET' }, (err, res) => {",
               "  pm.variables.set('instance2Up', !err && res && res.code === 200);",
               "});"

@@ -25,7 +25,8 @@ public class AuditLogFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().startsWith("/actuator");
+        // health checks every few seconds would flood the audit log; everything else (incl. shutdown) is audited
+        return request.getRequestURI().startsWith("/actuator/health");
     }
 
     @Override

@@ -33,6 +33,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/actuator/health/**").permitAll()
+                        // only exposed in the "stub" (test) profile; even then only for ADMIN
+                        .requestMatchers("/actuator/shutdown").hasRole("ADMIN")
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/error").permitAll()
                         // service-to-service only: never callable with a normal user token

@@ -109,20 +109,22 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (31 requests with test scripts) and
+`flight-operations.postman_collection.json` (33 requests with test scripts) and
 `local.postman_environment.json` (one URL per instance). Import both in Postman.
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
    two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "2 instances for the Postman tests".
 2. Select the environment "Flight Ops - local (2 instances)".
-3. Run the whole collection. Folder **03 Resilience** shows its tests as *skipped* while instance 2 is running.
-4. Stop **instance 2**, then run folder **03 Resilience** on its own. Start instance 2 again afterwards.
+3. Run the whole collection (about 30 s). Nothing to do by hand: folder **03 Resilience** stops instance 2 itself
+   (`POST /actuator/shutdown`, only possible in stub/test mode and only for ADMIN), checks the failure behaviour, then
+   waits until `run-local.sh` has restarted instance 2 and checks the automatic recovery.
+   With the VS Code compound there is no automatic restart: the last request of folder 03 is then skipped.
 
 | Folder | PL3 p.16 test |
 |---|---|
 | 01 Local Data Access | 01: data on instance 1, asked from instance 1 → 200, `X-Data-Source: local` (no peer query) |
 | 02 Successful Forwarding | 02: data created on instance 2 only, asked from instance 1 → 200, `X-Data-Source: peer:…` |
-| 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, instance 2 reported down |
+| 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, instance 2 reported down; then instance 2 restarted → trusted again, forwarding works, its data survived (PL3 p.14 automatic recovery) |
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
 
