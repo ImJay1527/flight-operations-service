@@ -1,16 +1,17 @@
-%% PL3 p.20 - the distributed system: 3 components x 2 instances, each instance with its own database
+%% PL3 p.20 - the distributed system: 3 components x 2 instances, each flight-ops instance with its own database
 flowchart LR
     client["Clients<br/>(Postman, k6, a frontend)"]
+    lb["Load balancer (nginx)<br/>https://localhost:8443<br/>least connections + failover"]
 
     subgraph FO["flight-operations-service (this repo)"]
         direction TB
         fo1["instance1<br/>:8083"]
         fo2["instance2<br/>:8093"]
-        db1[("PostgreSQL<br/>flightops-db-1<br/>:5433")]
-        db2[("PostgreSQL<br/>flightops-db-2<br/>:5434")]
+        db1[("PostgreSQL<br/>flightops-db-1<br/>:5433<br/>encrypted columns")]
+        db2[("PostgreSQL<br/>flightops-db-2<br/>:5434<br/>encrypted columns")]
         fo1 --- db1
         fo2 --- db2
-        fo1 <-->|"peer forwarding<br/>/internal/flights/**"| fo2
+        fo1 <-->|"peer forwarding /internal/flights/**<br/>bookings go to the aircraft's owner"| fo2
     end
 
     subgraph AM["aircraft-maintenance-service"]
@@ -27,8 +28,9 @@ flowchart LR
         ar1 <-->|peers| ar2
     end
 
-    client -->|"HTTPS + user JWT<br/>(any instance)"| fo1
-    client --> fo2
+    client -->|"HTTPS (TLS 1.3) + user JWT"| lb
+    lb --> fo1
+    lb --> fo2
     FO -->|"GET /internal/aircraft/{reg}<br/>round-robin + failover"| AM
     FO -->|"GET /internal/routes/{id}<br/>GET /internal/airports/{iata}"| AR
 

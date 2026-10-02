@@ -18,7 +18,8 @@
 #
 # Each instance runs with its Spring profile instance<i> (src/main/resources/application-instance<i>.properties).
 #
-# Port scheme: 8083 + 10 * (i - 1). Every instance gets all the others as peers and its own slice of the sample data.
+# Port scheme: 8083 + 10 * (i - 1). Every instance gets the list of all instances (CLUSTER); the aircraft, and
+# so the sample flights, are sharded over them by registration.
 # Logs: logs/flightops-<i>.log
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -87,9 +88,9 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-supervise() {   # $1 = instance number, $2 = its peers
+supervise() {   # $1 = instance number
   while true; do
-    PEERS="$2" SHARD_COUNT="$N"       java -jar "$JAR" --spring.profiles.active="instance$1${PROFILE:+,$PROFILE}" >> "logs/flightops-$1.log" 2>&1
+    CLUSTER="$CLUSTER" java -jar "$JAR" --spring.profiles.active="instance$1${PROFILE:+,$PROFILE}" >> "logs/flightops-$1.log" 2>&1
     [[ "$RESTART" == yes ]] || break
     echo "flightops-$1 stopped - starting it again in ${RESTART_DELAY}s"
     sleep "$RESTART_DELAY"
@@ -97,20 +98,21 @@ supervise() {   # $1 = instance number, $2 = its peers
   done
 }
 
-for i in $(seq 1 "$N"); do
-  peers=()
-  for j in $(seq 1 "$N"); do
-    [[ $j -ne $i ]] && peers+=("$SCHEME://localhost:$(port "$j")")
-  done
-  PEERS=$(IFS=,; echo "${peers[*]}")
+# All instances, by name - the same list for every instance (cluster.Cluster: peers + sharding by aircraft)
+members=()
+for j in $(seq 1 "$N"); do members+=("instance$j=$SCHEME://localhost:$(port "$j")"); done
+CLUSTER=$(IFS=,; echo "${members[*]}")
 
-  # Port, DB, data slice etc. come from application-instance<i>.properties. PEERS and SHARD_COUNT are passed
-  # because they depend on how many instances run (instance 1 and 2 must learn about instance 3 when N=3).
+for i in $(seq 1 "$N"); do
+
+  # Port, DB etc. come from application-instance<i>.properties. CLUSTER is passed because it depends on how many
+  # instances run (instances 1 and 2 must learn about instance 3 when N=3).
   : > "logs/flightops-$i.log"
-  supervise "$i" "$PEERS" &
+  supervise "$i" &
   SUPERVISORS+=($!)
-  echo "flightops-$i  $SCHEME://localhost:$(port "$i")  peers=$PEERS  (logs/flightops-$i.log)"
+  echo "flightops-$i  $SCHEME://localhost:$(port "$i")  (logs/flightops-$i.log)"
 done
 
+echo "cluster: $CLUSTER"
 echo "All $N instances starting. Ctrl+C to stop."
 wait

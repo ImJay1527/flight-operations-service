@@ -16,12 +16,13 @@ flowchart TB
 
     subgraph S["Services (services)"]
         direction LR
-        s1["ScheduledFlightService<br/>scheduling rules"]
+        s1["ScheduledFlightService<br/>book on the aircraft's owner<br/>LocalBookingService: rules + aircraft lock"]
         s2["FlightQueryService<br/>local first, then peers"]
         s3["Utilization / FuelEfficiency"]
     end
 
-    repo[("ScheduledFlightRepository<br/>own database")]
+    repo[("ScheduledFlightRepository<br/>own database<br/>route assignment AES-encrypted (common.crypto)")]
+    cl["Cluster (cluster)<br/>all instances + owner of each aircraft"]
     peers["PeerClient (peers)<br/>other instances of this service"]
     dirs["AircraftDirectory / RouteDirectory (clients)<br/>HTTP clients, or built-in data in stub mode"]
 
@@ -39,6 +40,8 @@ flowchart TB
     S --> repo
     s2 --> peers
     s1 --> dirs
+    s1 --> cl
+    s1 -->|"forward booking"| peers
     peers --> R
     dirs --> R
     R -->|"HTTPS + SERVICE JWT<br/>+ X-Request-Id"| out(["peers / other services"])

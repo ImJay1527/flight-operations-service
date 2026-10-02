@@ -1,0 +1,19 @@
+%% P1 p.15 - sharding by aircraft registration: a booking is stored on the instance that owns the aircraft
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant I1 as instance1
+    participant I2 as instance2 (owner of CS-TPC)
+    participant DB2 as flightops-db-2
+
+    C->>I1: POST /api/scheduled-flights {aircraft CS-TPC}
+    Note over I1: owner of CS-TPC = highest SHA-256(name + "|CS-TPC")<br/>over instance1, instance2 -> instance2
+    I1->>I2: POST /internal/flights (SERVICE JWT, not retried)
+    I2->>DB2: lock aircraft CS-TPC (SELECT ... FOR UPDATE)
+    I2->>DB2: overlapping flights of CS-TPC? none
+    I2->>DB2: INSERT flight (route, aircraft, airports encrypted)
+    DB2-->>I2: commit - lock released
+    I2-->>I1: 201 flight
+    I1-->>C: 201 flight, X-Instance: instance1, X-Stored-On: instance2
+    Note over I1,I2: a 2nd booking of CS-TPC at the same moment (via either instance) waits for the lock,<br/>then sees this flight: 409 "already scheduled"
+    Note over I1: owner unreachable (connection refused / circuit open): booked on instance1 instead (AP)<br/>owner reached but no answer in time: 503 "booking state unknown"

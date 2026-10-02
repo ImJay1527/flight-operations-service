@@ -5,6 +5,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 import pt.isep.sidis.flightops.security.SystemUser;
@@ -17,9 +18,10 @@ import java.util.List;
  * Seeds users and sample flights. Route IDs, registrations and model data must match the bootstrap data of the
  * other two services (docs/service-contracts.md, "Shared bootstrap data").
  *
- * <p>Sharding of the sample data: every instance loads the users, but the 10 sample flights are split across the
- * instances. Instance {@code shard} (1..shard-count) loads flights number i where {@code i % shard-count == shard - 1},
- * so a peer query is needed to see all of them. {@code shard = 0} loads everything (standalone instance).
+ * <p>Sharding of the sample data: every instance loads the users, but each of the 10 sample flights is loaded only by
+ * the instance that owns its aircraft ({@link Cluster#ownerOf}), so a peer query is needed to see all of them.
+ * Without a cluster list: instance {@code shard} (1..shard-count) loads flights i with
+ * {@code i % shard-count == shard - 1}; {@code shard = 0} loads everything (standalone instance).
  */
 @Component
 public class Bootstrapper implements CommandLineRunner {
@@ -37,11 +39,13 @@ public class Bootstrapper implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final int shard;
     private final int shardCount;
+    private final Cluster cluster;
 
     public Bootstrapper(SystemUserRepository userRepository, ScheduledFlightRepository flightRepository,
                         PasswordEncoder passwordEncoder,
                         @Value("${flightops.bootstrap.shard:0}") int shard,
-                        @Value("${flightops.bootstrap.shard-count:2}") int shardCount) {
+                        @Value("${flightops.bootstrap.shard-count:2}") int shardCount,
+                        Cluster cluster) {
         if (shard < 0 || shard > shardCount) {
             throw new IllegalArgumentException("flightops.bootstrap.shard must be between 0 and " + shardCount);
         }
@@ -50,6 +54,7 @@ public class Bootstrapper implements CommandLineRunner {
         this.passwordEncoder = passwordEncoder;
         this.shard = shard;
         this.shardCount = shardCount;
+        this.cluster = cluster;
     }
 
     @Override
@@ -86,8 +91,12 @@ public class Bootstrapper implements CommandLineRunner {
                 flight(LIS_MAD, "CS-TPB", "737 MAX", B737_BURN, "LIS", "MAD", 502.0, now.plusDays(5), 80));
 
         for (int i = 0; i < sample.size(); i++) {
-            if (shard == 0 || i % shardCount == shard - 1) {
-                flightRepository.save(sample.get(i));
+            ScheduledFlight flight = sample.get(i);
+            boolean mine = cluster.isClustered()
+                    ? cluster.ownsLocally(flight.getAircraftRegistration())   // sharding by aircraft (P1 p.15)
+                    : shard == 0 || i % shardCount == shard - 1;            // no cluster list: old slice setting
+            if (mine) {
+                flightRepository.save(flight);
             }
         }
     }

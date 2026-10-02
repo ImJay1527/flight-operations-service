@@ -73,13 +73,14 @@ ask its peers **before** answering 404 (so callers can treat 404 as final).
 
 ### Flight Operations (replica-to-replica only)
 
-| Endpoint | Returns (local shard only, never forwards) |
+| Endpoint | Does (local shard only, never forwards) |
 |---|---|
 | `GET /internal/flights/{flightNumber}` | one flight or 404 |
 | `GET /internal/flights?aircraft=REG` | flights of an aircraft |
 | `GET /internal/flights/active[?aircraft=REG]` | non-cancelled flights |
 | `GET /internal/flights/departures/{iata}?hours=N` | upcoming departures |
 | `PATCH /internal/flights/{flightNumber}/cancel` | cancelled flight, 404 if not here, 409 if not cancellable |
+| `POST /internal/flights` `{routeId, aircraftRegistration, departureTime, arrivalTime}` | books the flight on THIS instance (the aircraft's owner - sharding by registration); 201 + flight, or the same 4xx a normal booking gets |
 
 ## Shared bootstrap data
 

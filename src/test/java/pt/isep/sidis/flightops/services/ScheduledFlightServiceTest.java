@@ -6,8 +6,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
+
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.clients.*;
+import pt.isep.sidis.flightops.cluster.Cluster;
+import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
+import pt.isep.sidis.flightops.resilience.CircuitOpenException;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
@@ -23,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/** Where a booking is made (sharding by aircraft) and cancelling across instances. */
 @ExtendWith(MockitoExtension.class)
 class ScheduledFlightServiceTest {
 
@@ -31,7 +42,8 @@ class ScheduledFlightServiceTest {
     @Mock RouteDirectory airportsRoutesClient;
     @Mock FlightQueryService flightQueryService;
     @Mock PeerClient peers;
-    @Mock AircraftBookingLocks aircraftBookingLocks;
+    @Mock LocalBookingService localBookings;
+    @Mock Cluster cluster;
 
     @InjectMocks ScheduledFlightService service;
 
@@ -49,59 +61,84 @@ class ScheduledFlightServiceTest {
         aircraft = new AircraftInfo("CS-TPA", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160);
     }
 
+    // ------------------------------------------------------------------ sharding by aircraft (P1 p.15)
+
+    private final FlightView booked = new FlightView("F-1", "route-opo-lis", "CS-TPC", "A320neo", "OPO", "LIS",
+            277.0, 3.8, dep, arr, "SCHEDULED");
+
     @Test
-    void schedulesFlightWithSnapshotOfRemoteData() {
-        when(airportsRoutesClient.getRoute("route-opo-lis")).thenReturn(route);
-        when(aircraftClient.getAircraft("CS-TPA")).thenReturn(aircraft);
-        when(repository.findOverlappingFlightsWithLock(eq("CS-TPA"), any(), any())).thenReturn(List.of());
-        when(flightQueryService.activeOnPeers("CS-TPA")).thenReturn(List.of());
-        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    void aircraftOwnedHereIsBookedHere() {
+        when(cluster.ownerOf("CS-TPC")).thenReturn("instance1");
+        when(cluster.self()).thenReturn("instance1");
+        when(localBookings.book("route-opo-lis", "CS-TPC", dep, arr)).thenReturn(booked);
 
-        FlightView result = service.scheduleFlight("route-opo-lis", "CS-TPA", dep, arr);
+        Booking booking = service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr);
 
-        assertThat(result.originIata()).isEqualTo("OPO");
-        assertThat(result.destinationIata()).isEqualTo("LIS");
-        assertThat(result.aircraftModel()).isEqualTo("A320neo");
-        assertThat(result.fuelBurnRate()).isEqualTo(24000.0 / 6300.0);
-        assertThat(result.status()).isEqualTo("SCHEDULED");
+        assertThat(booking.storedOn()).isEqualTo("instance1");
+        verifyNoInteractions(peers);
     }
 
     @Test
-    void rejectsAircraftThatIsNotAvailable() {
-        when(airportsRoutesClient.getRoute(any())).thenReturn(route);
-        when(aircraftClient.getAircraft(any())).thenReturn(
-                new AircraftInfo("CS-TPA", "UNDER_MAINTENANCE", "A320neo", 6300.0, 24000.0, 160));
+    void aircraftOwnedByAPeerIsForwardedToIt() {
+        when(cluster.ownerOf("CS-TPC")).thenReturn("instance2");
+        when(cluster.self()).thenReturn("instance1");
+        when(peers.postTo(eq("instance2"), eq("/internal/flights"), any(), eq(FlightView.class))).thenReturn(booked);
 
-        assertThatThrownBy(() -> service.scheduleFlight("route-opo-lis", "CS-TPA", dep, arr))
+        Booking booking = service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr);
+
+        assertThat(booking.storedOn()).isEqualTo("instance2");
+        assertThat(booking.flight()).isEqualTo(booked);
+        verifyNoInteractions(localBookings);
+    }
+
+    @Test
+    void ownersRefusalIsPassedOnWithItsMessage() {
+        when(cluster.ownerOf("CS-TPC")).thenReturn("instance2");
+        when(cluster.self()).thenReturn("instance1");
+        when(peers.postTo(any(), any(), any(), any())).thenThrow(HttpClientErrorException.create(HttpStatus.CONFLICT,
+                "Conflict", null, "{\"error\":\"The aircraft is already scheduled...\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("UNDER_MAINTENANCE");
-        verify(repository, never()).save(any());
+                .hasMessage("The aircraft is already scheduled...");
+        verifyNoInteractions(localBookings);
     }
 
     @Test
-    void rejectsAirportNotCertifiedForModel() {
-        AirportInfo lis = new AirportInfo("LIS", "OPERATIONAL", List.of("737 MAX"));
-        when(airportsRoutesClient.getRoute(any())).thenReturn(
-                new RouteInfo("route-opo-lis", "ACTIVE", 277.0, 350.0, 100, route.origin(), lis));
-        when(aircraftClient.getAircraft(any())).thenReturn(aircraft);
+    void ownerThatCannotBeReachedMeansBookingHere() {
+        // connection refused: the booking certainly didn't reach the owner, so booking here can't duplicate it
+        when(cluster.ownerOf("CS-TPC")).thenReturn("instance2");
+        when(cluster.self()).thenReturn("instance1");
+        when(peers.postTo(any(), any(), any(), any()))
+                .thenThrow(new ResourceAccessException("I/O error", new ConnectException("Connection refused")));
+        when(localBookings.book("route-opo-lis", "CS-TPC", dep, arr)).thenReturn(booked);
 
-        assertThatThrownBy(() -> service.scheduleFlight("route-opo-lis", "CS-TPA", dep, arr))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("destination airport (LIS)");
+        assertThat(service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr).storedOn()).isEqualTo("instance1");
     }
 
     @Test
-    void rejectsOverlapWithFlightStoredOnAnotherReplica() {
-        when(airportsRoutesClient.getRoute(any())).thenReturn(route);
-        when(aircraftClient.getAircraft(any())).thenReturn(aircraft);
-        when(repository.findOverlappingFlightsWithLock(any(), any(), any())).thenReturn(List.of());
-        FlightView onPeer = new FlightView("F-1", "route-lis-mad", "CS-TPA", "A320neo", "LIS", "MAD",
-                502.0, 3.8, dep.plusMinutes(10), dep.plusMinutes(90), "SCHEDULED");
-        when(flightQueryService.activeOnPeers("CS-TPA")).thenReturn(List.of(onPeer));
+    void ownerWithOpenCircuitMeansBookingHere() {
+        when(cluster.ownerOf("CS-TPC")).thenReturn("instance2");
+        when(cluster.self()).thenReturn("instance1");
+        when(peers.postTo(any(), any(), any(), any())).thenThrow(new CircuitOpenException("https://instance2"));
+        when(localBookings.book("route-opo-lis", "CS-TPC", dep, arr)).thenReturn(booked);
 
-        assertThatThrownBy(() -> service.scheduleFlight("route-opo-lis", "CS-TPA", dep, arr))
-                .isInstanceOf(IllegalStateException.class);
-        verify(repository, never()).save(any());
+        assertThat(service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr).storedOn()).isEqualTo("instance1");
+    }
+
+    @Test
+    void ownerThatTimedOutIs503NotASecondBooking() {
+        // the owner may have stored it already: booking here could create a duplicate
+        when(cluster.ownerOf("CS-TPC")).thenReturn("instance2");
+        when(cluster.self()).thenReturn("instance1");
+        when(peers.postTo(any(), any(), any(), any()))
+                .thenThrow(new ResourceAccessException("I/O error", new SocketTimeoutException("Read timed out")));
+
+        assertThatThrownBy(() -> service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining("may or may not have been made");
+        verifyNoInteractions(localBookings);
     }
 
     @Test

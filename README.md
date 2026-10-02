@@ -27,8 +27,8 @@ Architecture diagrams, key benefits, performance measurements and scaling decisi
 # whole system, 2 instances per service (needs the 3 repos side by side)
 docker compose up --build
 
-# only the 2 flight-ops instances (enough to demo peer-to-peer queries)
-docker compose up --build flightops-1 flightops-2
+# only flight ops: 2 instances + their databases behind the load balancer (https://localhost:8443)
+docker compose up --build flightops-lb
 
 # scale-up: 3 flight-ops instances
 docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build flightops-1 flightops-2 flightops-3
@@ -36,10 +36,15 @@ docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build fl
 # load test (k6 in Docker, 1 CPU per instance); results in loadtest/results/
 ./loadtest/run.sh 2
 ./loadtest/run.sh 3
+
+# local vs forwarded latency, availability while an instance is killed (with and without the load balancer)
+./loadtest/performance.sh latency
+./loadtest/performance.sh availability
+./loadtest/performance.sh availability-lb
 ```
 
-**Instances = Spring profiles.** Each instance has its own file with its own port, database, peers and slice of the
-sample data: `application-instance1.properties` (8083, `flightops_db_1`), `application-instance2.properties`
+**Instances = Spring profiles.** Each instance has its own file with its own port, database and the list of all
+instances (`flightops.cluster`): `application-instance1.properties` (8083, `flightops_db_1`), `application-instance2.properties`
 (8093, `flightops_db_2`) and `application-instance3.properties` (8103, scale-up). Start one with
 `java -jar target/flight-operations-service-*.jar --spring.profiles.active=instance1` (add `,tls` for HTTPS).
 Environment variables override the files, and docker-compose uses them for container hostnames.
@@ -49,7 +54,10 @@ Environment variables override the files, and docker-compose uses them for conta
 
 Port scheme and scaling decisions: [docs/architecture.md](docs/architecture.md).
 
-In docker-compose the flight-ops replicas serve **HTTPS only**: https://localhost:8083 and https://localhost:8093.
+In docker-compose clients use the **load balancer**, https://localhost:8443 (nginx, `lb/nginx.conf`: least
+connections, an instance that fails is left out for 10 s, failover to the other instance). The instances also stay
+reachable directly on https://localhost:8083 and https://localhost:8093, **HTTPS only (TLS 1.3)**. Docker checks
+each instance's health every 10 s (`docker compose ps`) and restarts an instance whose process stops.
 Swagger UI: https://localhost:8083/swagger-ui.html
 
 To trust the dev CA: import `certs/ca.crt` into Postman (Settings → Certificates → CA certificates) or use
@@ -59,13 +67,17 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 ## How the distribution works
 
-* **Sharding**: a flight is stored on the instance that created it. The 10 sample flights are split across the
-  instances (`BOOTSTRAP_SHARD` of `SHARD_COUNT`).
-* **Peer-to-peer reads**: a GET answers from the local DB and then asks every peer on `/internal/flights/**`.
+* **Sharding by aircraft** (P1 p.15): every instance knows all instances (`flightops.cluster`); the owner of an
+  aircraft is chosen by rendezvous hashing of its registration. A booking is stored on the owner, forwarded there if
+  it arrived elsewhere (`X-Stored-On` says where); `GET /api/cluster/owner/{registration}` shows the owner.
+  The 10 sample flights are loaded by the owners of their aircraft.
+* **Peer-to-peer reads**: a GET answers from the local DB and then asks the peers on `/internal/flights/**`:
+  lists ask **all peers at the same time** (P1 p.12), a single flight asks them one by one until found (PL3 p.11).
   Results are merged and de-duplicated by `flightNumber`. Internal endpoints answer from the local shard only, so
-  there are no loops.
+  there are no loops. A list built while a peer was unreachable is still `200`, with `X-Partial-Result: true` and
+  `X-Unreachable-Peers: n`.
   Try: `GET http://localhost:8083/api/aircraft-utilization` and `GET http://localhost:8093/api/aircraft-utilization`.
-  Both return all 10 sample flights, although each replica only stores 5.
+  Both return all 10 sample flights, although each instance only stores those of its own aircraft.
 * **Fault tolerance**: an unreachable peer is skipped (logged as a warning). If a single-item lookup can't be found
   *and* a peer was unreachable, the answer is still `404`, as the practical session expects (PL3 p.11, p.16 test 03),
   but the error message says how many peers could not be reached, because the item may exist there.
@@ -80,22 +92,25 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
     as long (max 60 s).
   * *Health checks*: every 5 s each instance calls `/actuator/health` on its peers and on the other services'
     instances. A recovered instance is used again as soon as it answers.
-  * *Load balancing*: when looking for the instance that holds a flight, the peer asked first rotates per request.
+  * *Load balancing*: incoming requests through nginx (least connections); between instances, the peer asked first
+    for a single flight rotates per request; calls to other services go round-robin.
   * Status: `GET /api/cluster/health` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) lists every peer / remote instance
     with its circuit state and failure count. Settings: `sidis.resilience.*` in `application.properties`.
 * **Consistency**: every flight has exactly one owner (no copies), so single reads are up to date; lists are partial
-  while an instance is down; "no double-booking" is guaranteed on one instance (per-aircraft lock) and best-effort
-  across instances (AP in CAP).
+  while an instance is down; "no double-booking" is guaranteed while the aircraft's owner is reachable (all its
+  bookings meet there, under a per-aircraft lock) and best effort while it is down (AP in CAP).
   Details, the known weak spots and how to fix them: [docs/architecture.md#consistency-model](docs/architecture.md#consistency-model).
 
 ## Security
 
 | Requirement | How |
 |---|---|
-| Encryption in transit | `tls` profile: HTTPS server (keystore `certs/flightops.p12`). Outgoing calls to peers and other services trust **only** the AISafe dev CA (`certs/truststore.p12`), and hostname verification stays on. Certificates come from `scripts/generate-dev-certs.sh` (one CA, one certificate per service). |
-| Inter-service authentication | Every service-to-service call carries a JWT with role `SERVICE`. `/internal/**` accepts only that role. |
+| Encryption in transit | `tls` profile: HTTPS, **TLS 1.3 only** (a TLS 1.2 client is refused), server and outgoing calls. Outgoing calls to peers and other services trust **only** the AISafe dev CA (`certs/truststore.p12`), and hostname verification stays on. The load balancer also speaks TLS 1.3 on both sides and verifies the instances' certificates. Certificates come from `scripts/generate-dev-certs.sh` (one CA, one certificate per service + the load balancer). |
+| Encryption at rest | The route assignment of each flight (route, aircraft, model, airports) is stored **AES-256 encrypted** (`common.crypto`: deterministic authenticated encryption, SIV construction, so equality queries still work and tampering is detected). Key from `DATA_ENCRYPTION_KEY` (256 bit, base64), values versioned `enc:v1:` for key rotation; existing rows are encrypted at startup. `select aircraft_registration from scheduled_flight` shows only `enc:v1:...` |
+| Inter-service authentication | Every service-to-service call carries a short-lived JWT (5 min, renewed automatically: rotating tokens, P1 p.16) with role `SERVICE` and the calling service as subject. `/internal/**` accepts only that role. |
 | Access control | User roles from the login JWT (`@PreAuthorize`). A service token can't call `/api/**`, and a user token can't call `/internal/**`. |
-| Audit logging | `AUDIT` logger: user, roles, method, URI, status and client address for every request. |
+| Audit logging | `AUDIT` logger: user, roles, method, URI, status, duration and client address for every request. |
+| CORS (PL2 p.9) | Browsers may call `/api/**` from the origins in `CORS_ALLOWED_ORIGINS` (default `http://localhost:3000,http://localhost:5173`); the custom `X-...` headers are exposed. Not for `/internal/**`. |
 
 ## Testing (PL3 p.15-17)
 
@@ -107,14 +122,15 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 | Test | What it covers |
 |---|---|
-| `services/*Test`, `resilience/*Test` | Unit tests: forwarding/merge logic, scheduling rules, retry/backoff, circuit breaker |
+| `services/*Test`, `resilience/*Test`, `cluster/ClusterTest`, `common/crypto/*Test` | Unit tests: forwarding/merge logic, scheduling rules, routing a booking to the aircraft's owner (and the fallbacks), retry/backoff, circuit breaker, rendezvous hashing (agreement, spread, minimal movement), encryption |
+| `ConcurrentBookingTest`, `EncryptionAtRestTest` | Real database: simultaneous bookings of one aircraft (exactly one succeeds), what is really stored (raw SQL shows only ciphertext) |
 | `SecurityIntegrationTest` | One instance: login, 401/403 rules, service-only `/internal/**` |
-| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP: local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, instance 2 stopped → 404 + circuit open |
+| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP: local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 404, partial lists flagged, circuit open |
 
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (43 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (48 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -129,12 +145,13 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
 |---|---|
 | 01 Local Data Access | 01: data on instance 1, asked from instance 1 → 200, `X-Data-Source: local` (no peer query) |
 | 02 Successful Forwarding | 02: data created on instance 2 only, asked from instance 1 → 200, `X-Data-Source: peer:…` |
-| 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, instance 2 reported down; then instance 2 restarted → trusted again, forwarding works, its data survived (PL3 p.14 automatic recovery) |
+| 03 Resilience | 03: instance 2 stopped → local data 200, remote-only data 404, lists flagged `X-Partial-Result`, instance 2 reported down; then instance 2 restarted → trusted again, forwarding works, its data survived (PL3 p.14 automatic recovery) |
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
 | 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower), forwarding success rate, peer health, both instances served requests |
 | 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped unless 3 instances run: `./scripts/run-local.sh -n 3 --stub` |
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
+| 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
 and select "Flight Ops - local HTTPS (2 instances)". Postman must trust the dev CA: Settings → Certificates →
@@ -202,7 +219,8 @@ isolated from the others and **survives restarts**:
 * The sample data is loaded only into an **empty** database, so restarts don't duplicate it.
 * Stop the databases: `docker compose stop`. **Delete all data** (start fresh): `docker compose down -v`.
 * Look inside a database: `docker compose exec flightops-db-1 psql -U flightops -d flightops`,
-  then e.g. `select flight_number, status from scheduled_flight;`
+  then e.g. `select flight_number, aircraft_registration, status from scheduled_flight;` (the registration is
+  encrypted: `enc:v1:...`, see Security)
 * Without Docker: `./scripts/run-local.sh --h2` or the VS Code "H2 in-memory" configuration (data is lost on stop).
   The automated tests always use in-memory H2, so they need no setup.
 

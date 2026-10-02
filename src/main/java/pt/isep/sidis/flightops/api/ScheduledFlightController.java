@@ -16,6 +16,7 @@ import pt.isep.sidis.flightops.api.dto.CreateScheduledFlightDTO;
 import pt.isep.sidis.flightops.api.dto.DeparturesBoardResponseDTO;
 import pt.isep.sidis.flightops.api.dto.ScheduledFlightResponseDTO;
 import pt.isep.sidis.flightops.api.dto.FlightView;
+import pt.isep.sidis.flightops.services.Booking;
 import pt.isep.sidis.flightops.services.FlightLookup;
 import pt.isep.sidis.flightops.services.ScheduledFlightService;
 
@@ -48,14 +49,17 @@ public class ScheduledFlightController {
     public ResponseEntity<ScheduledFlightResponseDTO> scheduleFlight(
             @Valid @RequestBody CreateScheduledFlightDTO dto) {
 
-        FlightView flight = scheduledFlightService.scheduleFlight(
+        Booking booking = scheduledFlightService.scheduleFlight(
                 dto.getRouteId(),
                 dto.getAircraftRegistration(),
                 dto.getDepartureTime(),
                 dto.getArrivalTime()
         );
 
-        return new ResponseEntity<>(assembler.toModel(flight), HttpStatus.CREATED);
+        // X-Stored-On: the instance that owns the aircraft and stores the flight (sharding by aircraft, P1 p.15)
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .header("X-Stored-On", booking.storedOn())
+                .body(assembler.toModel(booking.flight()));
     }
 
     @Operation(summary = "US213: View all scheduled flights for a specific aircraft",

@@ -1,106 +1,112 @@
 package pt.isep.sidis.flightops.services;
 
 import lombok.RequiredArgsConstructor;
+import org.apache.hc.client5.http.ConnectTimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.clients.AircraftDirectory;
-import pt.isep.sidis.flightops.clients.AircraftInfo;
-import pt.isep.sidis.flightops.clients.AirportInfo;
 import pt.isep.sidis.flightops.clients.RouteDirectory;
-import pt.isep.sidis.flightops.clients.RouteInfo;
+import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
-import pt.isep.sidis.flightops.domain.FlightStatus;
-import pt.isep.sidis.flightops.domain.ScheduledFlight;
+import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
+import pt.isep.sidis.flightops.resilience.CircuitOpenException;
 
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.UnknownHostException;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * Scheduled flights across the instances. Bookings are sharded by aircraft registration (P1 p.15): a booking is made
+ * on the instance that owns the aircraft ({@link Cluster#ownerOf}), forwarding it there if needed, so all flights of
+ * an aircraft are on one instance and its per-aircraft lock prevents double-booking across instances too.
+ */
 @Service
 @RequiredArgsConstructor
 public class ScheduledFlightService {
 
-    private static final int TURNAROUND_BUFFER_MINUTES = 30;
+    private static final Logger log = LoggerFactory.getLogger(ScheduledFlightService.class);
 
     private final ScheduledFlightRepository scheduledFlightRepository;
     private final AircraftDirectory aircraftClient;
     private final RouteDirectory airportsRoutesClient;
     private final FlightQueryService flightQueryService;
     private final PeerClient peers;
-    private final AircraftBookingLocks aircraftBookingLocks;
+    private final LocalBookingService localBookings;
+    private final Cluster cluster;
 
-    @Transactional
-    public FlightView scheduleFlight(String routeId, String aircraftRegistration,
-                                     LocalDateTime departureTime, LocalDateTime arrivalTime) {
-
-        if (!arrivalTime.isAfter(departureTime)) {
-            throw new IllegalArgumentException("Arrival time must be after departure time.");
+    /**
+     * Books on the owner of the aircraft. If the owner can't be reached and the request certainly did not get there
+     * (connection refused, circuit open), the booking is made here instead - availability first (AP), with the
+     * best-effort overlap check. If the owner was reached but did not answer in time, the outcome is unknown: 503,
+     * rather than risking a second booking.
+     */
+    public Booking scheduleFlight(String routeId, String aircraftRegistration,
+                                  LocalDateTime departureTime, LocalDateTime arrivalTime) {
+        String owner = cluster.ownerOf(aircraftRegistration);
+        if (owner.equals(cluster.self())) {
+            return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime), owner);
         }
-
-        RouteInfo route = airportsRoutesClient.getRoute(routeId);
-        AircraftInfo aircraft = aircraftClient.getAircraft(aircraftRegistration);
-
-        if (!route.isActive()) {
-            throw new IllegalStateException("Cannot schedule a flight on a deactivated route.");
+        try {
+            FlightView flight = peers.postTo(owner, "/internal/flights",
+                    new InternalBookingRequest(routeId, aircraftRegistration, departureTime, arrivalTime), FlightView.class);
+            return new Booking(flight, owner);
+        } catch (HttpClientErrorException refused) {
+            throw ownersAnswer(refused);                  // e.g. 409 "already scheduled", 404 unknown aircraft
+        } catch (HttpServerErrorException failed) {
+            throw new ServiceUnavailableException(owner + ": " + errorMessage(failed.getResponseBodyAsString()));
+        } catch (CircuitOpenException | ResourceAccessException e) {
+            if (e instanceof ResourceAccessException && !neverDelivered(e)) {
+                throw new ServiceUnavailableException("The instance that owns aircraft " + aircraftRegistration + " (" + owner
+                        + ") did not answer in time; the booking may or may not have been made. Check the aircraft's "
+                        + "flights before trying again.", e);
+            }
+            log.warn("Owner {} of aircraft {} unreachable ({}): booking it here instead (overlap check best effort)",
+                    owner, aircraftRegistration, e.getMessage());
+            return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime), cluster.self());
         }
+    }
 
-        AirportInfo origin = route.origin();
-        AirportInfo destination = route.destination();
+    /** The owner's 4xx, as the same kind of error here (so the client gets the owner's status and message). */
+    private RuntimeException ownersAnswer(HttpClientErrorException e) {
+        String message = errorMessage(e.getResponseBodyAsString());
+        return switch (e.getStatusCode().value()) {
+            case 404 -> new ResourceNotFoundException(message);
+            case 409 -> new IllegalStateException(message);
+            case 400 -> new IllegalArgumentException(message);
+            default -> new ServiceUnavailableException("The owning instance refused the booking (" + e.getStatusCode() + "): " + message);
+        };
+    }
 
-        if (!origin.isOperational() || !destination.isOperational()) {
-            throw new IllegalStateException("Both origin and destination airports must be operational.");
+    private static String errorMessage(String body) {
+        int i = body == null ? -1 : body.indexOf("\"error\":\"");
+        if (i < 0) {
+            return body == null || body.isBlank() ? "no details" : body;
         }
+        int start = i + "\"error\":\"".length();
+        int end = body.indexOf('"', start);
+        return end < 0 ? body.substring(start) : body.substring(start, end);
+    }
 
-        String modelName = aircraft.modelName();
-
-        if (!origin.isCertifiedFor(modelName)) {
-            throw new IllegalStateException(
-                    "The origin airport (" + origin.iataCode() + ") is not certified for aircraft model: " + modelName);
+    /** True if the request certainly never reached the other instance (so trying elsewhere can't duplicate it). */
+    private static boolean neverDelivered(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConnectException || t instanceof ConnectTimeoutException
+                    || t instanceof UnknownHostException || t instanceof NoRouteToHostException) {
+                return true;
+            }
         }
-        if (!destination.isCertifiedFor(modelName)) {
-            throw new IllegalStateException(
-                    "The destination airport (" + destination.iataCode() + ") is not certified for aircraft model: " + modelName);
-        }
-
-        if (aircraft.maxRange() < route.distanceKm()) {
-            throw new IllegalArgumentException("Aircraft maximum range is insufficient for this route.");
-        }
-        if (aircraft.activeCapacity() < route.minCapacityRequired()) {
-            throw new IllegalArgumentException("Aircraft active capacity is insufficient for this route's requirements.");
-        }
-        if (!aircraft.isAvailable()) {
-            throw new IllegalStateException("Aircraft is not available for scheduling. Current status: " + aircraft.status());
-        }
-
-        LocalDateTime bufferedDeparture = departureTime.minusMinutes(TURNAROUND_BUFFER_MINUTES);
-        LocalDateTime bufferedArrival = arrivalTime.plusMinutes(TURNAROUND_BUFFER_MINUTES);
-
-        // Bookings of the same aircraft on this instance run one after the other from here until commit, so the
-        // overlap check below always sees a flight that a concurrent booking has just saved (see AircraftBookingLocks).
-        aircraftBookingLocks.lock(aircraft.registrationNumber());
-
-        // Local shard
-        if (!scheduledFlightRepository.findOverlappingFlightsWithLock(
-                aircraft.registrationNumber(), bufferedDeparture, bufferedArrival).isEmpty()) {
-            throw new IllegalStateException("The aircraft is already scheduled...");
-        }
-        // Other shards: best-effort check (no distributed lock -> eventual consistency, see docs).
-        boolean overlapsOnPeer = flightQueryService.activeOnPeers(aircraft.registrationNumber()).stream()
-                .anyMatch(f -> FlightStatus.SCHEDULED.name().equals(f.status())
-                        && !f.scheduledDeparture().isAfter(bufferedArrival)
-                        && !f.scheduledArrival().isBefore(bufferedDeparture));
-        if (overlapsOnPeer) {
-            throw new IllegalStateException("The aircraft is already scheduled...");
-        }
-
-        ScheduledFlight newFlight = new ScheduledFlight(
-                route.routeId(), aircraft.registrationNumber(), modelName,
-                origin.iataCode(), destination.iataCode(), route.distanceKm(), aircraft.fuelBurnRate(),
-                departureTime, arrivalTime);
-        return FlightView.of(scheduledFlightRepository.save(newFlight));
+        return false;
     }
 
     public List<FlightView> getScheduledFlightsByAircraft(String aircraftRegistration) {

@@ -27,7 +27,7 @@ class EncryptionAtRestTest {
     @Test
     void routeAssignmentIsEncryptedInTheDatabase() {
         LocalDateTime departure = LocalDateTime.now().plusDays(2500).withNano(0);
-        FlightView flight = service.scheduleFlight("route-opo-lis", "CS-TPC", departure, departure.plusMinutes(45));
+        FlightView flight = service.scheduleFlight("route-opo-lis", "CS-TPC", departure, departure.plusMinutes(45)).flight();
 
         Map<String, Object> row = jdbc.queryForMap(
                 "SELECT route_id, aircraft_registration, aircraft_model, origin_iata, destination_iata, status " +

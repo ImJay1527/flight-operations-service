@@ -3,10 +3,13 @@ package pt.isep.sidis.flightops.api;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.services.FlightQueryService;
+import pt.isep.sidis.flightops.services.InternalBookingRequest;
+import pt.isep.sidis.flightops.services.LocalBookingService;
 import pt.isep.sidis.flightops.services.ScheduledFlightService;
 
 import java.time.LocalDateTime;
@@ -24,6 +27,16 @@ public class InternalFlightController {
 
     private final FlightQueryService flightQueryService;
     private final ScheduledFlightService scheduledFlightService;
+    private final LocalBookingService localBookings;
+
+    @Operation(summary = "Book a flight on THIS instance (a booking forwarded by the peer that received it, "
+            + "because this instance owns the aircraft). Never forwarded again.")
+    @PostMapping
+    public ResponseEntity<FlightView> book(@RequestBody InternalBookingRequest request) {
+        FlightView flight = localBookings.book(request.routeId(), request.aircraftRegistration(),
+                request.departureTime(), request.arrivalTime());
+        return ResponseEntity.status(HttpStatus.CREATED).body(flight);
+    }
 
     @Operation(summary = "Local flight by number (404 if not on this replica)")
     @GetMapping("/{flightNumber}")

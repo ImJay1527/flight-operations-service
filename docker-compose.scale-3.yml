@@ -3,19 +3,17 @@
 #   docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build
 #   (only flight ops:  ... up --build flightops-1 flightops-2 flightops-3)
 #
-# With hardcoded peer lists, scaling is a configuration change: the existing instances must learn the new peer,
-# and the sample data is re-split three ways (SHARD_COUNT=3). See docs/architecture.md, "Horizontal scaling".
+# With a hardcoded instance list, scaling is a configuration change: every instance gets the 3-instance CLUSTER
+# list. Aircraft are re-sharded by rendezvous hashing: only those the new instance wins move to it. See docs/architecture.md, "Horizontal scaling".
 
 services:
   flightops-1:
     environment:
-      PEERS: https://flightops-2:8083,https://flightops-3:8083
-      SHARD_COUNT: 3
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083
 
   flightops-2:
     environment:
-      PEERS: https://flightops-1:8083,https://flightops-3:8083
-      SHARD_COUNT: 3
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083
 
   flightops-3:
     build: .
@@ -39,7 +37,7 @@ services:
       SSL_TRUSTSTORE: file:/certs/truststore.p12
       SSL_PASSWORD: ${SSL_PASSWORD:-changeit}
       SSL_KEYSTORE: file:/certs/flightops.p12
-      PEERS: https://flightops-1:8083,https://flightops-2:8083
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
 

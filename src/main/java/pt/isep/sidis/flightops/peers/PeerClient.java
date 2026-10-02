@@ -13,6 +13,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.clients.HttpClientFactory;
+import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
 import pt.isep.sidis.flightops.common.tracing.RequestIdPropagation;
 import pt.isep.sidis.flightops.resilience.CircuitOpenException;
@@ -59,21 +60,43 @@ public class PeerClient {
     /** One cheap virtual thread per peer call (Java 21), so list queries reach all peers at the same time. */
     private final ExecutorService parallel = Executors.newVirtualThreadPerTaskExecutor();
 
-    private record Peer(EndpointHealth health, RestClient client) {
+    private record Peer(String name, EndpointHealth health, RestClient client, RestClient writeClient) {
     }
 
-    public PeerClient(@Value("${flightops.peers:}") List<String> peerUrls,
+    public PeerClient(Cluster cluster,
                       @Value("${flightops.peers-timeout-ms:1500}") long timeoutMs,
+                      @Value("${flightops.peers-write-timeout-ms:10000}") long writeTimeoutMs,
                       JwtUtils jwtUtils, RestClient.Builder builder, HttpClientFactory httpClientFactory,
                       HealthRegistry registry, ResilientCaller caller) {
         this.jwtUtils = jwtUtils;
         this.caller = caller;
-        ClientHttpRequestFactory factory = httpClientFactory.create(Duration.ofMillis(timeoutMs));
-        for (String url : peerUrls.stream().filter(u -> !u.isBlank()).toList()) {
-            peers.add(new Peer(registry.register("flight-operations peer", url),
-                    builder.clone().baseUrl(url).requestFactory(factory)
+        ClientHttpRequestFactory reads = httpClientFactory.create(Duration.ofMillis(timeoutMs));
+        // forwarded bookings: the owner itself calls the other services before answering, so allow more time
+        ClientHttpRequestFactory writes = httpClientFactory.create(Duration.ofMillis(writeTimeoutMs));
+        for (Cluster.Member member : cluster.peers()) {
+            peers.add(new Peer(member.name(), registry.register("flight-operations peer", member.url()),
+                    builder.clone().baseUrl(member.url()).requestFactory(reads)
+                            .requestInterceptor(RequestIdPropagation.INSTANCE).build(),
+                    builder.clone().baseUrl(member.url()).requestFactory(writes)
                             .requestInterceptor(RequestIdPropagation.INSTANCE).build()));
         }
+    }
+
+    /**
+     * POST to one specific peer (used to forward a booking to the instance that owns the aircraft). Never retried:
+     * the peer may already have stored it. Errors are passed on unchanged: {@link CircuitOpenException},
+     * {@link HttpClientErrorException} (the peer refused), other {@link RestClientException}s (not reached / no answer).
+     */
+    public <T> T postTo(String peerName, String path, Object body, Class<T> type) {
+        Peer peer = peers.stream().filter(p -> p.name().equals(peerName)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unknown peer " + peerName));
+        T answer = caller.call(peer.health(), false, () -> peer.writeClient().post().uri(path)
+                .header(HttpHeaders.AUTHORIZATION, bearer())
+                .body(body)
+                .retrieve()
+                .body(type));
+        log.debug("Peer {} handled POST {}", peer.name(), path);
+        return answer;
     }
 
     public boolean hasPeers() {

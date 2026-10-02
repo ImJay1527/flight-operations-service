@@ -25,12 +25,16 @@ Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
 
 ![Failure and recovery](diagrams/4-failure-and-recovery.png)
 
+### 5. A booking is stored on the aircraft's owner (P1 p.15, sharding by registration)
+
+![Sharded booking](diagrams/5-booking-sharded.png)
+
 ### Key architectural benefits (PL3 p.20)
 
 | Benefit | How this system provides it | Limit (honest) |
 |---|---|---|
-| **High availability**: the service continues if instances fail | 2 instances per component; any instance answers any request (stateless JWT); retries, circuit breaker and failover between instances; health checks bring a recovered instance back automatically | Data stored only on the failed instance is unavailable until it is back (no replication); clients must retry on the other instance (no load balancer yet). Measured below. |
-| **Horizontal scalability**: add instances as load grows | Instance profiles + `docker-compose.scale-3.yml`; sample data split over N instances; requests spread round-robin | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
+| **High availability**: the service continues if instances fail | 2 instances per component behind a load balancer (nginx: health-aware, fails over to the other instance); any instance answers any request (stateless JWT); retries, circuit breaker; Docker restarts an instance whose process stops; health checks bring a recovered instance back automatically | The flights stored on the failed instance are unavailable until it is back (no replication, by choice - PL3 p.24 Q3). Measured below. |
+| **Horizontal scalability**: add instances as load grows | Instance profiles + `docker-compose.scale-3.yml`; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins); requests spread by the load balancer | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
 | **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); the failure is contained to its share of the data | Instances of one component share the same code, so a bug can affect all of them |
 | **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
 
@@ -62,22 +66,25 @@ local / forwarded (`X-Data-Source` header): 100 % of 55 000 checks passed.
 
 ### Availability while an instance fails
 
-A steady 20 requests/s for 150 s, each asking a random instance for a random flight (half the flights are stored on
-each instance). Instance 2 is **killed** (like a crash) at ~30 s and started again at ~50 s; it is ready ~45 s later.
+A steady 20 requests/s for 150 s, each asking for a random flight (half the flights are stored on each instance).
+Instance 2 is **killed** (like a crash) at ~30 s and started again at ~50 s; it is ready ~30–45 s later.
+`./loadtest/performance.sh availability` sends each request to a random instance;
+`./loadtest/performance.sh availability-lb` sends everything to the **load balancer** (nginx).
 
-| Window | ok on first try | ok with client failover |
-|---|---|---|
-| 0–30 s (both up) | 100 % | 100 % |
-| 30–100 s (instance 2 down) | ~25 % | ~50 % |
-| 100–150 s (instance 2 back) | 100 % | 100 % |
-| **Whole run (150 s)** | **65.5 %** | **76.3 %** |
+| Window | Random instance, first try | Random instance + client failover | **Through the load balancer** |
+|---|---|---|---|
+| 0–30 s (both up) | 100 % | 100 % | 100 % |
+| while instance 2 is down | ~25 % | ~50 % | **~50 %** |
+| after instance 2 is back | 100 % | 100 % | 100 % |
+| **Whole run (150 s)** | **65.5 %** | **76.3 %** | **84.5 %** |
 
-"Client failover": when the instance asked first cannot be reached, the client asks the other one (what a load
-balancer would do).
+"Client failover": when the instance asked first cannot be reached, the client asks the other one. The load
+balancer does that for every client: in the run through it **no request reached the dead instance**
+(`fail_instance_down = 0`); nginx notices the failure on the first request, retries it on instance 1 and leaves
+instance 2 out for 10 s at a time. (The higher whole-run figure is also helped by a shorter outage in that run.)
 
-Why ~25 % / ~50 % during the outage: half the requests go to the dead instance (fail, unless the client fails over);
-of the requests that reach instance 1, half ask for a flight stored on instance 2, which gets a 404 "could not be
-reached" until instance 2 is back. Instance 1's own data stays 100 % available the whole time, and recovery is
+What still fails during the outage is the **flights stored on instance 2**: the reachable instance answers 404
+"could not be reached" for them. Instance 1's own data stays 100 % available the whole time, and recovery is
 automatic: as soon as instance 2 answers again, everything is back to 100 % within one 10-s window.
 
 ### What 99.9 % would need (slide: "with proper instance distribution and health monitoring")
@@ -85,17 +92,18 @@ automatic: as soon as instance 2 answers again, everything is back to 100 % with
 99.9 % allows ~43 minutes of failures per month. With a single instance failure, this system reaches 100 % for the
 data of the surviving instance, but not for the whole service. The three gaps and their fixes:
 
-| Gap | Effect measured | Fix |
+| Gap | Effect measured | Status |
 |---|---|---|
-| Clients send requests to a dead instance | 25 % → 50 % with client failover | A **load balancer** with health checks in front of the instances (nginx / HAProxy, PL3 p.25) |
-| Each flight exists on one instance only | the other 50 % (404 for the dead instance's data) | **Replication**: store every flight on 2 instances (replication factor 2), so a single failure loses no data |
-| Restart takes ~30–50 s (JVM start on 1 CPU) | length of the outage | An orchestrator that restarts / replaces instances automatically (Docker restart policy, Kubernetes), and a spare instance |
+| Clients send requests to a dead instance | 25 % → 50 % during the outage | **Done**: nginx load balancer (`lb/nginx.conf`), passive health checks + failover |
+| A crashed instance stays down | length of the outage | **Done** for crashes: `restart: unless-stopped` + container health check (a process that exits is back in ~12 s). A *killed* container or a dead machine still needs an orchestrator (Kubernetes / Swarm, PL3 p.25 "later") |
+| Each flight exists on one instance only | the other 50 % (404 for the dead instance's data) | **Not done, by choice**: replication (every flight on 2 instances) would close it, but the week-3 design keeps one owner per item (PL3 p.11, p.24 Q3). See "Consistency model" |
 
-With a load balancer and replication factor 2, the measured scenario (one instance down) would stay at ~100 %.
+With replication factor 2 on top of the load balancer, the measured scenario (one instance down) would stay at ~100 %.
 
 ### Other considerations from the slide
 
-* **Request timeouts**: every remote call has one (peers 1.5 s, other services 2 s, health checks 1 s), and the
+* **Request timeouts**: every remote call has one (peers 1.5 s, forwarded bookings 10 s, other services 2 s,
+  health checks 1 s, load balancer 2 s to connect / 15 s to answer), and the
   circuit breaker turns a dead instance from "wait for the timeout" into "skip immediately" (diagram 4).
 * **Caching**: forwarded lookups could be cached for a few seconds to save the extra hop, at the cost of possibly
   serving a stale status (e.g. a flight cancelled on the other instance a moment ago). Not done: correctness of the
@@ -109,15 +117,21 @@ With a load balancer and replication factor 2, the measured scenario (one instan
 
 ### In one sentence
 
-Every flight has **exactly one owner** (the instance that created it); reads of a single flight are always answered
-by its owner, so they are up to date; the "no double-booking" rule is **guaranteed on one instance** but only
-**best-effort across instances**, and during failures the system prefers **availability** over completeness (AP in CAP).
+Every flight has **exactly one owner**: the instance that owns its **aircraft** (sharding by registration). Reads of a
+single flight are always answered by its owner, so they are up to date; "no double-booking" is **guaranteed while
+the aircraft's owner is reachable**, and during failures the system prefers **availability** over completeness
+(AP in CAP).
 
 ### How data is placed
 
-* **Partitioned, not replicated.** A flight is stored only in the database of the instance that received the
-  `POST` (its *owner*). There are no copies, so there are never two different versions of the same flight. This
-  matches the practical session (PL3 p.24, quiz Q3: instances do **not** keep identical copies of all data).
+* **Partitioned by aircraft, not replicated** (P1 p.15 "data-based sharding: partition by operational identifiers,
+  e.g. aircraft registration numbers"). Every instance knows the list of all instances (`flightops.cluster`) and
+  computes the owner of an aircraft with **rendezvous hashing** (highest SHA-256 of instance name + registration):
+  all instances agree without talking to each other, and adding an instance only moves the aircraft it wins.
+  A booking that arrives at another instance is **forwarded to the owner** (`POST /internal/flights`, diagram 5;
+  the response says where it was stored: `X-Stored-On`). There are no copies, so there are never two different
+  versions of the same flight - matching the practical session (PL3 p.24, quiz Q3: instances do **not** keep
+  identical copies of all data).
 * **No ID clashes.** Flight numbers are UUIDs, generated independently on each instance, so two instances can never
   create the same id (PL3 p.18 "Data inconsistency: same ID on multiple instances").
 * **Snapshots of other services' data.** When a flight is scheduled, the aircraft model, route distance and airports
@@ -132,11 +146,11 @@ by its owner, so they are up to date; the "no double-booking" rule is **guarante
 | Read your own write | **Yes**, from any instance | The write is committed in the owner's database before the `201`; any instance finds it there |
 | Cancel a flight | **Applied once**, by the owner; a second cancel is `409` | Forwarded to the owner (single writer per flight), `@Version` optimistic locking, `PATCH` never retried |
 | Lists and reports (flights of an aircraft, departures, utilization, fuel) | Up to date **for the reachable instances**; **partial** while an instance is down | Scatter-gather over all instances; an unreachable peer is skipped (logged) instead of failing the whole request |
-| "An aircraft is never in two flights at the same time" | **Guaranteed** for bookings on the same instance; **best effort** across instances - see below | Per-aircraft lock on each instance; no distributed lock between instances |
+| "An aircraft is never in two flights at the same time" | **Guaranteed** while the aircraft's owner is reachable (all its bookings go there, wherever they arrive); **best effort** when the owner is down - see below | All bookings of an aircraft meet at its owner, where the per-aircraft lock serialises them |
 
 ### The weak spot: double-booking an aircraft
 
-Before saving a new flight, the receiving instance:
+The booking is made on the aircraft's owner (forwarded there if it arrived elsewhere). The owner:
 
 1. **locks the aircraft** on its own database: a row per aircraft in `aircraft_booking_lock`, locked with
    `SELECT ... FOR UPDATE` until the booking's transaction commits (`services.AircraftBookingLocks`). A second
@@ -151,24 +165,24 @@ fix **both succeeded in all 20 rounds**; with the aircraft lock exactly one succ
 HTTP on PostgreSQL: 20 × "201 + 409"). If the lock can't be obtained within 10 s the booking gets a `409`
 "another booking for this aircraft is in progress".
 
-A double booking can still happen when:
+**Fixed: two bookings at the same moment on different instances.** Both are forwarded to the aircraft's owner,
+whose lock lets only one through. `TwoInstancesIntegrationTest` sends simultaneous overlapping bookings of the same
+aircraft to instance 1 *and* instance 2, 10 times: exactly one `201` and one `409` every time (Postman folder
+"09 Sharding by aircraft" does the same).
 
-* **two requests for the same aircraft arrive at the same moment on different instances**: each checks the other
-  before the other has saved;
-* **a peer is down**: its flights are skipped by the check (availability first), so a booking that overlaps one of
-  them is accepted.
+A double booking can still happen only when **the aircraft's owner is down**: if the booking certainly did not reach
+it (connection refused, circuit open), it is made on the receiving instance instead (availability first) with the
+best-effort check of the reachable peers; when the owner is back, both flights exist. If the owner *was* reached but
+did not answer in time, the outcome is unknown, so the client gets `503 "the booking may or may not have been made"`
+instead of risking a second booking.
 
 This is the price of choosing availability: bookings keep working with an instance down. The overlap is not lost or
 hidden: both flights exist and can be listed for that aircraft.
 
-**How it could be made strongly consistent** (not implemented):
+**How it could be made fully consistent** (not implemented):
 
-* **One owner per aircraft**: send every booking for an aircraft to the instance chosen by a hash of its
-  registration (consistent hashing). All flights of an aircraft then live on one instance, where the aircraft lock
-  above already makes the check exact.
-  This also removes the fan-out for per-aircraft reads (see "Horizontal scaling").
-* **Refuse instead of guess**: reject a booking (`503`) while a peer is unreachable, which turns the system from AP to
-  CP for writes: always correct, but bookings stop during a failure.
+* **Refuse instead of guess**: reject a booking (`503`) while the aircraft's owner is unreachable, which turns the
+  system from AP to CP for writes: always correct, but bookings of that aircraft stop while its owner is down.
 
 ### During a failure (CAP)
 
@@ -212,15 +226,19 @@ share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on 
   serve any request.
 * **Client-side load balancing.** Calls to another service rotate round-robin over its instances and fail over to
   the next one on timeout or 5xx (`ReplicatedServiceClient`).
-* **Service discovery with hardcoded peer lists.** `PEERS`, `AIRCRAFT_SERVICE_URLS` and `AIRPORTS_ROUTES_SERVICE_URLS`.
+* **Service discovery with hardcoded lists.** `CLUSTER` (all flight-ops instances, by name), `AIRCRAFT_SERVICE_URLS`
+  and `AIRPORTS_ROUTES_SERVICE_URLS`.
 * **Sharded data.** A flight is stored on the instance that created it. Reads that need everything ask every peer
   and merge the answers (scatter-gather, `FlightQueryService`).
 
 ### How to add an instance
 
-1. Start the new instance with its own port and database, and with every existing instance in its `PEERS`.
-2. Add the new instance to the `PEERS` of every existing instance (and to the URL lists of services that call it).
-3. Restart the existing instances so they pick up the new peer list.
+1. Start the new instance with its own port and database.
+2. Give **every** instance (old and new) the same list of all instances in `CLUSTER`
+   (`instance1=url,instance2=url,instance3=url`), and add the new one to the load balancer's upstream list.
+3. Restart the existing instances so they pick up the new list. Aircraft are re-sharded by rendezvous hashing: only
+   the aircraft the new instance wins move to it (~1/3 with 3 instances, `ClusterTest`); their *old* flights stay
+   where they are and are still found by the peer queries, new bookings go to the new owner.
 
 The same steps are packaged as an override file:
 

@@ -66,7 +66,7 @@ export function setup() {
     const token = http.post(`${I1}/api/auth/login`, JSON.stringify({ username: 'admin', password: 'admin123' }),
         { headers: { 'Content-Type': 'application/json' } }).json('token');
     const day = 100 + Math.floor(Math.random() * 2000);
-    const flights = createFlights(I1, 'CS-TPA', token, day).concat(createFlights(I2, 'CS-TPB', token, day));
+    const flights = createFlights(I1, 'CS-TPA', token, day).concat(createFlights(I2, 'CS-TPC', token, day));
     return { token, flights, start: Date.now() };
 }
 

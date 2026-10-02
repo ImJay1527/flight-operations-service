@@ -51,8 +51,8 @@ export function setup() {
     return {
         token,
         owners: [
-            { base: I1, other: I2, flights: createFlights(I1, 'CS-TPA', token, day) },
-            { base: I2, other: I1, flights: createFlights(I2, 'CS-TPB', token, day) },
+            { base: I1, other: I2, flights: createFlights(I1, 'CS-TPA', token, day) },   // CS-TPA is owned by instance 1
+            { base: I2, other: I1, flights: createFlights(I2, 'CS-TPC', token, day) },
         ],
     };
 }

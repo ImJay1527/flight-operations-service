@@ -21,14 +21,25 @@ public class StubAircraftDirectory implements AircraftDirectory {
 
     private static final Logger log = LoggerFactory.getLogger(StubAircraftDirectory.class);
 
-    //                                                  registration  status               model        range    fuel      seats
-    private static final Map<String, AircraftInfo> AIRCRAFT = Map.of(
-            "CS-TPA", new AircraftInfo("CS-TPA", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
-            "CS-TPB", new AircraftInfo("CS-TPB", "AVAILABLE", "737 MAX", 6500.0, 26000.0, 180),
-            "CS-TPC", new AircraftInfo("CS-TPC", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
-            "CS-TPD", new AircraftInfo("CS-TPD", "AVAILABLE", "777X", 8000.0, 35000.0, 400),
-            "CS-TPE", new AircraftInfo("CS-TPE", "IN_FLIGHT", "A350", 15000.0, 140000.0, 350),
-            "CS-TPM", new AircraftInfo("CS-TPM", "UNDER_MAINTENANCE", "A320neo", 6300.0, 24000.0, 160));
+    private static final Map<String, AircraftInfo> AIRCRAFT = Map.ofEntries(
+            aircraft("CS-TPA", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
+            aircraft("CS-TPB", "AVAILABLE", "737 MAX", 6500.0, 26000.0, 180),
+            aircraft("CS-TPC", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
+            aircraft("CS-TPD", "AVAILABLE", "777X", 8000.0, 35000.0, 400),
+            aircraft("CS-TPE", "IN_FLIGHT", "A350", 15000.0, 140000.0, 350),
+            aircraft("CS-TPM", "UNDER_MAINTENANCE", "A320neo", 6300.0, 24000.0, 160),
+            // extra available aircraft, so that every instance owns some when sharding by registration
+            aircraft("CS-TPF", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
+            aircraft("CS-TPG", "AVAILABLE", "737 MAX", 6500.0, 26000.0, 180),
+            aircraft("CS-TPH", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160),
+            aircraft("CS-TPI", "AVAILABLE", "737 MAX", 6500.0, 26000.0, 180),
+            aircraft("CS-TPJ", "AVAILABLE", "A320neo", 6300.0, 24000.0, 160));
+
+    //                                         registration  status   model   range km  fuel l  seats
+    private static Map.Entry<String, AircraftInfo> aircraft(String reg, String status, String model,
+                                                            double range, double fuel, int seats) {
+        return Map.entry(reg, new AircraftInfo(reg, status, model, range, fuel, seats));
+    }
 
     public StubAircraftDirectory() {
         log.warn("STUB MODE: aircraft data is built in, the Aircraft & Maintenance service is NOT called");

@@ -62,7 +62,7 @@ services:
       DB_URL: jdbc:postgresql://flightops-db-1:5432/flightops
       DB_PASSWORD: ${DB_PASSWORD:-flightops}
       SSL_KEYSTORE: file:/certs/flightops.p12
-      PEERS: https://flightops-2:8083
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083   # all instances, same on each
       AIRCRAFT_SERVICE_URLS: http://aircraft-1:8081,http://aircraft-2:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082
 
@@ -80,7 +80,7 @@ services:
       DB_URL: jdbc:postgresql://flightops-db-2:5432/flightops
       DB_PASSWORD: ${DB_PASSWORD:-flightops}
       SSL_KEYSTORE: file:/certs/flightops.p12
-      PEERS: https://flightops-1:8083
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083
       AIRCRAFT_SERVICE_URLS: http://aircraft-2:8081,http://aircraft-1:8081
       AIRPORTS_ROUTES_SERVICE_URLS: http://airports-2:8082,http://airports-1:8082
 
