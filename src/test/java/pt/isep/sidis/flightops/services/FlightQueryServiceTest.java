@@ -7,7 +7,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
 import pt.isep.sidis.flightops.api.dto.FlightView;
-import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
+import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
@@ -62,10 +62,23 @@ class FlightQueryServiceTest {
     }
 
     @Test
-    void findByIdReports503InsteadOf404WhenAPeerIsDown() {
+    void findByIdIs404WhenNoPeerHasIt() {
+        when(repository.findById("F-1")).thenReturn(Optional.empty());
+        when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(), 0));
+
+        assertThatThrownBy(() -> service.findById("F-1"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Scheduled flight not found with number: F-1");
+    }
+
+    @Test
+    void findByIdIs404WhenAPeerIsDownAndSaysSo() {
+        // PL3 p.11 / p.16 test 03: stop instance 2, GET remote-only data on instance 1 -> 404
         when(repository.findById("F-1")).thenReturn(Optional.empty());
         when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(), 1));
 
-        assertThatThrownBy(() -> service.findById("F-1")).isInstanceOf(ServiceUnavailableException.class);
+        assertThatThrownBy(() -> service.findById("F-1"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("1 peer instance(s) could not be reached");
     }
 }

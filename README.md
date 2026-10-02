@@ -63,7 +63,8 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
   Try: `GET http://localhost:8083/api/aircraft-utilization` and `GET http://localhost:8093/api/aircraft-utilization`.
   Both return all 10 sample flights, although each replica only stores 5.
 * **Fault tolerance**: an unreachable peer is skipped (logged as a warning). If a single-item lookup can't be found
-  *and* a peer was unreachable, the answer is `503` (it might exist there), not a false `404`.
+  *and* a peer was unreachable, the answer is still `404`, as the practical session expects (PL3 p.11, p.16 test 03),
+  but the error message says how many peers could not be reached, because the item may exist there.
 * **Calls to other services** (`AircraftClient`, `AirportsRoutesClient`) go round-robin over all replicas
   and fail over to the next replica on timeout or 5xx.
 * **Consistency**: eventual (AP in CAP). Overlap checks for the same aircraft use a DB lock on the local shard and a

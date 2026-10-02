@@ -10,7 +10,6 @@ import pt.isep.sidis.flightops.clients.AirportInfo;
 import pt.isep.sidis.flightops.clients.AirportsRoutesClient;
 import pt.isep.sidis.flightops.clients.RouteInfo;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
-import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.domain.FlightStatus;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
@@ -118,11 +117,7 @@ public class ScheduledFlightService {
         if (!remote.items().isEmpty()) {
             return remote.items().get(0);
         }
-        if (remote.isPartial()) {
-            throw new ServiceUnavailableException("Flight " + flightNumber
-                    + " was not found, but " + remote.unreachable() + " replica(s) could not be reached.");
-        }
-        throw new ResourceNotFoundException("Scheduled flight not found with number: " + flightNumber);
+        throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
     }
 
     /** Cancels a flight stored on this replica; returns null if it is not here. */

@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
-import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
@@ -63,11 +62,9 @@ public class FlightQueryService {
         if (!remote.items().isEmpty()) {
             return remote.items().get(0);
         }
-        if (remote.isPartial()) {
-            throw new ServiceUnavailableException("Flight " + flightNumber
-                    + " was not found, but " + remote.unreachable() + " replica(s) could not be reached.");
-        }
-        throw new ResourceNotFoundException("Scheduled flight not found with number: " + flightNumber);
+        // PL3 p.11: "Return first successful result or 404 if all peers fail". The message still says when a peer
+        // was unreachable, because then the flight may exist on that peer.
+        throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
     }
 
     public List<FlightView> findByAircraft(String registration) {

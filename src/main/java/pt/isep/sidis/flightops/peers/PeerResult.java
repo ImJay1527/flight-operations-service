@@ -13,4 +13,11 @@ public record PeerResult<T>(List<T> items, int unreachable) {
     public boolean isPartial() {
         return unreachable > 0;
     }
+
+    /** The 404 message, mentioning unreachable peers (the resource might exist there). */
+    public String notFoundMessage(String base) {
+        return isPartial()
+                ? base + " (" + unreachable + " peer instance(s) could not be reached; it may exist there)"
+                : base;
+    }
 }

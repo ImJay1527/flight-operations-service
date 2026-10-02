@@ -9,7 +9,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.clients.*;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
-import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
@@ -134,10 +133,12 @@ class ScheduledFlightServiceTest {
     }
 
     @Test
-    void cancelUnknownFlightIs503WhenSomePeerIsDown() {
+    void cancelUnknownFlightIs404WhenSomePeerIsDownAndSaysSo() {
         when(repository.findById("nope")).thenReturn(Optional.empty());
         when(peers.patchOne(anyString(), eq(FlightView.class), eq("nope"))).thenReturn(new PeerResult<>(List.of(), 1));
 
-        assertThatThrownBy(() -> service.cancelFlight("nope")).isInstanceOf(ServiceUnavailableException.class);
+        assertThatThrownBy(() -> service.cancelFlight("nope"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("1 peer instance(s) could not be reached");
     }
 }
