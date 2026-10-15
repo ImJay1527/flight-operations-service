@@ -1,4 +1,9 @@
-%% PL3 p.20 - the distributed system: 3 components x 2 instances, each flight-ops instance with its own database
+---
+config:
+  layout: elk
+---
+%% PL3 p.20 - the distributed system: 3 components x 3 instances, each flight-ops instance with its own database
+%% (docker-compose; on Kubernetes the same picture with pods flightops-0..N-1 found through DNS, see k8s/)
 flowchart LR
     client["Clients<br/>(Postman, k6, a frontend)"]
     lb["Load balancer (nginx)<br/>https://localhost:8443<br/>least connections + failover"]
@@ -7,32 +12,41 @@ flowchart LR
         direction TB
         fo1["instance1<br/>:8083"]
         fo2["instance2<br/>:8093"]
+        fo3["instance3<br/>:8103"]
         db1[("PostgreSQL<br/>flightops-db-1<br/>:5433<br/>encrypted columns")]
         db2[("PostgreSQL<br/>flightops-db-2<br/>:5434<br/>encrypted columns")]
+        db3[("PostgreSQL<br/>flightops-db-3<br/>:5435<br/>encrypted columns")]
         fo1 --- db1
         fo2 --- db2
-        fo1 <-->|"peer forwarding /internal/flights/**<br/>bookings go to the aircraft's owner"| fo2
+        fo3 --- db3
+        fo1 <-->|"peer forwarding /internal/flights/**<br/>bookings go to the aircraft's owner<br/>copies (replication)"| fo2
+        fo2 <--> fo3
     end
 
     subgraph AM["aircraft-maintenance-service"]
         direction TB
         am1["instance1<br/>:8081"]
         am2["instance2<br/>:8091"]
+        am3["instance3<br/>:8101"]
         am1 <-->|peers| am2
+        am2 <-->|peers| am3
     end
 
     subgraph AR["airports-routes-service"]
         direction TB
         ar1["instance1<br/>:8082"]
         ar2["instance2<br/>:8092"]
+        ar3["instance3<br/>:8102"]
         ar1 <-->|peers| ar2
+        ar2 <-->|peers| ar3
     end
 
     client -->|"HTTPS (TLS 1.3) + user JWT"| lb
     lb --> fo1
     lb --> fo2
+    lb --> fo3
     FO -->|"GET /internal/aircraft/{reg}<br/>round-robin + failover"| AM
     FO -->|"GET /internal/routes/{id}<br/>GET /internal/airports/{iata}"| AR
 
     classDef db fill:#eef6ff,stroke:#5b8def
-    class db1,db2 db
+    class db1,db2,db3 db

@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 import pt.isep.sidis.flightops.resilience.EndpointHealth;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -33,6 +35,7 @@ public class FlightOpsMetrics {
     public static final String NOT_FOUND = "not_found";
 
     private final MeterRegistry registry;
+    private final Map<String, Gauge> healthGauges = new ConcurrentHashMap<>();
 
     public FlightOpsMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -73,10 +76,17 @@ public class FlightOpsMetrics {
     }
 
     public void registerHealthGauge(EndpointHealth endpoint) {
-        Gauge.builder(REMOTE_HEALTHY, endpoint, e -> e.snapshot().healthy() ? 1 : 0)
+        healthGauges.put(endpoint.url(), Gauge.builder(REMOTE_HEALTHY, endpoint, e -> e.snapshot().healthy() ? 1 : 0)
                 .description("1 if the instance is considered healthy (circuit closed), else 0")
                 .tag("group", endpoint.group())
                 .tag("target", endpoint.url())
-                .register(registry);
+                .register(registry));
+    }
+
+    public void removeHealthGauge(String url) {
+        Gauge gauge = healthGauges.remove(url);
+        if (gauge != null) {
+            registry.remove(gauge);
+        }
     }
 }

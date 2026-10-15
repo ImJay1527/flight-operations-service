@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Starts N flight-operations instances locally (the Java apps run outside Docker). Ctrl+C stops all of them.
 #
-#   ./scripts/run-local.sh            2 instances, plain HTTP  (8083, 8093), each with its own PostgreSQL container
-#   ./scripts/run-local.sh --tls      2 instances, HTTPS       (needs ./scripts/generate-dev-certs.sh first)
-#   ./scripts/run-local.sh -n 3       3 instances              (8083, 8093, 8103)
+#   ./scripts/run-local.sh            3 instances, plain HTTP  (8083, 8093, 8103), each with its own PostgreSQL container
+#   ./scripts/run-local.sh --tls      3 instances, HTTPS       (needs ./scripts/generate-dev-certs.sh first)
+#   ./scripts/run-local.sh -n 2       only 2 instances         (8083, 8093)
 #   ./scripts/run-local.sh --h2       in-memory H2 instead of PostgreSQL (no Docker needed; data is lost on stop)
 #   ./scripts/run-local.sh --stub     built-in aircraft/route data instead of calling the other two services
 #                                     (needed for the Postman collection in postman/ while those services are stubs)
@@ -23,7 +23,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-N=2
+N=3
 SCHEME=http
 PROFILE=""
 DB=postgres
@@ -56,7 +56,7 @@ done
 if [[ "$DB" == postgres ]]; then
   DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i"); done
   echo "Starting databases: ${DBS[*]}"
-  docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up -d --wait "${DBS[@]}"
+  docker compose up -d --wait "${DBS[@]}"
   PROFILE="${PROFILE:+$PROFILE,}postgres"
 fi
 
@@ -105,7 +105,7 @@ CLUSTER=$(IFS=,; echo "${members[*]}")
 
 for i in $(seq 1 "$N"); do
 
-  # CLUSTER depends on how many instances run (with -n 3, instances 1 and 2 must know instance 3)
+  # CLUSTER depends on how many instances run (with -n 2, instances 1 and 2 must not wait for instance 3)
   : > "logs/flightops-$i.log"
   supervise "$i" &
   SUPERVISORS+=($!)

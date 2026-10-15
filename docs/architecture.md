@@ -1,10 +1,10 @@
 # Flight Operations – architecture notes
 
-Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Consistency model](#consistency-model) · [Horizontal scaling](#horizontal-scaling)
+Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Consistency model](#consistency-model) · [Horizontal scaling](#horizontal-scaling) · [Kubernetes and auto-scaling](#kubernetes-and-auto-scaling)
 
 ## System architecture (PL3 p.20)
 
-Three components, each running as **2 instances** with their **own database**. Instances of the same component
+Three components, each running as **3 instances** with their **own database**. Instances of the same component
 forward GET requests to each other (peer forwarding); components call each other over HTTPS with a service token.
 Flight Operations keeps every flight on **two instances** (replication), so the data of a stopped instance stays
 available.
@@ -39,8 +39,8 @@ Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
 
 | Benefit | How this system provides it | Limit (honest) |
 |---|---|---|
-| **High availability**: the service continues if instances fail | 2 instances per component behind a load balancer (nginx: health-aware, fails over to the other instance); any instance answers any request (stateless JWT); every flight kept on 2 instances, so a failed instance's data is still served from its copies; retries, circuit breaker; Docker restarts an instance whose process stops; a restarted instance catches up before taking traffic | With 2 copies, losing **both** holders of an aircraft at once makes its flights unavailable until one is back |
-| **Horizontal scalability**: add instances as load grows | Instance profiles + `docker-compose.scale-3.yml`; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins); requests spread by the load balancer | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
+| **High availability**: the service continues if instances fail | 3 instances per component behind a load balancer (nginx, or the Kubernetes Service: health-aware, fails over to another instance); any instance answers any request (stateless JWT); every flight kept on 2 instances, so a failed instance's data is still served from its copies; retries, circuit breaker; Docker / Kubernetes restart an instance whose process stops; a restarted instance catches up before taking traffic | With 2 copies, losing **both** holders of an aircraft at once makes its flights unavailable until one is back |
+| **Horizontal scalability**: add instances as load grows | Kubernetes auto-scaler (3 to 5 instances, by CPU) with DNS service discovery; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins, and their flights are copied to it automatically); requests spread by the load balancer | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
 | **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); replication runs on its own thread, so a dead peer never slows down requests | Instances of one component share the same code, so a bug can affect all of them |
 | **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
 
@@ -99,8 +99,12 @@ automatic: as soon as instance 2 answered again, everything was back to 100 % wi
 **With replication** every flight is also on the other instance, so those reads are answered from the copy:
 `ReplicationIntegrationTest` and the Postman folder "03 Resilience" check that a stopped instance's flights are
 still returned (200, complete lists), that bookings for its aircraft go to the backup, and that the instance catches
-up when it restarts with an empty database. Re-run `./loadtest/performance.sh availability-lb` to measure the
-outage window again with replication on.
+up when it restarts with an empty database.
+
+Measured again on 2026-10-07 with replication on (2 instances, through the load balancer,
+`loadtest/results/availability-lb.txt`): **100 % of the 3 001 requests succeeded**, in every 10-s window,
+including the ~20 s while instance 2 was down (0 failed HTTP requests). The slowest request took 2.0 s: the one
+nginx sent to the dead instance before noticing (`proxy_connect_timeout 2s`) and then retried on instance 1.
 
 ### What 99.9 % would need (slide: "with proper instance distribution and health monitoring")
 
@@ -253,9 +257,13 @@ The two-instance integration test runs that way to check the plain forwarding on
 
 ### Instances and ports
 
-Every component starts with **2 instances**, as recommended in the practical session (PL3, page 7). More are added only when load testing shows they help.
+Every component runs **3 instances**. The practical session suggests starting with 2 and scaling after load testing
+(PL3 p.7); we moved to 3 (as recommended in class) because with only 2 instances and 2 copies of every flight both
+instances hold *everything*, so the sharding and the peer-to-peer forwarding never really happen. With 3, each
+instance holds about 2/3 of the aircraft (`ClusterTest`): reads of the other third are forwarded, and any one
+instance can fail without any flight becoming unavailable.
 
-| Component | Instance 1 | Instance 2 | Instance 3 (scale-up) |
+| Component | Instance 1 | Instance 2 | Instance 3 |
 |---|---|---|---|
 | aircraft-maintenance-service | 8081 | 8091 | 8101 |
 | airports-routes-service | 8082 | 8092 | 8102 |
@@ -271,13 +279,16 @@ share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on 
   serve any request.
 * **Client-side load balancing.** Calls to another service rotate round-robin over its instances and fail over to
   the next one on timeout or 5xx (`ReplicatedServiceClient`).
-* **Service discovery with hardcoded lists.** `CLUSTER` (all flight-ops instances, by name), `AIRCRAFT_SERVICE_URLS`
-  and `AIRPORTS_ROUTES_SERVICE_URLS`.
+* **Service discovery.** With docker-compose and the scripts: hardcoded lists, `CLUSTER` (all flight-ops instances,
+  by name), `AIRCRAFT_SERVICE_URLS` and `AIRPORTS_ROUTES_SERVICE_URLS`. On Kubernetes: DNS (see "Kubernetes and
+  auto-scaling"), so instances can be added and removed while the system runs.
 * **Sharded and replicated data.** Each aircraft's flights are kept on 2 of the instances (owner + backup, by
   rendezvous hashing), not on all of them. Reads that need everything ask every peer and merge the answers, keeping
   the newest copy of each flight (scatter-gather, `FlightQueryService`).
 
 ### How to add an instance
+
+On Kubernetes this is automatic (see "Kubernetes and auto-scaling"). With docker-compose or the scripts, by hand:
 
 1. Start the new instance with its own port and database.
 2. Give **every** instance (old and new) the same list of all instances in `CLUSTER`
@@ -287,17 +298,8 @@ share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on 
    the flights it should now hold from the others when it starts (catch-up), new bookings go to the new owner, and
    copies that an old instance no longer needs simply stay there (they are merged away in reads).
 
-The same steps are packaged as an override file:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build
-```
-
-Without Docker: `./scripts/run-local.sh -n 3`.
-
-Limitation: because the peer lists are hardcoded, scaling needs a configuration change and restarts. The next step
-would be dynamic discovery: a service registry (Eureka, Consul) or DNS-based discovery (e.g. Kubernetes headless
-services). Instances would then register themselves, and peers would be found at runtime.
+Limitation: with a hardcoded list, scaling needs a configuration change and restarts. On Kubernetes the instances
+find each other through DNS instead, so the auto-scaler can add and remove them while the system runs.
 
 ### Load test
 
@@ -333,7 +335,10 @@ still asked - so the conclusion below holds.)*
 the receiving instance does its local query *and* asks each of the other N−1 instances. The total work per request
 therefore grows with N, at the same rate as the capacity added by the new instance, so throughput stays flat.
 
-Conclusion: stay at **2 instances**. Adding instances only pays off once most reads stop fanning out to every peer:
+Conclusion: for *this* workload (only scatter-gather reports) more instances do not add throughput. We run 3 for
+redundancy and so that the data really is sharded (see "Instances and ports"); the auto-scaler helps the requests
+about one aircraft or one flight, which involve one or two instances only. For the reports, adding instances only
+pays off once they stop fanning out to every peer:
 
 1. **Route by owner.** Pick the instance that stores a flight from a hash of the aircraft registration (consistent
    hashing). Requests about one aircraft then go to one instance, with no fan-out, so capacity grows with N. This
@@ -351,3 +356,51 @@ Conclusion: stay at **2 instances**. Adding instances only pays off once most re
 | JDK `HttpClient` completes responses asynchronously; on 1 CPU the JDK runs those completions on a **new thread per call** | thread creation dominated CPU | Apache HttpClient 5 (synchronous, pooled), pool sized explicitly (default is only 5 connections per peer) |
 | jjwt does a ServiceLoader scan every time a parser or builder is created; the code built a parser 3× per request and signed a new service token per call | high CPU per request | parser built once and each token parsed once; service tokens cached (5 min lifetime, renewed 1 min before expiry) |
 | Short runs on a cold JVM | numbers ~3× too low | warm-up runs before measuring |
+
+## Kubernetes and auto-scaling
+
+PL3 p.25 lists, for later, container orchestration (Kubernetes) and dynamic service discovery instead of hardcoded
+peer lists. Both are in `k8s/` (run: `./k8s/deploy.sh`, see the README).
+
+| Concern | docker-compose | Kubernetes (`k8s/`) |
+|---|---|---|
+| Instances | 3 fixed containers | StatefulSet `flightops`: pods `flightops-0..N-1`, N set by the auto-scaler (3 to 5) |
+| Finding the peers | fixed list `CLUSTER` | DNS: every 5 s each instance looks up `flightops-{i}.flightops-peers` for i = 0..9 (`DnsDiscovery`); the headless Service publishes one name per pod |
+| Database per instance | separate container `flightops-db-i` | second container in the same pod, with the pod's own disk (a new pod brings its database) |
+| Load balancer | nginx, fixed upstream list | Service of type LoadBalancer (https://localhost:9443), follows the pods; only ready pods get traffic |
+| Health and restarts | Docker health check, `restart: unless-stopped` | startup / readiness / liveness probes (Spring Boot); Kubernetes restarts or recreates pods |
+| Secrets | environment variables with dev defaults | Kubernetes Secrets created by `deploy.sh` |
+
+**Why a StatefulSet and not a Deployment.** Rendezvous hashing ranks instances by name, so a name must stay the same
+when its pod restarts (otherwise every restart would move aircraft). A StatefulSet gives each pod a stable name, a
+stable DNS entry and its own disk. The names are predictable (`flightops-0`, `-1`, ...), which is what makes DNS
+discovery simple.
+
+**Auto-scaling** (`k8s/hpa.yaml`): a HorizontalPodAutoscaler measures the CPU of the application containers
+(metrics-server) and keeps 3 to 5 pods, adding one when the average passes 70 % of the requested CPU and removing
+one after 2 minutes of low load. It changes one pod per minute, so each change is rebalanced before the next one.
+
+**When a pod joins** (e.g. `flightops-3`):
+
+1. Kubernetes creates the pod; the headless Service publishes `flightops-3.flightops-peers` straight away
+   (`publishNotReadyAddresses`), before it is ready.
+2. Within 5 s the other instances see it (log: `Discovery: [flightops-3] joined`). Rendezvous hashing now gives it
+   about 1/4 of the aircraft (as owner or backup); nothing moves between the old instances. Until it answers it is
+   treated like an instance that is down: the backups take its bookings, the outbox keeps its copies.
+3. While starting, before it reports ready, it asks every peer for the flights it should hold (catch-up). A peer
+   that has not discovered it yet still counts it in (`Cluster.replicasOf(registration, instance)`).
+4. 10 s after the change every instance runs the catch-up again and **hands off** the flights it no longer holds:
+   it sends them to their current holders and deletes its own copy once every holder has it (if one can't be
+   reached, it keeps the copy and tries again later). Otherwise a stale copy would still be answered locally.
+
+**When a pod leaves** (scale-down): each of its flights is also on another instance (replication factor 2). The
+others notice within 5 s, and 10 s later the new holders fetch those flights from the instance that still has them.
+Its disk is deleted (`whenScaled: Delete`): everything on it exists elsewhere.
+
+**Limits (honest):**
+
+* Removing two pods at once could remove both holders of some aircraft before the rebalance. The auto-scaler removes
+  one pod per minute, but `kubectl scale` by hand could do it.
+* For ~15 s after a change instances may disagree on an aircraft's owner, so two of them could accept overlapping
+  bookings; that overlap is reported as a replication conflict, as in a network partition ("Consistency model").
+* The other two services run on Kubernetes with fixed peer lists (3 pods each, no auto-scaling).

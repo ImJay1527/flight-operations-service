@@ -1,0 +1,37 @@
+# Auto-scaling (Horizontal Pod Autoscaler): between 3 and 5 Flight Operations instances, depending on CPU.
+# Needs the metrics-server (k8s/deploy.sh installs it). Watch it work: kubectl -n aisafe get hpa,pods -w
+#
+# When a pod is added, the instances discover it through DNS, the aircraft it wins move to it (rendezvous hashing
+# moves only those) and it receives their flights before it reports ready. When a pod is removed, the flights it held
+# are still on their other holder, which copies them to the new one (replication.ReplicaSync). Pods are added and
+# removed one at a time, so each change is rebalanced before the next.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flightops
+  namespace: aisafe
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: flightops
+  minReplicas: 3
+  maxReplicas: 5
+  metrics:
+    # only the application container counts, not the database next to it
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: flightops
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 60 }
+    scaleDown:
+      stabilizationWindowSeconds: 120      # wait 2 min of low load before removing a pod
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 60 }

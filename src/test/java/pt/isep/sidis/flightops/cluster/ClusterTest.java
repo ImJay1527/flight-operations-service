@@ -2,8 +2,11 @@ package pt.isep.sidis.flightops.cluster;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -105,5 +108,83 @@ class ClusterTest {
     @Test
     void thisInstanceMustBeInTheList() {
         assertThatThrownBy(() -> new Cluster("instance9", TWO, List.of(), 2)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ---------------- discovery (Kubernetes) ----------------
+
+    private static final String PATTERN = "https://flightops-{i}.flightops-peers:8083";
+
+    /** A cluster that "sees" the pods in {@code running} (their DNS names resolve). */
+    private static Cluster discovering(String self, Set<String> running) {
+        DnsDiscovery dns = new DnsDiscovery(PATTERN, 10, host -> running.contains(host.substring(0, host.indexOf('.'))));
+        return new Cluster(self, List.of(), List.of(), 2, dns, 0);
+    }
+
+    @Test
+    void discoveryFindsThePodsWhoseNamesResolve() {
+        Cluster cluster = discovering("flightops-1", Set.of("flightops-0", "flightops-1", "flightops-2"));
+        assertThat(cluster.isClustered()).isTrue();
+        assertThat(cluster.isDynamic()).isTrue();
+        assertThat(cluster.members()).extracting(Cluster.Member::name)
+                .containsExactly("flightops-0", "flightops-1", "flightops-2");
+        assertThat(cluster.peers()).extracting(Cluster.Member::url)
+                .containsExactly("https://flightops-0.flightops-peers:8083", "https://flightops-2.flightops-peers:8083");
+    }
+
+    @Test
+    void anInstanceIsAMemberBeforeItsOwnNameResolves() {
+        Cluster cluster = discovering("flightops-0", Set.of());
+        assertThat(cluster.members()).extracting(Cluster.Member::name).containsExactly("flightops-0");
+        assertThat(cluster.replicationFactor()).isEqualTo(1);   // alone for now
+        assertThat(cluster.configuredReplicationFactor()).isEqualTo(2);
+    }
+
+    @Test
+    void refreshReportsInstancesThatJoinedOrLeft() {
+        Set<String> running = new HashSet<>(Set.of("flightops-0", "flightops-1", "flightops-2"));
+        Cluster cluster = discovering("flightops-0", running);
+        List<Cluster.Change> changes = new ArrayList<>();
+        cluster.onChange(changes::add);
+
+        cluster.refresh();
+        assertThat(changes).isEmpty();   // nothing changed
+
+        running.add("flightops-3");      // the auto-scaler added a pod
+        cluster.refresh();
+        running.remove("flightops-2");   // ... and later removed one
+        cluster.refresh();
+
+        assertThat(changes).hasSize(2);
+        assertThat(changes.get(0).joined()).extracting(Cluster.Member::name).containsExactly("flightops-3");
+        assertThat(changes.get(1).left()).extracting(Cluster.Member::name).containsExactly("flightops-2");
+        assertThat(cluster.members()).extracting(Cluster.Member::name)
+                .containsExactly("flightops-0", "flightops-1", "flightops-3");
+    }
+
+    @Test
+    void discoveredInstancesAgreeWithAFixedListOfTheSameNames() {
+        Cluster discovered = discovering("flightops-0", Set.of("flightops-0", "flightops-1", "flightops-2"));
+        Cluster fixed = new Cluster("flightops-0", List.of("flightops-0=https://x", "flightops-1=https://y",
+                "flightops-2=https://z"), List.of(), 2);
+        for (int i = 0; i < 100; i++) {
+            assertThat(discovered.replicasOf("CS-" + i)).isEqualTo(fixed.replicasOf("CS-" + i));
+        }
+    }
+
+    @Test
+    void anInstanceNotDiscoveredYetIsCountedWhenItAsksForItsCopies() {
+        // flightops-3 is starting and asks flightops-0 for its copies before flightops-0 has discovered it
+        Cluster seenBy0 = discovering("flightops-0", Set.of("flightops-0", "flightops-1", "flightops-2"));
+        Cluster withNewPod = discovering("flightops-0", Set.of("flightops-0", "flightops-1", "flightops-2", "flightops-3"));
+        for (int i = 0; i < 100; i++) {
+            assertThat(seenBy0.replicasOf("CS-" + i, "flightops-3")).isEqualTo(withNewPod.replicasOf("CS-" + i));
+        }
+    }
+
+    @Test
+    void thePatternMustProduceThisInstance() {
+        assertThatThrownBy(() -> discovering("instance1", Set.of())).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new DnsDiscovery("https://flightops.peers:8083", 3, h -> true))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

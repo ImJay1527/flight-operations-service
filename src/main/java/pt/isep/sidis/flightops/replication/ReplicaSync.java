@@ -11,7 +11,9 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.cluster.Cluster;
+import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
+import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -23,6 +25,12 @@ import java.util.concurrent.TimeUnit;
  * an older version of. Runs at startup, before the instance reports ready - so an instance that was down (or is new,
  * or lost its in-memory data) catches up first - and then every {@code flightops.replication.sync-interval-ms}, which
  * repairs anything the outbox could not deliver (e.g. both holders were down at different times).
+ *
+ * <p>With discovery (Kubernetes) it also runs shortly after instances join or leave: the aircraft that changed holder
+ * are copied to their new holders (rebalancing). It waits {@code flightops.replication.rebalance-delay-ms} so the other
+ * instances have seen the change too - they answer with what they think this instance should hold.
+ * Flights this instance no longer holds are handed off: sent to their current holders, and deleted here once every
+ * holder has them (otherwise this stale copy would still be answered locally). Kept if a holder can't be reached.
  */
 @Component
 @Order(Ordered.LOWEST_PRECEDENCE)   // after the sample data is loaded
@@ -33,27 +41,37 @@ public class ReplicaSync implements ApplicationRunner {
     private final Cluster cluster;
     private final PeerClient peers;
     private final ReplicaStore store;
+    private final ScheduledFlightRepository flights;
     private final long intervalMs;
+    private final long rebalanceDelayMs;
     private final ScheduledExecutorService thread = Executors.newSingleThreadScheduledExecutor(
             r -> new Thread(r, "replica-sync"));
 
-    public ReplicaSync(Cluster cluster, PeerClient peers, ReplicaStore store,
-                       @Value("${flightops.replication.sync-interval-ms:60000}") long intervalMs) {
+    public ReplicaSync(Cluster cluster, PeerClient peers, ReplicaStore store, ScheduledFlightRepository flights,
+                       @Value("${flightops.replication.sync-interval-ms:60000}") long intervalMs,
+                       @Value("${flightops.replication.rebalance-delay-ms:10000}") long rebalanceDelayMs) {
         this.cluster = cluster;
         this.peers = peers;
         this.store = store;
+        this.flights = flights;
         this.intervalMs = intervalMs;
+        this.rebalanceDelayMs = rebalanceDelayMs;
     }
 
     @Override
     public void run(ApplicationArguments args) {
-        if (!cluster.isClustered() || cluster.replicationFactor() < 2) {
+        // with discovery the instance may start alone (factor 1 for now) and get peers later
+        if (!cluster.isClustered() || cluster.configuredReplicationFactor() < 2) {
             return;
         }
         syncOnce();
         if (intervalMs > 0) {
             thread.scheduleWithFixedDelay(this::syncOnceSafely, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
         }
+        cluster.onChange(change -> {
+            log.info("Rebalancing in {} ms: members changed", rebalanceDelayMs);
+            thread.schedule(this::syncOnceSafely, rebalanceDelayMs, TimeUnit.MILLISECONDS);
+        });
     }
 
     /** Number of flights added or updated here. */
@@ -76,7 +94,35 @@ public class ReplicaSync implements ApplicationRunner {
             }
             changed += fromPeer;
         }
+        if (cluster.isDynamic()) {
+            handOff();
+        }
         return changed;
+    }
+
+    /** Number of flights handed off to their new holders and deleted here. */
+    public int handOff() {
+        int handedOff = 0;
+        for (ScheduledFlight flight : flights.findAll()) {
+            if (cluster.holdsLocally(flight.getAircraftRegistration())) {
+                continue;
+            }
+            FlightView copy = FlightView.of(flight);
+            try {
+                for (String holder : cluster.replicasOf(flight.getAircraftRegistration())) {
+                    peers.pushCopy(holder, copy);
+                }
+            } catch (RuntimeException e) {
+                log.debug("Hand-off of flight {} postponed: {}", flight.getFlightNumber(), e.getMessage());
+                continue;   // keep it until every holder has it
+            }
+            flights.delete(flight);
+            handedOff++;
+        }
+        if (handedOff > 0) {
+            log.info("Rebalancing: {} flight(s) handed off to their new holders", handedOff);
+        }
+        return handedOff;
     }
 
     private void syncOnceSafely() {

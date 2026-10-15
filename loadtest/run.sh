@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Starts N flight-ops instances in Docker (1 CPU each), runs the k6 load test against them, and tears them down.
 #
-#   ./loadtest/run.sh 2          baseline: 2 instances
-#   ./loadtest/run.sh 3          scaled:   3 instances
+#   ./loadtest/run.sh 2          2 instances
+#   ./loadtest/run.sh 3          3 instances (the default setup)
 #   VUS=100 DURATION=90s ./loadtest/run.sh 3
 #
 # Needs: Docker, and ./scripts/generate-dev-certs.sh run once. Results: loadtest/results/<N>-instances.txt
@@ -10,19 +10,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1   # Git Bash on Windows: don't rewrite /scripts paths
 
-N="${1:-2}"
+N="${1:-3}"
 VUS="${VUS:-50}"
 DURATION="${DURATION:-60s}"
 PROJECT=flightops-loadtest
 
 FILES=(-f docker-compose.yml -f loadtest/limits.yml)
-SERVICES=(flightops-1 flightops-2)
-TARGETS="https://flightops-1:8083,https://flightops-2:8083"
-if [[ "$N" == "3" ]]; then
-  FILES=(-f docker-compose.yml -f docker-compose.scale-3.yml -f loadtest/limits.yml -f loadtest/limits-3.yml)
-  SERVICES+=(flightops-3)
-  TARGETS+=",https://flightops-3:8083"
-elif [[ "$N" != "2" ]]; then
+SERVICES=(flightops-1 flightops-2 flightops-3)
+TARGETS="https://flightops-1:8083,https://flightops-2:8083,https://flightops-3:8083"
+if [[ "$N" == "2" ]]; then
+  FILES+=(-f loadtest/two-instances.yml)
+  SERVICES=(flightops-1 flightops-2)
+  TARGETS="https://flightops-1:8083,https://flightops-2:8083"
+elif [[ "$N" != "3" ]]; then
   echo "only 2 or 3 instances are supported"; exit 1
 fi
 

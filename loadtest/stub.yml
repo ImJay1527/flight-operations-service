@@ -7,3 +7,6 @@ services:
   flightops-2:
     environment:
       SPRING_PROFILES_ACTIVE: instance2,tls,postgres,stub
+  flightops-3:
+    environment:
+      SPRING_PROFILES_ACTIVE: instance3,tls,postgres,stub

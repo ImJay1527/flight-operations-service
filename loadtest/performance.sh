@@ -31,10 +31,10 @@ k6() {   # $1 = script, $2 = duration, $3 = virtual users (optional, default 5)
     grafana/k6:latest run --quiet "/scripts/$1"
 }
 
-echo "Starting 2 instances..."
-compose up --build -d flightops-1 flightops-2
+echo "Starting 3 instances..."
+compose up --build -d flightops-1 flightops-2 flightops-3
 if [[ -n "$LB_URL" ]]; then compose up -d flightops-lb; fi
-for svc in flightops-1 flightops-2; do
+for svc in flightops-1 flightops-2 flightops-3; do
   until compose exec -T "$svc" bash -c 'exec 3<>/dev/tcp/127.0.0.1/8083' 2>/dev/null; do sleep 2; done
 done
 sleep 10

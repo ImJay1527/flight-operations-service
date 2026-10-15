@@ -1,0 +1,141 @@
+# Flight Operations on Kubernetes: 3 instances to start with, more added by the auto-scaler (hpa.yaml).
+# Deployed by k8s/deploy.sh (it also creates the Secrets and the ConfigMap used below).
+#
+# Each instance is one pod of a StatefulSet: flightops-0, flightops-1, ...
+#   - a stable name, which rendezvous hashing needs (an aircraft must keep its owner when a pod restarts);
+#   - its own PostgreSQL in the same pod (a second container) with its own disk, so a pod added by the auto-scaler
+#     comes with its database;
+#   - a DNS name through the headless Service flightops-peers (flightops-0.flightops-peers), which the instances use
+#     to find each other (service discovery, PL3 p.25) instead of a fixed peer list.
+---
+# Headless Service: no load balancing, one DNS name per pod. publishNotReadyAddresses: a starting pod is already
+# known to the others, which treat it as "down" until it answers - like an instance restarting with docker-compose.
+apiVersion: v1
+kind: Service
+metadata:
+  name: flightops-peers
+  namespace: aisafe
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: flightops
+  ports:
+    - name: https
+      port: 8083
+---
+# Load balancer for the clients (Postman, k6): https://localhost:9443. Kubernetes only sends requests to pods that
+# are ready (readinessProbe below), so a failed or starting instance gets no traffic. Replaces nginx here: nginx reads
+# its list of instances once, and the auto-scaler changes that list.
+apiVersion: v1
+kind: Service
+metadata:
+  name: flightops
+  namespace: aisafe
+spec:
+  type: LoadBalancer
+  selector:
+    app: flightops
+  ports:
+    - name: https
+      port: 9443
+      targetPort: 8083
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flightops
+  namespace: aisafe
+spec:
+  serviceName: flightops-peers
+  replicas: 3
+  podManagementPolicy: Parallel          # start the 3 pods together, like docker-compose
+  persistentVolumeClaimRetentionPolicy:
+    whenScaled: Delete                   # a pod removed by the auto-scaler gives back its disk: every flight it held
+                                         # is also on another instance, which copies it to the new holder
+    whenDeleted: Retain
+  selector:
+    matchLabels:
+      app: flightops
+  template:
+    metadata:
+      labels:
+        app: flightops
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # The instance's own database. A "sidecar" (init container that keeps running): it starts before the
+        # application and stops after it.
+        - name: postgres
+          image: postgres:16-alpine
+          restartPolicy: Always
+          env:
+            - { name: POSTGRES_DB, value: flightops }
+            - { name: POSTGRES_USER, value: flightops }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: DB_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          startupProbe:
+            exec: { command: ["pg_isready", "-U", "flightops", "-d", "flightops", "-h", "127.0.0.1"] }
+            periodSeconds: 2
+            failureThreshold: 60
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      containers:
+        - name: flightops
+          image: flightops:dev
+          imagePullPolicy: IfNotPresent    # built locally by deploy.sh, never pulled
+          ports:
+            - { name: https, containerPort: 8083 }
+          envFrom:
+            - configMapRef: { name: flightops-config }    # SPRING_PROFILES_ACTIVE, URLs of the other services
+          env:
+            - { name: PORT, value: "8083" }
+            - { name: SSL_KEYSTORE, value: "file:/certs/flightops.p12" }
+            - { name: SSL_TRUSTSTORE, value: "file:/certs/truststore.p12" }
+            - name: SSL_PASSWORD
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: SSL_PASSWORD } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: DB_PASSWORD } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: JWT_SECRET } }
+            - name: DATA_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: DATA_ENCRYPTION_KEY } }
+            # heap = 75 % of the memory limit; DNS answers cached 5 s (1 s for "not found"), so pods that the
+            # auto-scaler adds or removes are noticed quickly
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75 -Dsun.net.inetaddr.ttl=5 -Dsun.net.inetaddr.negative.ttl=1"
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+          # Spring Boot's probes (management.endpoint.health.probes.enabled). Ready only after startup, including the
+          # catch-up from the other instances (replication.ReplicaSync).
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: https, scheme: HTTPS }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: https, scheme: HTTPS }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: https, scheme: HTTPS }
+            periodSeconds: 10
+            failureThreshold: 3
+          # The auto-scaler compares the CPU used with the CPU requested here (hpa.yaml: add pods above 70 %).
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 768Mi }
+      volumes:
+        - name: certs
+          secret: { secretName: flightops-certs }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

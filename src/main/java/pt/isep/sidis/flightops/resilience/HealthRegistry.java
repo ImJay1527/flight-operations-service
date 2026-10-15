@@ -41,6 +41,13 @@ public class HealthRegistry {
         });
     }
 
+    /** Forgets an instance that left the cluster (Kubernetes scaled it down). */
+    public synchronized void unregister(String url) {
+        if (endpoints.remove(url) != null) {
+            metrics.removeHealthGauge(url);
+        }
+    }
+
     public synchronized List<EndpointHealth> all() {
         return new ArrayList<>(endpoints.values());
     }
