@@ -15,6 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # no package cycles or upward dependencies, and the committed development view matches the code
+      - name: Package structure
+        run: |
+          python3 scripts/generate-development-view.py
+          git diff --exit-code -- docs/c4/7-development-view.md docs/c4/7-development-view.mmd docs/c4-model.md
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

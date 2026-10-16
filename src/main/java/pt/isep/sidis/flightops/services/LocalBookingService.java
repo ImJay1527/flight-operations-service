@@ -26,8 +26,6 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class LocalBookingService {
 
-    public static final int TURNAROUND_BUFFER_MINUTES = 30;
-
     private final ScheduledFlightRepository scheduledFlightRepository;
     private final AircraftDirectory aircraftClient;
     private final RouteDirectory airportsRoutesClient;
@@ -78,8 +76,8 @@ public class LocalBookingService {
             throw new IllegalStateException("Aircraft is not available for scheduling. Current status: " + aircraft.status());
         }
 
-        LocalDateTime bufferedDeparture = departureTime.minusMinutes(TURNAROUND_BUFFER_MINUTES);
-        LocalDateTime bufferedArrival = arrivalTime.plusMinutes(TURNAROUND_BUFFER_MINUTES);
+        LocalDateTime bufferedDeparture = departureTime.minusMinutes(ScheduledFlight.TURNAROUND_BUFFER_MINUTES);
+        LocalDateTime bufferedArrival = arrivalTime.plusMinutes(ScheduledFlight.TURNAROUND_BUFFER_MINUTES);
 
         // From here until commit, bookings of the same aircraft run one after the other, so the overlap check below
         // sees a flight that a concurrent booking has just saved.

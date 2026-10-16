@@ -9,7 +9,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.domain.ReplicationTask;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.repositories.ReplicationTaskRepository;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;

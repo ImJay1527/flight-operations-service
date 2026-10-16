@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import pt.isep.sidis.flightops.common.http.HttpClientFactory;
 
 /**
  * Calls another service that runs as several instances: round-robin over the instances whose circuit isn't open,

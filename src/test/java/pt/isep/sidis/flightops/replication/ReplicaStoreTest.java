@@ -8,7 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.domain.FlightStatus;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 
 import java.time.LocalDateTime;

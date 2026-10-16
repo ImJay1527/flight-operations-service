@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestClientException;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
@@ -46,19 +46,19 @@ public class ResilientCaller {
         long start = System.nanoTime();
         try {
             T result = attempt(endpoint, idempotent, request);
-            metrics.recordRemoteCall(endpoint, "success", start);
+            metrics.recordRemoteCall(endpoint.group(), endpoint.url(), "success", start);
             return result;
         } catch (CircuitOpenException e) {
-            metrics.recordRemoteCall(endpoint, "circuit_open", start);
+            metrics.recordRemoteCall(endpoint.group(), endpoint.url(), "circuit_open", start);
             throw e;
         } catch (HttpClientErrorException e) {
-            metrics.recordRemoteCall(endpoint, e.getStatusCode().value() == 404 ? "not_found" : "client_error", start);
+            metrics.recordRemoteCall(endpoint.group(), endpoint.url(), e.getStatusCode().value() == 404 ? "not_found" : "client_error", start);
             throw e;
         } catch (HttpServerErrorException.NotImplemented e) {
-            metrics.recordRemoteCall(endpoint, "not_implemented", start);
+            metrics.recordRemoteCall(endpoint.group(), endpoint.url(), "not_implemented", start);
             throw e;
         } catch (RuntimeException e) {
-            metrics.recordRemoteCall(endpoint, "failure", start);
+            metrics.recordRemoteCall(endpoint.group(), endpoint.url(), "failure", start);
             throw e;
         }
     }

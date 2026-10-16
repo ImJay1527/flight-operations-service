@@ -224,7 +224,7 @@ this instance, counted since it started:
 | Peer health: availability, failure rates | `remoteInstances[]`: `healthy`, `circuit`, `callsByOutcome`, `failureRatePercent`, `avgCallMs` | instance 2: healthy, 9 % failures |
 | Load distribution | `requestsServed.total` / `byStatus`: compare the instances | 34 requests on instance 1 |
 
-Recorded with Micrometer (`monitoring.FlightOpsMetrics`): timers `flightops.lookups` (tag `source`) and
+Recorded with Micrometer (`common.metrics.FlightOpsMetrics`): timers `flightops.lookups` (tag `source`) and
 `flightops.remote.calls` (tags `group`, `target`, `outcome`), gauge `flightops.remote.healthy`, plus Spring Boot's
 `http.server.requests`. Raw values: `GET /actuator/metrics/flightops.lookups?tag=source:forwarded` (ADMIN).
 The Postman folder "06 Monitoring" checks all of it.

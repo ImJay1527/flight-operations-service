@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 
 /**
  * The data behind the dashboard (/dashboard.html): every instance's status in one answer. Like a list query it is a

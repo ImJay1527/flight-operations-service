@@ -1,15 +1,15 @@
-package pt.isep.sidis.flightops.monitoring;
+package pt.isep.sidis.flightops.common.metrics;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
-import pt.isep.sidis.flightops.resilience.EndpointHealth;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
  * The metrics of PL3 p.19 (Micrometer):
@@ -56,11 +56,11 @@ public class FlightOpsMetrics {
     }
 
     /** @param outcome success | not_found | failure | circuit_open */
-    public void recordRemoteCall(EndpointHealth endpoint, String outcome, long startNanos) {
+    public void recordRemoteCall(String group, String url, String outcome, long startNanos) {
         Timer.builder(REMOTE_CALLS)
                 .description("Calls to peers and to other services' instances (including retries)")
-                .tag("group", endpoint.group())
-                .tag("target", endpoint.url())
+                .tag("group", group)
+                .tag("target", url)
                 .tag("outcome", outcome)
                 .register(registry)
                 .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
@@ -75,11 +75,12 @@ public class FlightOpsMetrics {
                 .increment();
     }
 
-    public void registerHealthGauge(EndpointHealth endpoint) {
-        healthGauges.put(endpoint.url(), Gauge.builder(REMOTE_HEALTHY, endpoint, e -> e.snapshot().healthy() ? 1 : 0)
+    /** 1/0 gauge for a remote instance: {@code healthy} says whether its circuit is closed. */
+    public void registerHealthGauge(String group, String url, BooleanSupplier healthy) {
+        healthGauges.put(url, Gauge.builder(REMOTE_HEALTHY, healthy, h -> h.getAsBoolean() ? 1 : 0)
                 .description("1 if the instance is considered healthy (circuit closed), else 0")
-                .tag("group", endpoint.group())
-                .tag("target", endpoint.url())
+                .tag("group", group)
+                .tag("target", url)
                 .register(registry));
     }
 

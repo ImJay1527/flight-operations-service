@@ -12,7 +12,7 @@ flowchart TB
     subgraph API["Flight Operations API [Container: Java 21, Spring Boot] - one instance"]
         direction TB
         internalApi["<b>Internal API</b><br/>[Component: api, monitoring]<br/><br/>/internal/flights, /internal/replicas,<br/>/internal/cluster/status. Role SERVICE;<br/>local data only, never forwards (no loops)"]
-        monitorApi["<b>Monitoring API</b><br/>[Component: monitoring, resilience]<br/><br/>/api/cluster/health, /metrics, /owner,<br/>/overview (+ dashboard page)"]
+        monitorApi["<b>Monitoring API</b><br/>[Component: monitoring]<br/><br/>/api/cluster/health, /metrics, /owner,<br/>/overview (+ dashboard page)"]
         app["<b>Application services</b><br/>[see diagram 3a]<br/><br/>Bookings, queries"]
 
         cluster["<b>Cluster + DnsDiscovery</b><br/>[Component: cluster]<br/><br/>The instances: fixed list, or DNS lookups<br/>every 5 s. Owner and backup of each<br/>aircraft by rendezvous hashing"]

@@ -13,7 +13,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import pt.isep.sidis.flightops.api.dto.FlightView;
-import pt.isep.sidis.flightops.clients.HttpClientFactory;
+import pt.isep.sidis.flightops.common.http.HttpClientFactory;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.security.JwtUtils;
 import pt.isep.sidis.flightops.common.tracing.RequestIdPropagation;
