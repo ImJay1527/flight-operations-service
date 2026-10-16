@@ -1,6 +1,6 @@
 # The other two services, 3 instances each, as they are today (plain HTTP, in-memory H2, fixed peer list).
-# Only deployed without --stub (k8s/deploy.sh). Their peer list (PEERS) is the other pods of the same StatefulSet,
-# built from the pod name when the container starts.
+# Only deployed without --stub (k8s/deploy.sh; OTHER_INSTANCES=1 runs 1 pod of each, to save memory).
+# Their peer list (PEERS) is the other pods of the same StatefulSet, built from the pod name when the container starts.
 # TODO when they have TLS: mount the certs like flightops.yaml and switch the URLs in deploy.sh to https://.
 ---
 apiVersion: v1
@@ -41,13 +41,16 @@ spec:
           args:
             - |
               PEERS=""
-              for i in 0 1 2; do
+              i=0
+              while [ "$i" -lt "$INSTANCES" ]; do
                 [ "aircraft-$i" = "$HOSTNAME" ] || PEERS="$PEERS${PEERS:+,}http://aircraft-$i.aircraft-peers:8081"
+                i=$((i + 1))
               done
               export PEERS
               exec java -jar app.jar
           env:
             - { name: PORT, value: "8081" }
+            - { name: INSTANCES, value: "3" }     # = replicas (deploy.sh changes both)
             - name: JWT_SECRET
               valueFrom: { secretKeyRef: { name: flightops-secrets, key: JWT_SECRET } }
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }
@@ -98,14 +101,17 @@ spec:
           args:
             - |
               PEERS=""
-              for i in 0 1 2; do
+              i=0
+              while [ "$i" -lt "$INSTANCES" ]; do
                 [ "airports-$i" = "$HOSTNAME" ] || PEERS="$PEERS${PEERS:+,}http://airports-$i.airports-peers:8082"
+                i=$((i + 1))
               done
               # their sample data is split by instance name: instance1, instance2, instance3
               export PEERS INSTANCE_NAME="instance$(( ${HOSTNAME##*-} + 1 ))"
               exec java -jar app.jar
           env:
             - { name: PORT, value: "8082" }
+            - { name: INSTANCES, value: "3" }     # = replicas (deploy.sh changes both)
             - name: JWT_SECRET
               valueFrom: { secretKeyRef: { name: flightops-secrets, key: JWT_SECRET } }
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }

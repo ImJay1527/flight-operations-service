@@ -407,6 +407,10 @@ Its disk is deleted (`whenScaled: Delete`): everything on it exists elsewhere.
 * After the load stopped, the auto-scaler removed `flightops-4` (10:13) and `flightops-3` (10:14), one per minute.
 * Back at 3 pods, every one of the 10 sample flights was on exactly the 2 instances that `GET /api/cluster/owner`
   names (checked with `X-Data-Source: local` on each pod), and on no other.
+* **Whole system, no stub** (`OTHER_INSTANCES=1 ./k8s/deploy.sh`: 3 flight-ops pods + 1 pod of each other service):
+  every booking calls the real aircraft and airports/routes services. Valid bookings 201; unknown aircraft and
+  unknown route 404; aircraft under maintenance, model not certified at the origin airport, deactivated route and
+  an overlapping booking 409 - the same answers as with the stub data. Flight-ops saw both services healthy.
 * 5 pods used most of the laptop's 16 GB: `maxReplicas` stays at 5 here only because the test machine allows it.
 
 **Limits (honest):**
