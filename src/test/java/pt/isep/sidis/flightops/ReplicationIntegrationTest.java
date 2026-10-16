@@ -97,6 +97,26 @@ class ReplicationIntegrationTest {
     }
 
     @Test
+    @Order(0)
+    @SuppressWarnings("unchecked")
+    void overviewShowsEveryInstanceAndEachFlightOnceAsOwnerAndOnceAsBackup() {
+        Map<String, Object> overview = get("instance2", "/api/cluster/overview").getBody();
+        List<Map<String, Object>> instances = (List<Map<String, Object>>) overview.get("instances");
+        assertThat(instances).extracting(i -> i.get("instance")).containsExactly("instance1", "instance2", "instance3");
+        assertThat(instances).allMatch(i -> Boolean.TRUE.equals(i.get("reachable")));
+        int asOwner = instances.stream().mapToInt(i -> ((Number) i.get("flightsAsOwner")).intValue()).sum();
+        int asBackup = instances.stream().mapToInt(i -> ((Number) i.get("flightsAsBackup")).intValue()).sum();
+        assertThat(asOwner).isEqualTo(10);
+        assertThat(asBackup).isEqualTo(10);
+
+        // the page itself needs no token (the data does)
+        ResponseEntity<String> page = http.get().uri(url("instance1") + "/dashboard.html").retrieve().toEntity(String.class);
+        assertThat(page.getStatusCode().value()).isEqualTo(200);
+        assertThat(http.get().uri(url("instance1") + "/api/cluster/overview").retrieve().toBodilessEntity()
+                .getStatusCode().value()).isEqualTo(401);
+    }
+
+    @Test
     @Order(1)
     void everyInstanceSeesAllSampleFlightsOnce() {
         // each sample flight is stored twice, but lists merge the copies

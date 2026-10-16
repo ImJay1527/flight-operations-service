@@ -195,6 +195,14 @@ Send your own id with the `X-Request-Id` header to find a request easily (`grep 
 
 ## Monitoring (PL3 p.19)
 
+**Dashboard:** open `/dashboard` on any instance or on the load balancer (https://localhost:9443/dashboard on
+Kubernetes, https://localhost:8443/dashboard with docker-compose) and sign in (e.g. `admin`). It refreshes every 2 s
+and shows every instance (health, CPU, memory, requests per second, flights as owner / backup, copies waiting, its
+view of the peers), where each aircraft's flights are stored, the instances that joined or left (Kubernetes) and the
+other services' health. Its data is `GET /api/cluster/overview`: the instance that answers adds its own status to
+its peers' (`/internal/cluster/status`, asked in parallel), so a stopped instance shows as "not answering". The page
+loads nothing from the internet.
+
 **Log format** (as on the slide, plus the request id), for every line of every instance:
 
 ```

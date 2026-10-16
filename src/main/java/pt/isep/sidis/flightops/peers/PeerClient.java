@@ -24,6 +24,7 @@ import pt.isep.sidis.flightops.resilience.ResilientCaller;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -185,6 +186,41 @@ public class PeerClient {
         // that many peers did not answer.
         PartialResults.record(unreachable, unreachable >= cluster.replicationFactor());
         return new PeerResult<>(all, unreachable);
+    }
+
+    /**
+     * Asks every peer at the same time for one object (e.g. its status for the dashboard). The value is null for a
+     * peer that could not be asked; peers are in the cluster's order.
+     */
+    public <T> Map<String, T> getFromEach(String path, Class<T> type) {
+        Map<String, String> logContext = MDC.getCopyOfContextMap();
+        Map<String, Future<T>> answers = new LinkedHashMap<>();
+        for (Peer peer : peers()) {
+            answers.put(peer.name(), parallel.submit(() -> withLogContext(logContext, () -> {
+                try {
+                    return caller.call(peer.health(), false, () -> peer.client().get().uri(path)
+                            .header(HttpHeaders.AUTHORIZATION, bearer())
+                            .retrieve()
+                            .body(type));
+                } catch (CircuitOpenException | RestClientException e) {
+                    log.debug("Peer {} skipped for GET {}: {}", peer.health().url(), path, e.getMessage());
+                    return null;
+                }
+            })));
+        }
+        Map<String, T> result = new LinkedHashMap<>();
+        answers.forEach((name, answer) -> {
+            T value = null;
+            try {
+                value = answer.get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException e) {
+                log.debug("Peer {} failed for GET {}: {}", name, path, e.getMessage());
+            }
+            result.put(name, value);
+        });
+        return result;
     }
 
     /** One peer's list, or null if it could not be asked (down, timeout, circuit open). */
