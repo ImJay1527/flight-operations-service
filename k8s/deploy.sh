@@ -4,6 +4,7 @@
 #   ./k8s/deploy.sh           the 3 services, 3 instances each; Flight Operations auto-scales between 3 and 5
 #   ./k8s/deploy.sh --stub    only Flight Operations, with built-in aircraft/route data (no other services needed)
 #   ./k8s/deploy.sh --down    removes everything (namespace aisafe, including the databases)
+#   OTHER_INSTANCES=1 ./k8s/deploy.sh   only 1 pod of each of the other two services (less memory; default 3)
 #
 # Clients: https://localhost:9443 (Kubernetes load balancer in front of the Flight Operations pods).
 # Watch:   kubectl -n aisafe get pods,hpa -w
@@ -18,6 +19,8 @@ export MSYS_NO_PATHCONV=1   # Git Bash on Windows: don't rewrite /paths in argum
 NS=aisafe
 METRICS_SERVER=https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
 STUB=""
+OTHERS="${OTHER_INSTANCES:-3}"
+[[ "$OTHERS" =~ ^[1-9]$ ]] || { echo "OTHER_INSTANCES must be 1..9"; exit 1; }
 case "${1:-}" in
   "") ;;
   --stub) STUB=yes ;;
@@ -40,7 +43,8 @@ if [[ -z "$STUB" ]]; then
   # this Dockerfile copies an already built jar
   if ! ls ../aircraft-maintenance-service/target/*.jar >/dev/null 2>&1; then
     echo "Packaging aircraft-maintenance-service..."
-    (cd ../aircraft-maintenance-service && ./mvnw -q -B package -DskipTests)
+    # MSYS_NO_PATHCONV would hand Maven a /c/... classpath that the Windows JVM cannot read
+    (cd ../aircraft-maintenance-service && unset MSYS_NO_PATHCONV && ./mvnw -q -B package -DskipTests)
   fi
   echo "Building aircraft:dev and airports:dev..."
   docker build -q -t aircraft:dev ../aircraft-maintenance-service >/dev/null
@@ -70,7 +74,7 @@ kubectl -n "$NS" create secret generic flightops-secrets \
   --from-literal=DATA_ENCRYPTION_KEY="${DATA_ENCRYPTION_KEY:-9BvH3kXoOq3m1o9mJmPFjB6m4cO1kz3Hqk2iY7G1M8o=}" \
   --dry-run=client -o yaml | apply
 
-peer_urls() { local u=""; for i in 0 1 2; do u+="${u:+,}http://$1-$i.$1-peers:$2"; done; echo "$u"; }
+peer_urls() { local u=""; for ((i = 0; i < OTHERS; i++)); do u+="${u:+,}http://$1-$i.$1-peers:$2"; done; echo "$u"; }
 kubectl -n "$NS" create configmap flightops-config \
   --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,k8s${STUB:+,stub}" \
   --from-literal=AIRCRAFT_SERVICE_URLS="$(peer_urls aircraft 8081)" \
@@ -82,7 +86,8 @@ REDEPLOY=""
 kubectl -n "$NS" get statefulset flightops >/dev/null 2>&1 && REDEPLOY=yes
 kubectl apply -f k8s/flightops.yaml -f k8s/hpa.yaml
 if [[ -z "$STUB" ]]; then
-  kubectl apply -f k8s/other-services.yaml
+  sed -e "s/replicas: 3/replicas: $OTHERS/" -e "s/name: INSTANCES, value: \"3\"/name: INSTANCES, value: \"$OTHERS\"/" \
+    k8s/other-services.yaml | kubectl apply -f -
 else
   kubectl -n "$NS" delete -f k8s/other-services.yaml --ignore-not-found >/dev/null
 fi

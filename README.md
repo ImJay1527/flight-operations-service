@@ -247,6 +247,7 @@ isolated from the others and **survives restarts**:
 ```bash
 ./scripts/generate-dev-certs.sh   # once (keeps an existing CA; adds the pod names to the certificates)
 ./k8s/deploy.sh --stub            # only Flight Operations (stub data); without --stub also the other two services
+OTHER_INSTANCES=1 ./k8s/deploy.sh # all 3 services, 1 pod of each of the other two (less memory)
 kubectl -n aisafe get pods,hpa -w # watch the instances and the auto-scaler
 ./k8s/deploy.sh --down            # remove everything
 ```
