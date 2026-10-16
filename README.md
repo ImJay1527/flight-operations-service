@@ -287,8 +287,10 @@ then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WS
   CPU of the application containers passes 70 % of what they request, and removing one after 2 minutes of low load,
   one pod at a time.
 * **Rebalancing**: when an instance joins, rendezvous hashing gives it only the aircraft it wins; it fetches their
-  flights before it reports ready. 10 s after a change every instance runs its catch-up again, and hands off the
-  flights it no longer holds (sends them to the new holders, then deletes its own copy). When an instance is removed,
+  flights before it reports ready. As soon as the new instance answers its first health check (and also 10 s after
+  any change, and every 60 s) the others run their catch-up again and hand off the flights they no longer hold
+  (send them to the new holders, then delete their own copy). Until then, a lookup of such a left-over copy asks the
+  aircraft's holders first, so it never answers an out-of-date copy while a holder can be reached. When an instance is removed,
   each of its flights is still on its other holder, which copies it to the new one. `GET /api/cluster/health` and the
   logs (`Discovery: ... joined`, `Rebalancing: ...`) show it happening.
 * **Self-healing**: Kubernetes restarts a container whose liveness probe fails and recreates a deleted pod

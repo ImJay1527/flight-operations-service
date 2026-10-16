@@ -10,6 +10,7 @@ import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
 import pt.isep.sidis.flightops.api.dto.FlightView;
+import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
@@ -31,6 +32,7 @@ class FlightQueryServiceTest {
     @Mock ScheduledFlightRepository repository;
     @Mock PeerClient peers;
     @Spy FlightOpsMetrics metrics = new FlightOpsMetrics(new SimpleMeterRegistry());
+    @Mock Cluster cluster;   // not stubbed: "not clustered", every local copy counts as held
 
     @InjectMocks FlightQueryService service;
 
@@ -53,6 +55,42 @@ class FlightQueryServiceTest {
 
         assertThat(result).extracting(FlightView::flightNumber)
                 .containsExactly("REMOTE-1", local.getFlightNumber());
+    }
+
+    @Test
+    void aLeftOverCopyIsAnsweredByTheAircraftsHolders() {
+        // after instances joined, this instance still has a copy of CS-TPA it no longer holds (hand-off to come);
+        // meanwhile the flight was cancelled on its holders
+        ScheduledFlight leftover = new ScheduledFlight("r", "CS-TPA", "A320neo", "OPO", "LIS", 277, 3.8, t0, t0.plusHours(1));
+        FlightView onHolder = new FlightView(leftover.getFlightNumber(), "r", "CS-TPA", "A320neo", "OPO", "LIS", 277, 3.8,
+                t0, t0.plusHours(1), "CANCELLED", 2);
+        when(repository.findById(leftover.getFlightNumber())).thenReturn(Optional.of(leftover));
+        when(cluster.isClustered()).thenReturn(true);
+        when(cluster.holdsLocally("CS-TPA")).thenReturn(false);
+        when(cluster.replicasOf("CS-TPA")).thenReturn(List.of("flightops-3", "flightops-1"));
+        when(peers.getOneFrom(eq(List.of("flightops-3", "flightops-1")), anyString(), eq(FlightView.class),
+                eq(leftover.getFlightNumber()))).thenReturn(new PeerResult<>(List.of(onHolder), 0, "http://flightops-3"));
+
+        FlightLookup lookup = service.findById(leftover.getFlightNumber());
+
+        assertThat(lookup.flight().status()).isEqualTo("CANCELLED");
+        assertThat(lookup.source()).isEqualTo("peer:http://flightops-3");
+    }
+
+    @Test
+    void aLeftOverCopyIsUsedWhenNoHolderAnswers() {
+        ScheduledFlight leftover = new ScheduledFlight("r", "CS-TPA", "A320neo", "OPO", "LIS", 277, 3.8, t0, t0.plusHours(1));
+        when(repository.findById(leftover.getFlightNumber())).thenReturn(Optional.of(leftover));
+        when(cluster.isClustered()).thenReturn(true);
+        when(cluster.holdsLocally("CS-TPA")).thenReturn(false);
+        when(cluster.replicasOf("CS-TPA")).thenReturn(List.of("flightops-3", "flightops-1"));
+        when(peers.getOneFrom(anyList(), anyString(), eq(FlightView.class), eq(leftover.getFlightNumber())))
+                .thenReturn(new PeerResult<>(List.of(), 2));
+
+        FlightLookup lookup = service.findById(leftover.getFlightNumber());
+
+        assertThat(lookup.flight().flightNumber()).isEqualTo(leftover.getFlightNumber());
+        assertThat(lookup.source()).isEqualTo("local");   // AP: an old copy rather than an error
     }
 
     @Test

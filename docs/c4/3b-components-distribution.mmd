@@ -18,7 +18,7 @@ flowchart TB
         cluster["<b>Cluster + DnsDiscovery</b><br/>[Component: cluster]<br/><br/>The instances: fixed list, or DNS lookups<br/>every 5 s. Owner and backup of each<br/>aircraft by rendezvous hashing"]
         outbox["<b>ReplicationOutbox + Sender</b><br/>[Component: replication]<br/><br/>Task 'copy flight to instance X' saved with<br/>the change; sent after the commit,<br/>retried every 1 s while X is down"]
         store["<b>ReplicaStore</b><br/>[Component: replication]<br/><br/>Applies a copy only if its revision is<br/>newer; logs overlapping bookings<br/>as REPLICATION CONFLICT"]
-        sync["<b>ReplicaSync</b><br/>[Component: replication]<br/><br/>Catch-up at startup and every 60 s;<br/>on Kubernetes also 10 s after instances<br/>join or leave: catch-up + hand-off"]
+        sync["<b>ReplicaSync</b><br/>[Component: replication]<br/><br/>Catch-up at startup and every 60 s;<br/>on Kubernetes also when instances join<br/>or leave, and 1 s after a new one<br/>answers: catch-up + hand-off"]
         peerClient["<b>PeerClient</b><br/>[Component: peers]<br/><br/>Calls the current peers: one by one<br/>(single flight) or all in parallel (lists)"]
         resilience["<b>Resilience</b><br/>[Component: resilience]<br/><br/>Timeouts, retry with backoff + jitter,<br/>circuit breaker per instance,<br/>health check every 5 s"]
         repos["<b>Repositories</b><br/>[Component: repositories]"]
@@ -37,6 +37,7 @@ flowchart TB
     monitorApi -->|"status of the others"| peerClient
     cluster -->|"who exists now?"| dns
     cluster -.->|"members changed"| sync
+    resilience -.->|"a peer answers<br/>(first time or again)"| sync
     outbox -->|"who holds a copy?"| cluster
     outbox -->|"push copy"| peerClient
     sync -->|"fetch my copies,<br/>hand off the rest"| peerClient

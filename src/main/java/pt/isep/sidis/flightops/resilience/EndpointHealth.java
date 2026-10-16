@@ -41,6 +41,7 @@ public class EndpointHealth {
     private Instant lastSuccess;
     private Instant lastFailure;
     private String lastError;
+    private Runnable onReachable = () -> { };
 
     public EndpointHealth(String group, String url, int failureThreshold,
                           Duration baseOpenDuration, Duration maxOpenDuration, Clock clock) {
@@ -73,8 +74,14 @@ public class EndpointHealth {
         return true;
     }
 
+    /** Called (under this object's lock, so it must be quick) when the instance answers for the first time or again. */
+    synchronized void onReachable(Runnable callback) {
+        this.onReachable = callback;
+    }
+
     public synchronized void recordSuccess() {
         boolean wasDown = state != State.CLOSED;
+        boolean firstAnswer = lastSuccess == null;
         state = State.CLOSED;
         consecutiveFailures = 0;
         openDuration = baseOpenDuration;
@@ -82,6 +89,9 @@ public class EndpointHealth {
         lastSuccess = clock.instant();
         if (wasDown) {
             log.info("{} {} is UP again: circuit CLOSED", group, url);
+        }
+        if (wasDown || firstAnswer) {
+            onReachable.run();
         }
     }
 

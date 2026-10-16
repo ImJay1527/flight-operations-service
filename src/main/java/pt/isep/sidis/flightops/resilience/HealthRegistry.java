@@ -10,12 +10,15 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /** Every remote instance this instance talks to, with its health / circuit breaker state. */
 @Component
 public class HealthRegistry {
 
     private final Map<String, EndpointHealth> endpoints = new LinkedHashMap<>();
+    private final List<Consumer<EndpointHealth>> reachableListeners = new CopyOnWriteArrayList<>();
     private final int failureThreshold;
     private final Duration openDuration;
     private final Duration maxOpenDuration;
@@ -36,9 +39,15 @@ public class HealthRegistry {
     public synchronized EndpointHealth register(String group, String url) {
         return endpoints.computeIfAbsent(url, u -> {
             EndpointHealth health = new EndpointHealth(group, u, failureThreshold, openDuration, maxOpenDuration, clock);
+            health.onReachable(() -> reachableListeners.forEach(listener -> listener.accept(health)));
             metrics.registerHealthGauge(health);
             return health;
         });
+    }
+
+    /** Called when an instance answers for the first time, or again after being down. */
+    public void onReachable(Consumer<EndpointHealth> listener) {
+        reachableListeners.add(listener);
     }
 
     /** Forgets an instance that left the cluster (Kubernetes scaled it down). */

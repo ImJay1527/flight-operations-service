@@ -53,6 +53,9 @@ public class PeerClient {
 
     private static final Logger log = LoggerFactory.getLogger(PeerClient.class);
 
+    /** Health-registry group of the other instances of this service. */
+    public static final String PEER_GROUP = "flight-operations peer";
+
     private final Map<String, Peer> peersByName = new ConcurrentHashMap<>();
     private final Cluster cluster;
     private final HealthRegistry registry;
@@ -92,7 +95,7 @@ public class PeerClient {
 
     private Peer peerFor(Cluster.Member member) {
         return peersByName.computeIfAbsent(member.name(), name -> new Peer(name,
-                registry.register("flight-operations peer", member.url()),
+                registry.register(PEER_GROUP, member.url()),
                 builder.clone().baseUrl(member.url()).requestFactory(reads)
                         .requestInterceptor(RequestIdPropagation.INSTANCE).build(),
                 builder.clone().baseUrl(member.url()).requestFactory(writes)
@@ -259,18 +262,39 @@ public class PeerClient {
 
     /** Asks peers one by one until one has the resource (a 404 means "not mine"). */
     public <T> PeerResult<T> getOne(String path, Class<T> type, Object... uriVariables) {
-        return findOwner(false, path, type, uriVariables);
+        return findOwner(rotated(), false, path, type, uriVariables);
+    }
+
+    /** Like {@link #getOne}, asking only these instances (e.g. the holders of an aircraft), in this order. */
+    public <T> PeerResult<T> getOneFrom(List<String> instances, String path, Class<T> type, Object... uriVariables) {
+        return findOwner(named(instances), false, path, type, uriVariables);
     }
 
     /** PATCH to the peer that has the resource (cancel a flight stored elsewhere). Never retried. */
     public <T> PeerResult<T> patchOne(String path, Class<T> type, Object... uriVariables) {
-        return findOwner(true, path, type, uriVariables);
+        return findOwner(rotated(), true, path, type, uriVariables);
     }
 
-    private <T> PeerResult<T> findOwner(boolean patch, String path, Class<T> type, Object[] uriVariables) {
+    /** Like {@link #patchOne}, only on these instances, in this order. */
+    public <T> PeerResult<T> patchOneOn(List<String> instances, String path, Class<T> type, Object... uriVariables) {
+        return findOwner(named(instances), true, path, type, uriVariables);
+    }
+
+    /** The current peers with these names, in this order (this instance and unknown names are left out). */
+    private List<Peer> named(List<String> instances) {
+        List<Peer> result = new ArrayList<>();
+        for (String name : instances) {
+            cluster.peers().stream().filter(m -> m.name().equals(name)).findFirst().map(this::peerFor)
+                    .ifPresent(result::add);
+        }
+        return result;
+    }
+
+    private <T> PeerResult<T> findOwner(List<Peer> candidates, boolean patch, String path, Class<T> type,
+                                        Object[] uriVariables) {
         int unreachable = 0;
         String method = patch ? "PATCH" : "GET";
-        for (Peer peer : rotated()) {
+        for (Peer peer : candidates) {
             try {
                 T body = caller.call(peer.health(), !patch, () -> {
                     RestClient.RequestHeadersSpec<?> spec = patch

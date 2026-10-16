@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
@@ -31,6 +32,7 @@ public class FlightQueryService {
     private final ScheduledFlightRepository repository;
     private final PeerClient peers;
     private final FlightOpsMetrics metrics;
+    private final Cluster cluster;
 
     // local data only - used by the /internal endpoints
 
@@ -56,13 +58,27 @@ public class FlightQueryService {
 
     // local + peers
 
-    /** PL3 p.11: local store first; if not there, ask the peers one by one; first answer wins. */
+    /**
+     * PL3 p.11: local store first; if not there, ask the peers one by one; first answer wins.
+     * A local copy of an aircraft this instance no longer holds (left over after instances joined, until it is handed
+     * off) may be out of date: the aircraft's holders are asked first, and the copy is only used if none answers.
+     */
     public FlightLookup findById(String flightNumber) {
         long start = System.nanoTime();
         FlightView local = localById(flightNumber);
-        if (local != null) {
+        if (local != null && !isLeftover(local)) {
             metrics.recordLookup(FlightOpsMetrics.LOCAL, start);
             return FlightLookup.local(local);
+        }
+        if (local != null) {
+            PeerResult<FlightView> fromHolders = peers.getOneFrom(cluster.replicasOf(local.aircraftRegistration()),
+                    "/internal/flights/{n}", FlightView.class, flightNumber);
+            if (!fromHolders.items().isEmpty()) {
+                metrics.recordLookup(FlightOpsMetrics.FORWARDED, start);
+                return FlightLookup.fromPeer(fromHolders.items().get(0), fromHolders.answeredBy());
+            }
+            metrics.recordLookup(FlightOpsMetrics.LOCAL, start);
+            return FlightLookup.local(local);   // holders unreachable: an old copy is better than none (AP)
         }
         PeerResult<FlightView> remote = peers.getOne("/internal/flights/{n}", FlightView.class, flightNumber);
         if (!remote.items().isEmpty()) {
@@ -72,6 +88,11 @@ public class FlightQueryService {
         metrics.recordLookup(FlightOpsMetrics.NOT_FOUND, start);
         // 404 as in PL3 p.11; the message says when a peer was unreachable, since the flight may be there
         throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
+    }
+
+    /** True for a copy of an aircraft this instance doesn't hold any more (its hand-off is still to come). */
+    public boolean isLeftover(FlightView flight) {
+        return cluster.isClustered() && !cluster.holdsLocally(flight.aircraftRegistration());
     }
 
     public List<FlightView> findByAircraft(String registration) {

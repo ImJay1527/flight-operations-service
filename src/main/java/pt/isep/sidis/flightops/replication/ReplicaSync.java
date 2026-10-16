@@ -14,11 +14,13 @@ import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
+import pt.isep.sidis.flightops.resilience.HealthRegistry;
 
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Anti-entropy: asks every peer for the flights this instance should hold and applies the ones it is missing or has
@@ -28,7 +30,9 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>With discovery (Kubernetes) it also runs shortly after instances join or leave: the aircraft that changed holder
  * are copied to their new holders (rebalancing). It waits {@code flightops.replication.rebalance-delay-ms} so the other
- * instances have seen the change too - they answer with what they think this instance should hold.
+ * instances have seen the change too - they answer with what they think this instance should hold. It also runs
+ * {@code flightops.replication.reachable-delay-ms} after a peer answers for the first time or again (a new pod that
+ * just became ready, or one that is back): flights waiting to be handed off to it don't wait for the next 60-s run.
  * Flights this instance no longer holds are handed off: sent to their current holders, and deleted here once every
  * holder has them (otherwise this stale copy would still be answered locally). Kept if a holder can't be reached.
  */
@@ -42,20 +46,27 @@ public class ReplicaSync implements ApplicationRunner {
     private final PeerClient peers;
     private final ReplicaStore store;
     private final ScheduledFlightRepository flights;
+    private final HealthRegistry healthRegistry;
     private final long intervalMs;
     private final long rebalanceDelayMs;
+    private final long reachableDelayMs;
+    private final AtomicBoolean syncQueued = new AtomicBoolean();
     private final ScheduledExecutorService thread = Executors.newSingleThreadScheduledExecutor(
             r -> new Thread(r, "replica-sync"));
 
     public ReplicaSync(Cluster cluster, PeerClient peers, ReplicaStore store, ScheduledFlightRepository flights,
+                       HealthRegistry healthRegistry,
                        @Value("${flightops.replication.sync-interval-ms:60000}") long intervalMs,
-                       @Value("${flightops.replication.rebalance-delay-ms:10000}") long rebalanceDelayMs) {
+                       @Value("${flightops.replication.rebalance-delay-ms:10000}") long rebalanceDelayMs,
+                       @Value("${flightops.replication.reachable-delay-ms:1000}") long reachableDelayMs) {
         this.cluster = cluster;
         this.peers = peers;
         this.store = store;
         this.flights = flights;
+        this.healthRegistry = healthRegistry;
         this.intervalMs = intervalMs;
         this.rebalanceDelayMs = rebalanceDelayMs;
+        this.reachableDelayMs = reachableDelayMs;
     }
 
     @Override
@@ -72,6 +83,24 @@ public class ReplicaSync implements ApplicationRunner {
             log.info("Rebalancing in {} ms: members changed", rebalanceDelayMs);
             thread.schedule(this::syncOnceSafely, rebalanceDelayMs, TimeUnit.MILLISECONDS);
         });
+        if (cluster.isDynamic()) {
+            healthRegistry.onReachable(endpoint -> {
+                if (PeerClient.PEER_GROUP.equals(endpoint.group())) {
+                    syncSoon(endpoint.url());
+                }
+            });
+        }
+    }
+
+    /** One catch-up + hand-off shortly; several calls in a row cause a single run. */
+    private void syncSoon(String reason) {
+        if (syncQueued.compareAndSet(false, true)) {
+            log.info("Rebalancing in {} ms: {} is reachable", reachableDelayMs, reason);
+            thread.schedule(() -> {
+                syncQueued.set(false);
+                syncOnceSafely();
+            }, reachableDelayMs, TimeUnit.MILLISECONDS);
+        }
     }
 
     /** Number of flights added or updated here. */
