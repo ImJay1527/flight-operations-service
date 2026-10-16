@@ -397,8 +397,23 @@ one after 2 minutes of low load. It changes one pod per minute, so each change i
 others notice within 5 s, and 10 s later the new holders fetch those flights from the instance that still has them.
 Its disk is deleted (`whenScaled: Delete`): everything on it exists elsewhere.
 
+**Tested on Docker Desktop (Kubernetes v1.36.1, kubeadm, 2026-10-16)** with `./k8s/deploy.sh --stub`:
+
+* The 3 pods were ready 46 s after the deploy; each found the other two through DNS and called them over HTTPS.
+* Load: k6 with 30 virtual users through https://localhost:9443. CPU went to 400 % of the request; the auto-scaler
+  added `flightops-3` (10:10) and `flightops-4` (10:11). The others saw each new pod within 5 s
+  (`Discovery: [flightops-3] joined`), and one instance handed 3 flights off to their new holders.
+  9 514 requests, **0 failed**, average 0.4 s, while pods were being added.
+* After the load stopped, the auto-scaler removed `flightops-4` (10:13) and `flightops-3` (10:14), one per minute.
+* Back at 3 pods, every one of the 10 sample flights was on exactly the 2 instances that `GET /api/cluster/owner`
+  names (checked with `X-Data-Source: local` on each pod), and on no other.
+* 5 pods used most of the laptop's 16 GB: `maxReplicas` stays at 5 here only because the test machine allows it.
+
 **Limits (honest):**
 
+* A new pod needs ~40 s to start, longer than the 10-s rebalance delay, so the first hand-off to it is skipped
+  ("not reachable") and done by the next periodic catch-up (every 60 s). Nothing is lost meanwhile: the old holder
+  keeps its copy until the new one has it.
 * Removing two pods at once could remove both holders of some aircraft before the rebalance. The auto-scaler removes
   one pod per minute, but `kubectl scale` by hand could do it.
 * For ~15 s after a change instances may disagree on an aircraft's owner, so two of them could accept overlapping

@@ -254,6 +254,17 @@ kubectl -n aisafe get pods,hpa -w # watch the instances and the auto-scaler
 Clients use https://localhost:9443 (a Kubernetes `LoadBalancer` Service: it only sends requests to pods whose
 readiness probe passes).
 
+**Windows / WSL:** Kubernetes 1.35+ needs cgroup v2. If Docker Desktop stays on "Starting Kubernetes" and its log
+(`%LOCALAPPDATA%\Docker\logm\init.log`) says `kubelet is configured to not run on a host using cgroup v1`, create
+`%USERPROFILE%\.wslconfig` with
+
+```ini
+[wsl2]
+kernelCommandLine = cgroup_no_v1=all
+```
+
+then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WSL: `wsl --update`).
+
 * **Each instance is a pod** of the StatefulSet `flightops` (`k8s/flightops.yaml`): `flightops-0`, `flightops-1`, ...
   The pod name is the instance name, so an aircraft keeps its owner when a pod restarts. The pod also runs the
   instance's **own PostgreSQL** (a second container) with its own disk: a pod added by the auto-scaler brings its
