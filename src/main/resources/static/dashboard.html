@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flight Ops Cluster</title>
+<!--
+  Live view of the Flight Operations cluster: which instances exist, their health, load, where each aircraft's flights
+  are stored (owner / backup) and the instances that joined or left. Data: GET /api/cluster/overview every 2 s
+  (one instance gathers every instance's status). No external files, so it also works without internet.
+-->
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --line: #e1e4e8; --text: #1d2330; --muted: #677085;
+    --ok: #1f9d55; --warn: #c27c0e; --bad: #d64545; --accent: #2f6fde;
+    --owner: #2f6fde; --backup: #7c5cd6; --handoff: #c27c0e;
+    --bar: #e9edf3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --panel: #1b1f27; --line: #2c323d; --text: #e6e9ef; --muted: #98a1b3;
+      --ok: #3cc47c; --warn: #e3a53a; --bad: #f06a6a; --accent: #6b9cf5;
+      --owner: #6b9cf5; --backup: #a58cf0; --handoff: #e3a53a; --bar: #2a303b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b; --panel: #1b1f27; --line: #2c323d; --text: #e6e9ef; --muted: #98a1b3;
+    --ok: #3cc47c; --warn: #e3a53a; --bad: #f06a6a; --accent: #6b9cf5;
+    --owner: #6b9cf5; --backup: #a58cf0; --handoff: #e3a53a; --bar: #2a303b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between;
+           padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 18px; margin: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; display: grid; gap: 16px; }
+  main > *, .row > * { min-width: 0; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+           border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+          background: var(--bg); color: var(--text); width: 100%; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--panel);
+          transition: border-color .4s; }
+  .card.new { border-color: var(--ok); }
+  .card.down { opacity: .65; border-style: dashed; }
+  .card h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .ok { background: var(--ok); } .bad { background: var(--bad); } .warn { background: var(--warn); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; }
+  .meter { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; margin: 2px 0 6px; }
+  .meter > span { display: block; height: 100%; background: var(--accent); transition: width .5s; }
+  .meter.hot > span { background: var(--warn); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .chip { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+          display: inline-flex; align-items: center; gap: 5px; }
+  .chip .dot { width: 7px; height: 7px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  .role { font-size: 12px; font-weight: 600; border-radius: 4px; padding: 1px 6px; }
+  .role.OWNER { color: #fff; background: var(--owner); }
+  .role.BACKUP { color: #fff; background: var(--backup); }
+  .role.HAND_OFF { color: #fff; background: var(--handoff); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; }
+  ol.events { margin: 0; padding-left: 18px; }
+  ol.events li { margin: 2px 0; }
+  .joined { color: var(--ok); font-weight: 600; } .left { color: var(--bad); font-weight: 600; }
+  #login { max-width: 340px; margin: 40px auto; display: grid; gap: 10px; }
+  #error { color: var(--bad); min-height: 1.2em; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>AISafe · Flight Operations cluster</h1>
+    <span class="muted" id="sub">live view, refreshed every 2 s</span>
+  </div>
+  <div class="row">
+    <span class="dot" id="pulse"></span>
+    <span class="muted" id="status">not signed in</span>
+    <button id="theme" title="Light / dark">◐</button>
+    <button id="logout" class="hidden">Sign out</button>
+  </div>
+</header>
+
+<form id="login" class="panel hidden" autocomplete="on">
+  <h2>Sign in</h2>
+  <label>User <input id="user" name="username" placeholder="admin" autocomplete="username" required></label>
+  <label>Password <input id="pass" name="password" type="password" autocomplete="current-password" required></label>
+  <button type="submit">Sign in</button>
+  <div id="error"></div>
+  <div class="muted">Roles ADMIN, ATCC or BACKOFFICE_OPERATOR.</div>
+</form>
+
+<main id="app" class="hidden">
+  <section class="panel stats" id="summary"></section>
+
+  <section>
+    <h2>Instances</h2>
+    <div class="cards" id="instances"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Where each aircraft's flights are stored</h2>
+    <div class="table-wrap"><table id="placement"></table></div>
+    <div class="legend">
+      <span><span class="role OWNER">OWNER</span> bookings are made here</span>
+      <span><span class="role BACKUP">BACKUP</span> copy, takes over if the owner is down</span>
+      <span><span class="role HAND_OFF">HAND-OFF</span> no longer held here, being moved</span>
+    </div>
+  </section>
+
+  <section class="row" style="align-items: stretch;">
+    <div class="panel" style="flex: 1 1 320px;">
+      <h2>Instances joined / left</h2>
+      <ol class="events" id="events"></ol>
+    </div>
+    <div class="panel" style="flex: 1 1 320px;">
+      <h2>Other services (as seen by <span id="seenBy"></span>)</h2>
+      <div class="chips" id="remote"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const POLL_MS = 2000;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const store = {
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch { } },
+    getLocal(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    setLocal(k, v) { try { localStorage.setItem(k, v); } catch { } },
+  };
+
+  // ---------- theme ----------
+  const savedTheme = store.getLocal('theme');
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  $('theme').onclick = () => {
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const now = document.documentElement.dataset.theme || (dark ? 'dark' : 'light');
+    const next = now === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    store.setLocal('theme', next);
+  };
+
+  // ---------- sign in ----------
+  let token = store.get('token');
+  let timer = null;
+
+  function showLogin(message) {
+    token = null; store.set('token', null);
+    clearTimeout(timer);
+    $('app').classList.add('hidden'); $('logout').classList.add('hidden');
+    $('login').classList.remove('hidden');
+    $('error').textContent = message || '';
+    $('status').textContent = 'not signed in'; $('pulse').className = 'dot';
+  }
+
+  $('login').onsubmit = async e => {
+    e.preventDefault();
+    $('error').textContent = '';
+    try {
+      const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: $('user').value, password: $('pass').value }) });
+      if (!res.ok) { $('error').textContent = res.status === 401 ? 'Wrong user or password.' : 'Sign-in failed (' + res.status + ').'; return; }
+      token = (await res.json()).token; store.set('token', token);
+      start();
+    } catch (err) { $('error').textContent = 'Cannot reach the service: ' + err.message; }
+  };
+  $('logout').onclick = () => showLogin();
+
+  function start() {
+    $('login').classList.add('hidden'); $('app').classList.remove('hidden'); $('logout').classList.remove('hidden');
+    poll();
+  }
+
+  // ---------- polling ----------
+  const previous = {};        // instance -> {at, requests, startedAt} for requests per second
+  const firstSeen = {};       // instance -> time first seen by this page (highlights instances that join later)
+  let renders = 0;
+
+  async function poll() {
+    clearTimeout(timer);
+    try {
+      const res = await fetch('/api/cluster/overview', { headers: { Authorization: 'Bearer ' + token } });
+      if (res.status === 401 || res.status === 403) { showLogin(res.status === 403 ? 'This user may not see the cluster.' : 'Session expired, sign in again.'); return; }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      render(await res.json());
+      $('pulse').className = 'dot ok';
+    } catch (err) {
+      $('pulse').className = 'dot bad';
+      $('status').textContent = 'no answer (' + err.message + ') - retrying';
+    }
+    timer = setTimeout(poll, POLL_MS);
+  }
+
+  function render(o) {
+    const now = Date.now();
+    const up = o.instances.filter(i => i.reachable);
+    $('status').textContent = 'answered by ' + o.answeredBy + ' · ' + new Date(o.generatedAt).toLocaleTimeString();
+    $('seenBy').textContent = o.answeredBy;
+
+    // requests per second, from the difference with the previous answer
+    const rps = {};
+    for (const i of up) {
+      const p = previous[i.instance];
+      if (p && p.startedAt === i.startedAt && now > p.at) {
+        rps[i.instance] = Math.max(0, (i.requestsServed - p.requests) * 1000 / (now - p.at));
+      }
+      previous[i.instance] = { at: now, requests: i.requestsServed, startedAt: i.startedAt };
+      if (!(i.instance in firstSeen)) firstSeen[i.instance] = renders === 0 ? 0 : now;   // 0 = there from the start
+    }
+
+    // ---------- summary ----------
+    const owners = up.reduce((n, i) => n + i.flightsAsOwner, 0);
+    const copies = up.reduce((n, i) => n + i.flightsAsOwner + i.flightsAsBackup, 0);
+    const backlog = up.reduce((n, i) => n + Object.values(i.replicationBacklog || {}).reduce((a, b) => a + b, 0), 0);
+    const handoff = up.reduce((n, i) => n + i.flightsToHandOff, 0);
+    const totalRps = Object.values(rps).reduce((a, b) => a + b, 0);
+    const rf = up.length ? Math.max(...up.map(i => i.replicationFactor)) : 0;
+    $('summary').innerHTML = [
+      stat('Instances up', up.length + ' / ' + o.instances.length),
+      stat('Copies per flight', rf),
+      stat('Flights', owners, copies + ' copies in total'),
+      stat('Requests / s', totalRps.toFixed(1)),
+      stat('Copies waiting', backlog),
+      stat('Being handed off', handoff),
+    ].join('');
+
+    // ---------- instance cards ----------
+    $('instances').innerHTML = o.instances.map(i => {
+      if (!i.reachable) {
+        return `<div class="card down"><h3><span class="dot bad"></span>${esc(i.instance)}</h3>
+                <div class="muted" style="margin-top:8px">not answering - its flights are served from their copies</div></div>`;
+      }
+      const isNew = firstSeen[i.instance] > 0 && now - firstSeen[i.instance] < 30000;
+      const cpu = i.cpuPercent ?? 0;
+      const heapPct = i.heapMaxMb ? 100 * i.heapUsedMb / i.heapMaxMb : 0;
+      const peers = (i.remoteInstances || []).filter(r => r.group === 'flight-operations peer');
+      const backlogN = Object.values(i.replicationBacklog || {}).reduce((a, b) => a + b, 0);
+      return `<div class="card ${isNew ? 'new' : ''}">
+        <h3><span class="dot ok"></span>${esc(i.instance)}${isNew ? ' <span class="chip">new</span>' : ''}</h3>
+        <div class="muted">up ${since(i.startedAt, now)}</div>
+        <dl class="kv">
+          <dt>CPU</dt><dd>${i.cpuPercent == null ? '-' : cpu.toFixed(0) + ' %'}</dd>
+        </dl>
+        <div class="meter ${cpu > 70 ? 'hot' : ''}"><span style="width:${Math.min(100, cpu)}%"></span></div>
+        <dl class="kv">
+          <dt>Memory (heap)</dt><dd>${i.heapUsedMb} / ${i.heapMaxMb} MB</dd>
+        </dl>
+        <div class="meter"><span style="width:${heapPct.toFixed(0)}%"></span></div>
+        <dl class="kv">
+          <dt>Requests / s</dt><dd>${rps[i.instance] == null ? '-' : rps[i.instance].toFixed(1)}</dd>
+          <dt>Requests served</dt><dd>${i.requestsServed}</dd>
+          <dt>Flights as owner</dt><dd>${i.flightsAsOwner}</dd>
+          <dt>Flights as backup</dt><dd>${i.flightsAsBackup}</dd>
+          ${i.flightsToHandOff ? `<dt>Being handed off</dt><dd>${i.flightsToHandOff}</dd>` : ''}
+          <dt>Copies waiting</dt><dd>${backlogN}</dd>
+        </dl>
+        <div class="chips">${peers.map(peerChip).join('') || '<span class="muted">no peers</span>'}</div>
+      </div>`;
+    }).join('');
+
+    // ---------- aircraft placement ----------
+    const names = o.instances.map(i => i.instance);
+    const cells = {};   // registration -> instance -> {role, flights}
+    for (const i of up) for (const a of i.aircraft) (cells[a.registration] ||= {})[i.instance] = a;
+    const regs = Object.keys(cells).sort();
+    $('placement').innerHTML = regs.length === 0 ? '<tr><td class="muted">no flights yet</td></tr>' :
+      `<thead><tr><th>Aircraft</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>` +
+      regs.map(r => `<tr><td><b>${esc(r)}</b></td>${names.map(n => {
+        const c = cells[r][n];
+        return `<td>${c ? `<span class="role ${c.role}">${c.role === 'HAND_OFF' ? 'HAND-OFF' : c.role}</span> <span class="muted">${c.flights} flight${c.flights === 1 ? '' : 's'}</span>` : '<span class="muted">-</span>'}</td>`;
+      }).join('')}</tr>`).join('') + '</tbody>';
+
+    // ---------- membership changes (every instance notices the same change; show it once) ----------
+    const merged = [];   // {key, t, e}: the same change noticed by several instances within 30 s is one event
+    for (const i of up) for (const e of i.membershipChanges || []) {
+      const key = e.joined.join(',') + '|' + e.left.join(',');
+      const t = Date.parse(e.at);
+      const same = merged.find(m => m.key === key && Math.abs(m.t - t) < 30000);
+      if (same) same.t = Math.min(same.t, t); else merged.push({ key, t, e });
+    }
+    const events = merged.sort((a, b) => b.t - a.t).slice(0, 12);
+    $('events').innerHTML = events.length === 0
+      ? '<li class="muted" style="list-style:none;margin-left:-18px">none since the instances started (instances join and leave on Kubernetes)</li>'
+      : events.map(({ t, e }) => `<li><span class="muted">${new Date(t).toLocaleTimeString()}</span> ` +
+          [...e.joined.map(n => `<span class="joined">+ ${esc(n)}</span> joined`),
+           ...e.left.map(n => `<span class="left">− ${esc(n)}</span> left`)].join(', ') + '</li>').join('');
+
+    // ---------- other services ----------
+    const answering = o.instances.find(i => i.instance === o.answeredBy) || up[0];
+    const remote = (answering?.remoteInstances || []).filter(r => r.group !== 'flight-operations peer');
+    $('remote').innerHTML = remote.map(r => `<span class="chip"><span class="dot ${r.healthy ? 'ok' : 'bad'}"></span>` +
+      `${esc(r.group)} · ${esc(hostOf(r.url))} · ${esc(r.circuit)}</span>`).join('') || '<span class="muted">none (stub mode)</span>';
+    renders++;
+  }
+
+  function stat(label, value, note) {
+    return `<div class="stat"><div class="muted">${esc(label)}</div><div class="v">${esc(value)}</div>` +
+      (note ? `<div class="muted">${esc(note)}</div>` : '') + '</div>';
+  }
+  function peerChip(r) {
+    const cls = r.healthy ? 'ok' : (r.circuit === 'HALF_OPEN' ? 'warn' : 'bad');
+    return `<span class="chip" title="circuit ${esc(r.circuit)}"><span class="dot ${cls}"></span>${esc(hostOf(r.url).split('.')[0])}</span>`;
+  }
+  function hostOf(url) { try { return new URL(url).host; } catch { return url; } }
+  function since(iso, now) {
+    if (!iso) return '-';
+    const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+    return s < 60 ? s + ' s' : s < 3600 ? Math.floor(s / 60) + ' min' : Math.floor(s / 3600) + ' h ' + Math.floor(s % 3600 / 60) + ' min';
+  }
+
+  token ? start() : showLogin();
+})();
+</script>
+</body>
+</html>

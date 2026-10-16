@@ -45,6 +45,8 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/metrics/**").hasRole("ADMIN")
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // the dashboard page itself holds no data; it signs in and calls /api/cluster/overview
+                        .requestMatchers("/dashboard", "/dashboard.html").permitAll()
                         // service-to-service only: never callable with a normal user token
                         .requestMatchers("/internal/**").hasRole(JwtUtils.SERVICE_ROLE)
                         .anyRequest().authenticated());

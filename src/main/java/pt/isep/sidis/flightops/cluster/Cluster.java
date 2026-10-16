@@ -10,10 +10,13 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -51,6 +54,12 @@ public class Cluster {
     public record Change(List<Member> joined, List<Member> left) {
     }
 
+    /** A change as shown on the dashboard: when this instance noticed it. */
+    public record MembershipEvent(Instant at, List<String> joined, List<String> left) {
+    }
+
+    private static final int EVENTS_KEPT = 20;
+
     /** One consistent view of the membership; replaced as a whole when it changes. */
     private record View(List<Member> members, List<Member> peers) {
     }
@@ -59,6 +68,7 @@ public class Cluster {
     private final int configuredFactor;
     private final DnsDiscovery discovery;   // null = fixed list
     private final List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
+    private final Deque<MembershipEvent> events = new ConcurrentLinkedDeque<>();   // newest first
     private final ScheduledExecutorService discoveryThread;
     private volatile View view;
 
@@ -151,6 +161,10 @@ public class Cluster {
         List<Member> joined = after.members().stream().filter(m -> !before.members().contains(m)).toList();
         List<Member> left = before.members().stream().filter(m -> !after.members().contains(m)).toList();
         log.info("Discovery: {} joined, {} left - members now {}", names(joined), names(left), names(after.members()));
+        events.addFirst(new MembershipEvent(Instant.now(), names(joined), names(left)));
+        while (events.size() > EVENTS_KEPT) {
+            events.pollLast();
+        }
         Change change = new Change(joined, left);
         for (Consumer<Change> listener : listeners) {
             listener.accept(change);
@@ -172,6 +186,11 @@ public class Cluster {
         } catch (RuntimeException e) {
             log.warn("Discovery failed, keeping the current members: {}", e.getMessage());
         }
+    }
+
+    /** The last instances that joined or left, newest first (only with discovery). */
+    public List<MembershipEvent> recentChanges() {
+        return List.copyOf(events);
     }
 
     /** Called after instances joined or left (only with discovery). */
