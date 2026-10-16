@@ -15,6 +15,18 @@ deployment): [docs/c4-model.md](docs/c4-model.md). Screenshots of the running sy
 Known limitations: [below](#known-limitations). Key benefits, performance measurements, consistency model and scaling
 decisions: [docs/architecture.md](docs/architecture.md).
 
+## Control panel (no commands needed)
+
+**Windows:** double-click `Launcher.cmd`. **Mac / Linux:** `python3 launcher.py`. (Needs Python 3; the panel says
+which other tools it finds: Git Bash, Java, Docker, kubectl, Node.js.)
+
+A window with buttons to start the system (on this computer, with Docker Compose, or on Kubernetes), open the
+dashboard, run the Postman and JUnit tests, generate load, and stop everything. Each button explains what it does
+and shows the exact command it runs, so the commands below can also be learned from it. The lights at the top show
+what is running.
+
+![Control panel](docs/screenshots/control-panel.png)
+
 ## Run
 
 ```bash
