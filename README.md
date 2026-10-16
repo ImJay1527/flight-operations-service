@@ -10,8 +10,9 @@ Other services: [`aircraft-maintenance-service`](../aircraft-maintenance-service
 
 ![System overview](docs/diagrams/1-system-overview.png)
 
-Architecture as a C4+1 model (context, containers, components, code, scenarios, deployment):
-[docs/c4-model.md](docs/c4-model.md). Key benefits, performance measurements, consistency model and scaling
+Architecture as a C4+1 model (context, containers, components, code, logical and development views, scenarios,
+deployment): [docs/c4-model.md](docs/c4-model.md). Screenshots of the running system: [below](#screenshots).
+Known limitations: [below](#known-limitations). Key benefits, performance measurements, consistency model and scaling
 decisions: [docs/architecture.md](docs/architecture.md).
 
 ## Run
@@ -147,7 +148,7 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (51 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (57 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -158,6 +159,12 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
    (`POST /actuator/shutdown`, only possible in stub/test mode and only for ADMIN), checks the failure behaviour, then
    waits until `run-local.sh` has restarted instance 2 and checks the automatic recovery.
    With the VS Code compound there is no automatic restart: the last request of folder 03 is then skipped.
+
+The collection also runs against the **whole system** (no `--stub`: the real aircraft and airports/routes services,
+e.g. `docker compose up`). The first folder detects the mode from `GET /api/cluster/health` (in stub mode no
+instances of the other services are known): in the whole system, folder **10** checks requests that cross the three
+services, and folder 03 is skipped (it needs `/actuator/shutdown`, which only stub mode exposes - stop an instance
+by hand instead). Last runs, 2026-10-16: stub mode 122 assertions, whole system 111 assertions, 0 failed in both.
 
 | Folder | PL3 p.16 test |
 |---|---|
@@ -170,6 +177,7 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
 | 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped when only 2 instances run (`-n 2`) |
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
 | 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
+| 10 Whole system | Week 5 slides p.14 "cross-component tests" (whole system only): the other services are known and healthy; a booking checked with both services → 201; aircraft unknown to Aircraft & Maintenance and route unknown to Airports & Routes → 404; departures of an airport the airports service knows → 200, doesn't know → 404 |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
 and select "Flight Ops - local HTTPS (3 instances)". Postman must trust the dev CA: Settings → Certificates →
@@ -297,6 +305,50 @@ then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WS
   (`kubectl -n aisafe delete pod flightops-1`: it comes back with the same name and disk, then catches up).
 * Secrets (JWT key, database password, encryption key, certificates) are Kubernetes Secrets created by `deploy.sh`,
   never in the manifests.
+
+## Screenshots
+
+**Dashboard, whole system** (`/dashboard`, 3 instances with the real aircraft and airports/routes services; one
+instance of each other service was running, so their other two instances show `OPEN`):
+
+![Dashboard with the whole system](docs/screenshots/dashboard-whole-system.png)
+
+**Dashboard on Kubernetes after the auto-scaler added a pod** (minimum raised to 4 for the screenshot):
+`flightops-3` joined, became the backup of CS-TPB and received its flights; nothing is waiting to be handed off.
+
+![Dashboard on Kubernetes after a scale-up](docs/screenshots/dashboard-kubernetes-scale-up.png)
+
+![kubectl: pods, auto-scaler and services](docs/screenshots/kubernetes-pods.png)
+
+**Postman collection against the whole system** (newman; folder 10 and the summary):
+
+![Postman run against the whole system](docs/screenshots/postman-whole-system.png)
+
+## Known limitations
+
+* **Eventual consistency.** The other copy of a change arrives moments later (outbox, retried while the target is
+  down); until then the two copies can differ. Lists keep the newest copy; a single lookup answers from its own copy
+  (or, for a copy this instance no longer holds, from the aircraft's holders first).
+* **Network partition (AP).** If the owner and the backup of an aircraft can't reach each other, both may accept
+  an overlapping booking. It is detected when the copies meet and logged as `REPLICATION CONFLICT`; both flights are
+  kept and one must be cancelled by hand. Preventing it would need a quorum (CP for bookings).
+* **Two copies per flight.** One instance down: everything is still served. Both holders of an aircraft down at the
+  same time: its flights are unavailable (`404` saying how many instances could not be reached, lists flagged with
+  `X-Partial-Result`) until one of them is back. `REPLICATION_FACTOR` can raise the number of copies.
+* **Reports ask every instance** (utilization, fuel efficiency), so they don't get faster with more instances
+  (load test in [docs/architecture.md](docs/architecture.md#horizontal-scaling)).
+* **Kubernetes rebalancing.** Removing two pods at once (e.g. `kubectl scale` by hand) could remove both holders of
+  some aircraft before their flights are copied; the auto-scaler removes one pod per minute. For ~15 s after a pod
+  joins or leaves, instances may disagree on an aircraft's owner (an overlap is then reported as above).
+* **Docker Compose / scripts** use a fixed list of instances: adding one needs a configuration change and restarts
+  (Kubernetes discovers instances by DNS instead).
+* **Calls to the other services are plain HTTP** until those services serve HTTPS (this service already supports
+  `https://` URLs for them); everything else is TLS 1.3 only.
+* **Development defaults.** The JWT key, database password and encryption key have defaults in the configuration for
+  local runs; a real deployment must override them (Kubernetes takes them from Secrets). Encryption keys can be
+  versioned, but re-encrypting old data with a new key is not implemented.
+* **Measured on one laptop.** Latencies and throughput have no real network between the instances; they show
+  relative effects (local vs forwarded, 2 vs 3 instances), not production numbers.
 
 ## TODO
 

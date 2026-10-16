@@ -186,7 +186,7 @@
           ]
         },
         {
-          "name": "Replication factor (copies of each flight)",
+          "name": "Replication factor and mode (stub or whole system)",
           "request": {
             "method": "GET",
             "header": [],
@@ -221,7 +221,12 @@
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "const rf = pm.response.json().replicationFactor;",
                   "pm.test(\"replication factor reported (\" + rf + \")\", () => pm.expect(rf).to.be.at.least(1));",
-                  "pm.environment.set(\"replicationFactor\", rf);"
+                  "pm.environment.set(\"replicationFactor\", rf);",
+                  "// stub mode: built-in aircraft/route data, no instances of the other services are known",
+                  "const groups = pm.response.json().endpoints.map(e => e.group);",
+                  "const whole = groups.includes(\"aircraft-maintenance-service\") && groups.includes(\"airports-routes-service\");",
+                  "pm.environment.set(\"wholeSystem\", whole);",
+                  "pm.test(\"mode: \" + (whole ? \"whole system (the other services are called)\" : \"stub (built-in aircraft/route data)\"), () => {});"
                 ]
               }
             }
@@ -2010,8 +2015,350 @@
       ]
     },
     {
+      "name": "10 Whole system - the three services together",
+      "description": "Week 5 slides p.14 \"cross-component tests\": requests whose answer depends on the other two services. Only runs when flight-ops calls the real aircraft and airports/routes services (no --stub, e.g. `docker compose up`); in stub mode every request is skipped.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// stub mode: skip the requests; the first one still runs, so the report says why the folder was skipped",
+              "if (pm.environment.get(\"wholeSystem\") !== true && !pm.info.requestName.startsWith(\"The other services\")) {",
+              "  pm.execution.skipRequest();",
+              "}"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "The other services are known and healthy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"wholeSystem\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: stub mode - this folder needs the real aircraft and airports/routes services (run without --stub, e.g. docker compose up)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const eps = pm.response.json().endpoints;",
+                  "  for (const g of [\"aircraft-maintenance-service\", \"airports-routes-service\"]) {",
+                  "    pm.test(g + \": at least one instance healthy\", () =>",
+                  "      pm.expect(eps.some(e => e.group === g && e.healthy)).to.be.true);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book CS-TPC on route-mad-opo: aircraft and route checked with the other services",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-mad-opo\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCSeconds(0, 0);",
+                  "const arr = new Date(dep.getTime() + 45 * 60000);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set(\"departure\", fmt(dep));",
+                  "pm.variables.set(\"arrival\", fmt(arr));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"wholeSystem\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: stub mode - this folder needs the real aircraft and airports/routes services (run without --stub, e.g. docker compose up)\", () => {});",
+                  "} else {",
+                  "  // 201 means both services answered: the aircraft is available and can fly the route,",
+                  "  // the route is active and its airports are certified for the aircraft model",
+                  "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "  const f = pm.response.json();",
+                  "  pm.test(\"booked for CS-TPC on route-mad-opo, SCHEDULED\", () => {",
+                  "    pm.expect(f.aircraftRegistration).to.eql(\"CS-TPC\"); pm.expect(f.routeId).to.eql(\"route-mad-opo\");",
+                  "    pm.expect(f.status).to.eql(\"SCHEDULED\"); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aircraft unknown to Aircraft & Maintenance -> 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-NOPE\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCSeconds(0, 0);",
+                  "const arr = new Date(dep.getTime() + 45 * 60000);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set(\"departure\", fmt(dep));",
+                  "pm.variables.set(\"arrival\", fmt(arr));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"wholeSystem\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: stub mode - this folder needs the real aircraft and airports/routes services (run without --stub, e.g. docker compose up)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "  pm.test(\"the message names the aircraft\", () => pm.expect(pm.response.text()).to.include(\"CS-NOPE\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Route unknown to Airports & Routes -> 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-nowhere\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCSeconds(0, 0);",
+                  "const arr = new Date(dep.getTime() + 45 * 60000);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set(\"departure\", fmt(dep));",
+                  "pm.variables.set(\"arrival\", fmt(arr));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"wholeSystem\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: stub mode - this folder needs the real aircraft and airports/routes services (run without --stub, e.g. docker compose up)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "  pm.test(\"the message names the route\", () => pm.expect(pm.response.text()).to.include(\"route-nowhere\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Departures of an airport Airports & Routes knows -> 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/departures/MAD?hours=24",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "departures",
+                "MAD"
+              ],
+              "query": [
+                {
+                  "key": "hours",
+                  "value": "24"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"wholeSystem\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: stub mode - this folder needs the real aircraft and airports/routes services (run without --stub, e.g. docker compose up)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Departures of an airport Airports & Routes does not know -> 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/departures/ZZZ?hours=24",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "departures",
+                "ZZZ"
+              ],
+              "query": [
+                {
+                  "key": "hours",
+                  "value": "24"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"wholeSystem\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: stub mode - this folder needs the real aircraft and airports/routes services (run without --stub, e.g. docker compose up)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "03 Resilience - instance 2 is stopped and restarted",
-      "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication; with 2 instances the copies are on instance 1). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and instance 1's outbox is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2. If instance 2 cannot be stopped (not in stub mode) step 2 is skipped; stop it by hand and run this folder again.",
+      "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication: each of its flights has a copy on instance 1 or 3). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and the outbox of the instance that took that booking is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2.\n\nOnly in stub mode: it stops instance 2 through `POST /actuator/shutdown`, which the normal (whole-system) configuration does not expose.",
       "item": [
         {
           "name": "Stop instance 2 (POST /actuator/shutdown)",
@@ -2054,16 +2401,20 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "// wait (max 20 s) until instance 2 really stops answering",
-                  "const deadline = Date.now() + 20000;",
-                  "(function waitDown() {",
-                  "  pm.sendRequest(pm.environment.get('instance2') + '/actuator/health', (err, res) => {",
-                  "    if (err) { pm.test('instance 2 is down', () => {}); return; }",
-                  "    if (Date.now() < deadline) { setTimeout(waitDown, 500); return; }",
-                  "    pm.test('instance 2 is down', () => pm.expect.fail('instance 2 still answers after 20 s'));",
-                  "  });",
-                  "})();"
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  // wait (max 20 s) until instance 2 really stops answering",
+                  "  const deadline = Date.now() + 20000;",
+                  "  (function waitDown() {",
+                  "    pm.sendRequest(pm.environment.get('instance2') + '/actuator/health', (err, res) => {",
+                  "      if (err) { pm.test('instance 2 is down', () => {}); return; }",
+                  "      if (Date.now() < deadline) { setTimeout(waitDown, 500); return; }",
+                  "      pm.test('instance 2 is down', () => pm.expect.fail('instance 2 still answers after 20 s'));",
+                  "    });",
+                  "  })();",
+                  "}"
                 ]
               }
             }
@@ -2092,11 +2443,15 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
                   "} else {",
-                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Data-Source = \" + \"local\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));",
+                  "  if (pm.variables.get(\"instance2Up\") === true) {",
+                  "    pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"X-Data-Source = \" + \"local\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));",
+                  "  }",
                   "}"
                 ]
               }
@@ -2126,19 +2481,23 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
                   "} else {",
-                  "  const others = String(pm.environment.get(\"replicas_flight2\") || \"\").split(\",\").filter(c => c && c !== \"instance2\");",
-                  "  if (others.length > 0) {",
-                  "    pm.test(\"status 200: a copy is on \" + others.join(\", \"), () => pm.response.to.have.status(200));",
-                  "    const expected = others.includes(\"instance1\") ? [\"local\"] : others.map(c => \"peer:\" + pm.environment.get(c));",
-                  "    pm.test(\"X-Data-Source: \" + expected.join(\" or \"), () => pm.expect(expected).to.include(pm.response.headers.get(\"X-Data-Source\")));",
-                  "    pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
+                  "  if (pm.variables.get(\"instance2Up\") === true) {",
+                  "    pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "  } else {",
-                  "    // no copy anywhere else (REPLICATION_FACTOR=1): PL3 p.11 404",
-                  "    pm.test(\"status 404 (no other copy)\", () => pm.response.to.have.status(404));",
-                  "    pm.test(\"error mentions: could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));",
+                  "    const others = String(pm.environment.get(\"replicas_flight2\") || \"\").split(\",\").filter(c => c && c !== \"instance2\");",
+                  "    if (others.length > 0) {",
+                  "      pm.test(\"status 200: a copy is on \" + others.join(\", \"), () => pm.response.to.have.status(200));",
+                  "      const expected = others.includes(\"instance1\") ? [\"local\"] : others.map(c => \"peer:\" + pm.environment.get(c));",
+                  "      pm.test(\"X-Data-Source: \" + expected.join(\" or \"), () => pm.expect(expected).to.include(pm.response.headers.get(\"X-Data-Source\")));",
+                  "      pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
+                  "    } else {",
+                  "      // no copy anywhere else (REPLICATION_FACTOR=1): PL3 p.11 404",
+                  "      pm.test(\"status 404 (no other copy)\", () => pm.response.to.have.status(404));",
+                  "      pm.test(\"error mentions: could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));",
+                  "    }",
                   "  }",
                   "}"
                 ]
@@ -2170,17 +2529,21 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
                   "} else {",
-                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"X-Unreachable-Peers: 1\", () => pm.expect(pm.response.headers.get(\"X-Unreachable-Peers\")).to.eql(\"1\"));",
-                  "  // data can only be missing if at least as many instances are down as there are copies",
-                  "  const incomplete = 1 >= Number(pm.environment.get(\"replicationFactor\") || 1);",
-                  "  if (incomplete) {",
-                  "    pm.test(\"X-Partial-Result: true (no copies: P1 p.12 partial responses)\", () => pm.expect(pm.response.headers.get(\"X-Partial-Result\")).to.eql(\"true\"));",
+                  "  if (pm.variables.get(\"instance2Up\") === true) {",
+                  "    pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "  } else {",
-                  "    pm.test(\"no X-Partial-Result: every flight has a copy on a running instance\", () => pm.expect(pm.response.headers.has(\"X-Partial-Result\")).to.eql(false));",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"X-Unreachable-Peers: 1\", () => pm.expect(pm.response.headers.get(\"X-Unreachable-Peers\")).to.eql(\"1\"));",
+                  "    // data can only be missing if at least as many instances are down as there are copies",
+                  "    const incomplete = 1 >= Number(pm.environment.get(\"replicationFactor\") || 1);",
+                  "    if (incomplete) {",
+                  "      pm.test(\"X-Partial-Result: true (no copies: P1 p.12 partial responses)\", () => pm.expect(pm.response.headers.get(\"X-Partial-Result\")).to.eql(\"true\"));",
+                  "    } else {",
+                  "      pm.test(\"no X-Partial-Result: every flight has a copy on a running instance\", () => pm.expect(pm.response.headers.has(\"X-Partial-Result\")).to.eql(false));",
+                  "    }",
                   "  }",
                   "}"
                 ]
@@ -2240,16 +2603,20 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
                   "} else {",
-                  "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
-                  "  const replicas = String(pm.response.headers.get(\"X-Replicas\") || \"\").split(\",\");",
-                  "  const expected = replicas.find(r => r !== \"instance2\") || \"instance1\";",
-                  "  pm.test(\"X-Stored-On: \" + expected + \" (instance 2, the owner, is down)\", () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(expected));",
-                  "  pm.environment.set(\"flight_booked_while_down\", pm.response.json().flightNumber);",
-                  "  pm.environment.set(\"storedWhileDownUrl\", pm.environment.get(pm.response.headers.get(\"X-Stored-On\")));",
-                  "  pm.environment.set(\"replicas_while_down\", pm.response.headers.get(\"X-Replicas\") || \"\");",
+                  "  if (pm.variables.get(\"instance2Up\") === true) {",
+                  "    pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "    const replicas = String(pm.response.headers.get(\"X-Replicas\") || \"\").split(\",\");",
+                  "    const expected = replicas.find(r => r !== \"instance2\") || \"instance1\";",
+                  "    pm.test(\"X-Stored-On: \" + expected + \" (instance 2, the owner, is down)\", () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(expected));",
+                  "    pm.environment.set(\"flight_booked_while_down\", pm.response.json().flightNumber);",
+                  "    pm.environment.set(\"storedWhileDownUrl\", pm.environment.get(pm.response.headers.get(\"X-Stored-On\")));",
+                  "    pm.environment.set(\"replicas_while_down\", pm.response.headers.get(\"X-Replicas\") || \"\");",
+                  "  }",
                   "}"
                 ]
               }
@@ -2289,18 +2656,22 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.variables.get(\"instance2Up\") === true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
                   "} else {",
-                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  pm.test(\"instance 2 reported unhealthy (circuit open)\", () => {",
-                  "    const peer = pm.response.json().endpoints.find(e => e.url === pm.environment.get(\"instance2\"));",
-                  "    pm.expect(peer, \"instance 2 in the list\").to.exist;",
-                  "    pm.expect(peer.healthy).to.eql(false);",
-                  "  });",
-                  "  if (String(pm.environment.get(\"replicas_while_down\") || \"\").split(\",\").includes(\"instance2\")) {",
-                  "    pm.test(\"the new booking is queued for instance 2 (replicationBacklog)\", () => pm.expect(pm.response.json().replicationBacklog.instance2).to.be.at.least(1));",
+                  "  if (pm.variables.get(\"instance2Up\") === true) {",
+                  "    pm.test.skip(\"SKIPPED: instance 2 is still running (could not be stopped) - stop it by hand, then run folder 03 again\", () => {});",
                   "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"instance 2 reported unhealthy (circuit open)\", () => {",
+                  "      const peer = pm.response.json().endpoints.find(e => e.url === pm.environment.get(\"instance2\"));",
+                  "      pm.expect(peer, \"instance 2 in the list\").to.exist;",
+                  "      pm.expect(peer.healthy).to.eql(false);",
+                  "    });",
+                  "    if (String(pm.environment.get(\"replicas_while_down\") || \"\").split(\",\").includes(\"instance2\")) {",
+                  "      pm.test(\"the new booking is queued for instance 2 (replicationBacklog)\", () => pm.expect(pm.response.json().replicationBacklog.instance2).to.be.at.least(1));",
+                  "    } else {",
+                  "    }",
                   "  }",
                   "}"
                 ]
@@ -2371,23 +2742,27 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (pm.variables.get(\"instance2Back\") !== true) {",
-                  "  pm.test.skip(\"instance 2 did not come back within 90 s - start it again (scripts/run-local.sh does that automatically)\", () => {});",
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
                   "} else {",
-                  "  pm.test(\"instance 1 trusts instance 2 again (circuit closed by the health check)\", () => pm.expect(pm.variables.get(\"peerHealthy\")).to.eql(true));",
-                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "  if (String(pm.environment.get(\"replicas_while_down\") || \"\").split(\",\").includes(\"instance2\")) {",
-                  "    pm.test(\"the booking made while it was down is now on instance 2 itself\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));",
+                  "  if (pm.variables.get(\"instance2Back\") !== true) {",
+                  "    pm.test.skip(\"instance 2 did not come back within 90 s - start it again (scripts/run-local.sh does that automatically)\", () => {});",
                   "  } else {",
-                  "  }",
-                  "  pm.sendRequest({ url: pm.environment.get(\"instance2\") + \"/api/scheduled-flights/\" + pm.environment.get(\"flight_on_instance2\"),",
-                  "                   header: [{ key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") }] }, (err, res) => {",
-                  "    if (Number(pm.environment.get(\"replicationFactor\")) >= 2) {",
-                  "      pm.test(\"instance 2's own earlier flight is there too (kept in PostgreSQL, or fetched from its copy)\", () => pm.expect(res.code).to.eql(200));",
+                  "    pm.test(\"instance 1 trusts instance 2 again (circuit closed by the health check)\", () => pm.expect(pm.variables.get(\"peerHealthy\")).to.eql(true));",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    if (String(pm.environment.get(\"replicas_while_down\") || \"\").split(\",\").includes(\"instance2\")) {",
+                  "      pm.test(\"the booking made while it was down is now on instance 2 itself\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));",
                   "    } else {",
-                  "      pm.test.skip(\"no copies: instance 2's earlier flight survives a restart only with PostgreSQL (not --h2)\", () => {});",
                   "    }",
-                  "  });",
+                  "    pm.sendRequest({ url: pm.environment.get(\"instance2\") + \"/api/scheduled-flights/\" + pm.environment.get(\"flight_on_instance2\"),",
+                  "                     header: [{ key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") }] }, (err, res) => {",
+                  "      if (Number(pm.environment.get(\"replicationFactor\")) >= 2) {",
+                  "        pm.test(\"instance 2's own earlier flight is there too (kept in PostgreSQL, or fetched from its copy)\", () => pm.expect(res.code).to.eql(200));",
+                  "      } else {",
+                  "        pm.test.skip(\"no copies: instance 2's earlier flight survives a restart only with PostgreSQL (not --h2)\", () => {});",
+                  "      }",
+                  "    });",
+                  "  }",
                   "}"
                 ]
               }
@@ -2445,8 +2820,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"nothing waiting for instance 2\", () => pm.expect(pm.response.json().replicationBacklog.instance2 || 0).to.eql(0));"
+                  "if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  pm.test.skip(\"SKIPPED: folder 03 stops instance 2 with POST /actuator/shutdown, which only exists in stub mode (./scripts/run-local.sh --stub); in the whole system stop an instance by hand instead\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"nothing waiting for instance 2\", () => pm.expect(pm.response.json().replicationBacklog.instance2 || 0).to.eql(0));",
+                  "}"
                 ]
               }
             }
@@ -2459,6 +2838,7 @@
           "script": {
             "type": "text/javascript",
             "exec": [
+              "if (pm.environment.get(\"wholeSystem\") === true) { pm.execution.skipRequest(); }",
               "pm.sendRequest({ url: pm.environment.get('instance2') + '/actuator/health', method: 'GET' }, (err, res) => {",
               "  pm.variables.set('instance2Up', !err && res && res.code === 200);",
               "});"
