@@ -1,0 +1,59 @@
+---
+config:
+  layout: elk
+  flowchart:
+    wrappingWidth: 400
+---
+%% C4 Level 3b - Components of the Flight Operations API: how an instance works with the other instances
+flowchart TB
+    peersIn["<b>Other API instances</b><br/>[Container: Flight Operations API]"]
+    dns["<b>Kubernetes DNS</b><br/>[headless Service flightops-peers]<br/><br/>Only on Kubernetes"]
+
+    subgraph API["Flight Operations API [Container: Java 21, Spring Boot] - one instance"]
+        direction TB
+        internalApi["<b>Internal API</b><br/>[Component: api, monitoring]<br/><br/>/internal/flights, /internal/replicas,<br/>/internal/cluster/status. Role SERVICE;<br/>local data only, never forwards (no loops)"]
+        monitorApi["<b>Monitoring API</b><br/>[Component: monitoring, resilience]<br/><br/>/api/cluster/health, /metrics, /owner,<br/>/overview (+ dashboard page)"]
+        app["<b>Application services</b><br/>[see diagram 3a]<br/><br/>Bookings, queries"]
+
+        cluster["<b>Cluster + DnsDiscovery</b><br/>[Component: cluster]<br/><br/>The instances: fixed list, or DNS lookups<br/>every 5 s. Owner and backup of each<br/>aircraft by rendezvous hashing"]
+        outbox["<b>ReplicationOutbox + Sender</b><br/>[Component: replication]<br/><br/>Task 'copy flight to instance X' saved with<br/>the change; sent after the commit,<br/>retried every 1 s while X is down"]
+        store["<b>ReplicaStore</b><br/>[Component: replication]<br/><br/>Applies a copy only if its revision is<br/>newer; logs overlapping bookings<br/>as REPLICATION CONFLICT"]
+        sync["<b>ReplicaSync</b><br/>[Component: replication]<br/><br/>Catch-up at startup and every 60 s;<br/>on Kubernetes also 10 s after instances<br/>join or leave: catch-up + hand-off"]
+        peerClient["<b>PeerClient</b><br/>[Component: peers]<br/><br/>Calls the current peers: one by one<br/>(single flight) or all in parallel (lists)"]
+        resilience["<b>Resilience</b><br/>[Component: resilience]<br/><br/>Timeouts, retry with backoff + jitter,<br/>circuit breaker per instance,<br/>health check every 5 s"]
+        repos["<b>Repositories</b><br/>[Component: repositories]"]
+    end
+
+    db[("<b>Flight database</b><br/>[Container: PostgreSQL 16]")]
+    peersOut["<b>Other API instances</b><br/>[Container: Flight Operations API]"]
+
+    peersIn -->|"HTTPS /internal/**, service JWT"| internalApi
+    internalApi -->|"received copies"| store
+    internalApi -->|"local flights; bookings<br/>forwarded to this owner"| app
+    app -->|"owner / backup<br/>of an aircraft"| cluster
+    app -->|"outbox task"| outbox
+    app -->|"forward, ask the peers"| peerClient
+    monitorApi -->|"members"| cluster
+    monitorApi -->|"status of the others"| peerClient
+    cluster -->|"who exists now?"| dns
+    cluster -.->|"members changed"| sync
+    outbox -->|"who holds a copy?"| cluster
+    outbox -->|"push copy"| peerClient
+    sync -->|"fetch my copies,<br/>hand off the rest"| peerClient
+    sync --> store
+    store --> repos
+    outbox --> repos
+    peerClient -->|"current peers"| cluster
+    peerClient --> resilience
+    resilience -->|"HTTPS /internal/**, service JWT"| peersOut
+    repos -->|"JDBC"| db
+
+    classDef component fill:#85bbf0,stroke:#5d82a8,color:#000000
+    classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
+    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
+    classDef elsewhere fill:#ffffff,stroke:#5d82a8,color:#000000,stroke-dasharray:4 3
+    class internalApi,monitorApi,cluster,outbox,store,sync,peerClient,resilience,repos component
+    class app elsewhere
+    class peersIn,peersOut,db container
+    class dns external
+    style API fill:none,stroke:#444444,stroke-dasharray:6 4

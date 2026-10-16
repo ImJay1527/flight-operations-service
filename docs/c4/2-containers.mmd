@@ -1,0 +1,37 @@
+---
+config:
+  layout: elk
+  flowchart:
+    wrappingWidth: 400
+---
+%% C4 Level 2 - Containers of Flight Operations: the separately deployable parts and how they talk
+flowchart TB
+    users["<b>AISafe users</b><br/>[Person]<br/><br/>ATCC, backoffice,<br/>administrator"]
+
+    subgraph FO["Flight Operations [Software System]"]
+        direction TB
+        dash["<b>Dashboard</b><br/>[Container: HTML + JavaScript,<br/>runs in the browser]<br/><br/>Live view of the instances,<br/>where each aircraft is stored,<br/>instances joining and leaving"]
+        lb["<b>Load balancer</b><br/>[Container: nginx (Docker Compose)<br/>or Kubernetes Service]<br/><br/>One address for all instances;<br/>only healthy instances get requests"]
+        api["<b>Flight Operations API</b><br/>[Container: Java 21, Spring Boot]<br/>3 instances (Kubernetes: 3 to 5)<br/><br/>REST API. Flights sharded by aircraft,<br/>each kept on 2 instances; asks the<br/>other instances for what it doesn't hold"]
+        db[("<b>Flight database</b><br/>[Container: PostgreSQL 16]<br/>one per instance<br/><br/>That instance's flights (owned<br/>and copies), outbox, users;<br/>route, aircraft and airports<br/>of each flight AES-256 encrypted")]
+    end
+
+    am["<b>Aircraft & Maintenance</b><br/>[Software System - another team]"]
+    ar["<b>Airports & Routes</b><br/>[Software System - another team]"]
+
+    users -->|"Uses<br/>[HTTPS, TLS 1.3, user JWT]"| lb
+    users -->|"Opens"| dash
+    dash -->|"Status of every instance, every 2 s<br/>[HTTPS, GET /api/cluster/overview]"| lb
+    lb -->|"Forwards to a healthy instance<br/>[HTTPS]"| api
+    api -->|"Reads and writes its own data<br/>[JDBC]"| db
+    api -->|"Peer forwarding, bookings on the owner,<br/>copies, catch-up, status<br/>[HTTPS /internal/**, service JWT]"| api
+    api -->|"GET /internal/aircraft/{reg}<br/>[REST, service JWT]"| am
+    api -->|"GET /internal/routes/{id},<br/>/internal/airports/{iata}<br/>[REST, service JWT]"| ar
+
+    classDef person fill:#08427b,stroke:#052e56,color:#ffffff
+    classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
+    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
+    class users person
+    class dash,lb,api,db container
+    class am,ar external
+    style FO fill:none,stroke:#444444,stroke-dasharray:6 4
