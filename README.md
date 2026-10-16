@@ -255,7 +255,7 @@ Clients use https://localhost:9443 (a Kubernetes `LoadBalancer` Service: it only
 readiness probe passes).
 
 **Windows / WSL:** Kubernetes 1.35+ needs cgroup v2. If Docker Desktop stays on "Starting Kubernetes" and its log
-(`%LOCALAPPDATA%\Docker\logm\init.log`) says `kubelet is configured to not run on a host using cgroup v1`, create
+(`%LOCALAPPDATA%\Docker\log\vm\init.log`) says `kubelet is configured to not run on a host using cgroup v1`, create
 `%USERPROFILE%\.wslconfig` with
 
 ```ini
