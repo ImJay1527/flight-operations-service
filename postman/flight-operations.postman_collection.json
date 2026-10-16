@@ -1402,7 +1402,7 @@
     },
     {
       "name": "07 Three instances",
-      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh -n 3 --stub); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy. With 3 instances and 2 copies, each flight is on 2 of them: the instance without a copy forwards the read to one that has it.",
+      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh --stub starts 3; -n 2 starts only 2); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy. With 3 instances and 2 copies, each flight is on 2 of them: the instance without a copy forwards the read to one that has it.",
       "item": [
         {
           "name": "Create flight on instance 3",
@@ -1457,7 +1457,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance3Up\") !== true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
                   "  pm.test(\"answered by instance3 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance3\"));",
@@ -1493,7 +1493,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance3Up\") !== true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  (() => {",
@@ -1537,7 +1537,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance3Up\") !== true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  (() => {",
@@ -1581,7 +1581,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance3Up\") !== true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  (() => {",
@@ -1639,7 +1639,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.variables.get(\"instance3Up\") !== true) {",
-                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh -n 3 --stub)\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: instance 3 is not running (start 3 instances: ./scripts/run-local.sh --stub)\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  const env = k => pm.environment.get(k);",
@@ -1714,7 +1714,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!String(pm.environment.get(\"instance1\")).startsWith(\"https://\")) {",
-                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (2 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (3 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  pm.test(\"request went over https\", () => pm.expect(pm.request.url.protocol).to.eql(\"https\"));",
@@ -1750,7 +1750,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!String(pm.environment.get(\"instance1\")).startsWith(\"https://\")) {",
-                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (2 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (3 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
                   "} else {",
                   "  const plain = pm.environment.get(\"instance1\").replace(\"https://\", \"http://\") + \"/actuator/health\";",
                   "  pm.sendRequest(plain, (err, res) => {",
@@ -1800,7 +1800,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!String(pm.environment.get(\"instance1\")).startsWith(\"https://\")) {",
-                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (2 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
+                  "  pm.test.skip(\"SKIPPED: this environment uses plain HTTP - use \\\"Flight Ops - local HTTPS (3 instances)\\\" with ./scripts/run-local.sh --tls --stub\", () => {});",
                   "} else {",
                   "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "  pm.test(\"every peer URL is https\", () => {",

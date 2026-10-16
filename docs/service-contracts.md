@@ -83,6 +83,7 @@ ask its peers **before** answering 404 (so callers can treat 404 as final).
 | `POST /internal/flights` `{routeId, aircraftRegistration, departureTime, arrivalTime}` | books the flight on THIS instance (the aircraft's owner - sharding by registration); 201 + flight, or the same 4xx a normal booking gets |
 | `POST /internal/replicas` `{flight, with revision}` | stores or updates this instance's copy of a flight (replication); kept only if newer (higher revision); 204 |
 | `GET /internal/replicas?for=NAME` | the flights here that instance NAME should also hold (its catch-up after a restart, and the periodic repair) |
+| `GET /internal/cluster/status` | this instance's status (health, load, flights as owner / backup, peers); gathered by `GET /api/cluster/overview` for the dashboard |
 
 Every flight is kept on the first `flightops.replication.factor` (default 2) instances of its aircraft's
 rendezvous-hash ranking; the flight JSON exchanged on these endpoints carries a `revision` number.
