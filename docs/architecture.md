@@ -4,6 +4,8 @@ Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Perform
 
 ## System architecture (PL3 p.20)
 
+The full C4+1 model (context, containers, components, code, scenarios, deployment) is in [c4-model.md](c4-model.md).
+
 Three components, each running as **3 instances** with their **own database**. Instances of the same component
 forward GET requests to each other (peer forwarding); components call each other over HTTPS with a service token.
 Flight Operations keeps every flight on **two instances** (replication), so the data of a stopped instance stays
@@ -382,10 +384,13 @@ one after 2 minutes of low load. It changes one pod per minute, so each change i
 
 **When a pod joins** (e.g. `flightops-3`):
 
+![Auto-scaling](diagrams/7-autoscaling.png)
+
 1. Kubernetes creates the pod; the headless Service publishes `flightops-3.flightops-peers` straight away
    (`publishNotReadyAddresses`), before it is ready.
-2. Within 5 s the other instances see it (log: `Discovery: [flightops-3] joined`). Rendezvous hashing now gives it
-   about 1/4 of the aircraft (as owner or backup); nothing moves between the old instances. Until it answers it is
+2. Within 5 s the other instances see it (log: `Discovery: [flightops-3] joined`). With 4 instances and 2 copies,
+   rendezvous hashing makes it the owner of about 1/4 of the aircraft and the backup of another 1/4 (it holds about
+   half); no flight is copied between the old instances. Until it answers it is
    treated like an instance that is down: the backups take its bookings, the outbox keeps its copies.
 3. While starting, before it reports ready, it asks every peer for the flights it should hold (catch-up). A peer
    that has not discovered it yet still counts it in (`Cluster.replicasOf(registration, instance)`).

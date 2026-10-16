@@ -1,0 +1,32 @@
+---
+config:
+  layout: elk
+  flowchart:
+    wrappingWidth: 400
+---
+%% C4 Level 1 - System Context: Flight Operations and the people and systems around it (no technology details)
+flowchart TB
+    atcc["<b>ATCC operator</b><br/>[Person]<br/><br/>Air Traffic Control Centre:<br/>plans and follows flights"]
+    office["<b>Backoffice operator</b><br/>[Person]<br/><br/>Follows the departures<br/>of an airport"]
+    admin["<b>Administrator</b><br/>[Person]<br/><br/>Runs and watches the system"]
+    maint["<b>Maintenance staff</b><br/>[Person]<br/><br/>Technicians and supervisors"]
+
+    fo["<b>Flight Operations</b><br/>[Software System]<br/><br/>Schedules flights, assigns aircraft to routes,<br/>checks that an aircraft<br/>is available, reports utilization<br/>and fuel efficiency.<br/>Signs in every AISafe user."]
+
+    am["<b>Aircraft & Maintenance</b><br/>[Software System - another team]<br/><br/>Aircraft models, the fleet<br/>and its status, maintenance"]
+    ar["<b>Airports & Routes</b><br/>[Software System - another team]<br/><br/>Airports, the models they<br/>are certified for, routes"]
+
+    atcc -->|"Schedules and cancels<br/>flights, looks them up,<br/>reads reports"| fo
+    office -->|"Reads the departures<br/>of an airport"| fo
+    admin -->|"Watches the instances<br/>(dashboard, health, metrics)"| fo
+    maint -->|"Signs in"| fo
+    maint -.->|"Records maintenance<br/>(with the same sign-in)"| am
+    fo -->|"Is the aircraft available?<br/>Model, range, seats"| am
+    fo -->|"Route details; is the airport<br/>certified for the model?"| ar
+
+    classDef person fill:#08427b,stroke:#052e56,color:#ffffff
+    classDef system fill:#1168bd,stroke:#0b4884,color:#ffffff
+    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
+    class atcc,office,admin,maint person
+    class fo system
+    class am,ar external

@@ -10,7 +10,9 @@ Other services: [`aircraft-maintenance-service`](../aircraft-maintenance-service
 
 ![System overview](docs/diagrams/1-system-overview.png)
 
-Architecture diagrams, key benefits, performance measurements and scaling decisions: [docs/architecture.md](docs/architecture.md).
+Architecture as a C4+1 model (context, containers, components, code, scenarios, deployment):
+[docs/c4-model.md](docs/c4-model.md). Key benefits, performance measurements, consistency model and scaling
+decisions: [docs/architecture.md](docs/architecture.md).
 
 ## Run
 

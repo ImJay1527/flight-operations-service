@@ -1,0 +1,55 @@
+---
+config:
+  layout: elk
+  flowchart:
+    wrappingWidth: 400
+---
+%% C4 Level 3a - Components of the Flight Operations API: the path of a client request (bookings, queries, reports)
+flowchart TB
+    lb["<b>Load balancer</b><br/>[Container]"]
+
+    subgraph API["Flight Operations API [Container: Java 21, Spring Boot] - one instance"]
+        direction TB
+        filters["<b>Request filters</b><br/>[Component: common.tracing, common.security]<br/><br/>Request id + X-Instance header,<br/>JWT to roles, audit log of every request"]
+        auth["<b>AuthController</b><br/>[Component: security]<br/><br/>Sign-in; issues the user JWT<br/>accepted by all AISafe services"]
+        flightApi["<b>Flight API</b><br/>[Component: api]<br/><br/>ScheduledFlight, AircraftUtilization<br/>and FuelEfficiency controllers"]
+        sfs["<b>ScheduledFlightService</b><br/>[Component: services]<br/><br/>Booking: on the aircraft's owner (its backup<br/>if the owner can't be reached).<br/>Cancel: on a copy here, else on an<br/>instance that has one"]
+        lbs["<b>LocalBookingService</b><br/>[Component: services]<br/><br/>Business rules, per-aircraft lock;<br/>saves the flight and its outbox task<br/>in one transaction"]
+        query["<b>FlightQueryService</b><br/>[Component: services]<br/><br/>Local database first, then the peers;<br/>merges lists, newest copy wins"]
+        reports["<b>Report services</b><br/>[Component: services]<br/><br/>Aircraft utilization, fuel efficiency"]
+        clients["<b>Service clients</b><br/>[Component: clients]<br/><br/>Aircraft and airports/routes clients:<br/>round-robin + failover over their instances<br/>(built-in data in stub mode)"]
+        repos["<b>Repositories + field encryption</b><br/>[Component: repositories, common.crypto]<br/><br/>Spring Data JPA; route, aircraft and<br/>airports of each flight AES-256 encrypted"]
+        dist["<b>Distribution components</b><br/>[see diagram 3b]<br/><br/>Cluster, PeerClient, replication"]
+    end
+
+    db[("<b>Flight database</b><br/>[Container: PostgreSQL 16]")]
+    am["<b>Aircraft & Maintenance</b><br/>[Software System]"]
+    ar["<b>Airports & Routes</b><br/>[Software System]"]
+
+    lb -->|"HTTPS"| filters
+    filters -->|"POST /api/auth/login"| auth
+    filters -->|"/api/** (role checked)"| flightApi
+    flightApi -->|"book, cancel"| sfs
+    flightApi -->|"look up flights"| query
+    flightApi -->|"reports"| reports
+    sfs -->|"who owns the aircraft?<br/>forward to the owner"| dist
+    sfs -->|"booking is made here"| lbs
+    lbs -->|"aircraft available? route active?<br/>airports certified?"| clients
+    lbs -->|"flight + outbox task"| repos
+    query -->|"local data"| repos
+    query -->|"not here / lists:<br/>ask the peers"| dist
+    reports -->|"all flights"| query
+    reports -->|"routes, aircraft"| clients
+    repos -->|"JDBC"| db
+    clients -->|"REST, service JWT"| am
+    clients -->|"REST, service JWT"| ar
+
+    classDef component fill:#85bbf0,stroke:#5d82a8,color:#000000
+    classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
+    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
+    classDef elsewhere fill:#ffffff,stroke:#5d82a8,color:#000000,stroke-dasharray:4 3
+    class filters,auth,flightApi,sfs,lbs,query,reports,clients,repos component
+    class dist elsewhere
+    class lb,db container
+    class am,ar external
+    style API fill:none,stroke:#444444,stroke-dasharray:6 4

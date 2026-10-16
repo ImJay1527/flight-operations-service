@@ -1,0 +1,26 @@
+%% Kubernetes auto-scaling: a pod is added under load, the others discover it and its aircraft move to it
+%% (as measured on 2026-10-16, see architecture.md "Kubernetes and auto-scaling")
+sequenceDiagram
+    autonumber
+    participant HPA as Auto-scaler (HPA)
+    participant K8s as Kubernetes
+    participant DNS as DNS (flightops-peers)
+    participant P0 as flightops-0 (old holder)
+    participant P3 as flightops-3 (new pod)
+
+    Note over HPA: CPU above 70 % of the request
+    HPA->>K8s: replicas 3 → 4
+    K8s->>P3: create pod: its own PostgreSQL + disk, then the JVM
+    K8s->>DNS: publish flightops-3.flightops-peers (not ready yet)
+    P0->>DNS: lookup every 5 s
+    DNS-->>P0: flightops-3 exists
+    Note over P0: "Discovery: [flightops-3] joined"<br/>rendezvous hashing (4 instances, 2 copies): flightops-3 becomes owner of ~1/4<br/>of the aircraft and backup of another ~1/4 - nothing is copied between the old ones<br/>until it answers, it is treated like an instance that is down
+    P3->>P0: catch-up: GET /internal/replicas?for=flightops-3
+    Note over P0: counts flightops-3 in even if not discovered yet
+    P0-->>P3: the flights flightops-3 should hold
+    Note over P3: applies them, then reports ready (~40 s after start)
+    K8s->>P3: readiness probe OK: load balancer sends it requests
+    Note over P0: 10 s after the change and every 60 s: hand-off
+    P0->>P3: POST /internal/replicas (each flight P0 no longer holds)
+    P3-->>P0: 204 (newer revision wins, a copy it already has changes nothing)
+    Note over P0: deletes its own copy once every new holder has it<br/>("Rebalancing: n flight(s) handed off")

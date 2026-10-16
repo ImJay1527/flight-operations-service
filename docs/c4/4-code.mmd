@@ -1,0 +1,103 @@
+%% C4 Level 4 - Code: the classes behind sharding, replication and peer calls (only the significant members)
+classDiagram
+    direction TB
+
+    class Cluster {
+        <<cluster>>
+        -String self
+        -int configuredFactor
+        -View view
+        +members() List~Member~
+        +peers() List~Member~
+        +replicasOf(registration) List~String~
+        +replicasOf(registration, instance) List~String~
+        +ownerOf(registration) String
+        +holdsLocally(registration) boolean
+        +refresh() void
+        +onChange(listener) void
+        +recentChanges() List~MembershipEvent~
+        -score(instance, registration)$ long
+    }
+    class DnsDiscovery {
+        <<cluster>>
+        -String urlPattern
+        -int maxInstances
+        +discover() List~Member~
+        +memberNamed(name) Optional~Member~
+    }
+    class PeerClient {
+        <<peers>>
+        +getOne(path, type) PeerResult
+        +getList(path, type) PeerResult
+        +postTo(peer, path, body, type) T
+        +patchOne(path, type) PeerResult
+        +pushCopy(peer, flight) void
+        +copiesFor(peer, instance) List~FlightView~
+        +getFromEach(path, type) Map
+    }
+    class ResilientCaller {
+        <<resilience>>
+        +call(endpoint, idempotent, request) T
+    }
+    class EndpointHealth {
+        <<resilience>>
+        -State state
+        -int consecutiveFailures
+        +allowRequest() boolean
+        +recordSuccess() void
+        +recordFailure(error) void
+    }
+    class LocalBookingService {
+        <<services>>
+        +book(...) FlightView
+        +cancel(flightNumber) FlightView
+    }
+    class ReplicationOutbox {
+        <<replication>>
+        +flightChanged(flight) void
+    }
+    class ReplicationSender {
+        <<replication>>
+        +wakeUp() void
+        +backlog() Map~String, Long~
+        ~sendPending() void
+    }
+    class ReplicaStore {
+        <<replication>>
+        +apply(copy) boolean
+    }
+    class ReplicaSync {
+        <<replication>>
+        +syncOnce() int
+        +handOff() int
+    }
+    class ScheduledFlight {
+        <<domain, JPA entity>>
+        -String flightNumber
+        -String aircraftRegistration
+        -FlightStatus status
+        -long revision
+        +cancel() void
+        +updateFromCopy(status, revision) boolean
+    }
+    class ReplicationTask {
+        <<domain, JPA entity>>
+        -String target
+        -String flightNumber
+        -Instant createdAt
+    }
+
+    Cluster o-- DnsDiscovery : finds members with
+    Cluster ..> ReplicaSync : notifies when members change
+    PeerClient --> Cluster : current peers
+    PeerClient --> ResilientCaller : every call
+    ResilientCaller --> EndpointHealth : circuit per instance
+    LocalBookingService --> ReplicationOutbox : in the same transaction
+    ReplicationOutbox --> Cluster : who holds a copy
+    ReplicationOutbox ..> ReplicationTask : saves
+    ReplicationOutbox --> ReplicationSender : wakes after commit
+    ReplicationSender --> PeerClient : pushCopy
+    ReplicaSync --> PeerClient : copiesFor, pushCopy
+    ReplicaSync --> ReplicaStore : apply
+    ReplicaSync --> Cluster : holdsLocally
+    ReplicaStore ..> ScheduledFlight : newer revision wins
