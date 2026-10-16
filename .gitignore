@@ -9,3 +9,4 @@ logs/
 *.log
 HELP.md
 certs/
+__pycache__/
