@@ -17,9 +17,15 @@ Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
 
 ![System overview](diagrams/1-system-overview.png)
 
-### 2. Inside one instance
+### 2. Inside one instance (C4 level 3)
 
-![Inside an instance](diagrams/2-inside-an-instance.png)
+A client request:
+
+![C4 Level 3a - Components: requests](c4/3a-components-requests.png)
+
+Working with the other instances:
+
+![C4 Level 3b - Components: distribution](c4/3b-components-distribution.png)
 
 ### 3. HTTP GET forwarding (PL3 p.11)
 
