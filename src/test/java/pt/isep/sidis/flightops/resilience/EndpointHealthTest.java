@@ -36,6 +36,24 @@ class EndpointHealthTest {
     }
 
     @Test
+    void reportsWhenTheInstanceAnswersForTheFirstTimeOrAgain() {
+        int[] reachable = {0};
+        peer.onReachable(() -> reachable[0]++);
+
+        peer.recordSuccess();                        // first answer
+        peer.recordSuccess();                        // still up: not reported again
+        assertThat(reachable[0]).isEqualTo(1);
+
+        peer.recordFailure("x");
+        peer.recordFailure("x");
+        peer.recordFailure("x");                     // down
+        clock.advance(Duration.ofSeconds(11));
+        peer.allowRequest();
+        peer.recordSuccess();                        // back
+        assertThat(reachable[0]).isEqualTo(2);
+    }
+
+    @Test
     void staysClosedBelowThreshold() {
         peer.recordFailure("x");
         peer.recordFailure("x");

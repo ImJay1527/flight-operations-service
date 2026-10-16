@@ -122,8 +122,20 @@ public class ScheduledFlightService {
         return flightQueryService.findById(flightNumber);
     }
 
-    /** Cancels the flight: here if this instance has a copy, otherwise on a peer that has one. */
+    /**
+     * Cancels the flight: here if this instance has a copy, otherwise on a peer that has one. A left-over copy of an
+     * aircraft this instance no longer holds is cancelled on the aircraft's holders instead; only if none of them can
+     * be reached is it cancelled here (the outbox then sends the change to them).
+     */
     public FlightView cancelFlight(String flightNumber) {
+        FlightView copy = flightQueryService.localById(flightNumber);
+        if (copy != null && flightQueryService.isLeftover(copy)) {
+            PeerResult<FlightView> onHolders = peers.patchOneOn(cluster.replicasOf(copy.aircraftRegistration()),
+                    "/internal/flights/{n}/cancel", FlightView.class, flightNumber);
+            if (!onHolders.items().isEmpty()) {
+                return onHolders.items().get(0);
+            }
+        }
         FlightView local = localBookings.cancel(flightNumber);
         if (local != null) {
             return local;

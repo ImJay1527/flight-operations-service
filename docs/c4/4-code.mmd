@@ -28,9 +28,11 @@ classDiagram
     class PeerClient {
         <<peers>>
         +getOne(path, type) PeerResult
+        +getOneFrom(instances, path, type) PeerResult
         +getList(path, type) PeerResult
         +postTo(peer, path, body, type) T
         +patchOne(path, type) PeerResult
+        +patchOneOn(instances, path, type) PeerResult
         +pushCopy(peer, flight) void
         +copiesFor(peer, instance) List~FlightView~
         +getFromEach(path, type) Map
@@ -46,6 +48,7 @@ classDiagram
         +allowRequest() boolean
         +recordSuccess() void
         +recordFailure(error) void
+        ~onReachable(callback) void
     }
     class LocalBookingService {
         <<services>>
@@ -101,3 +104,4 @@ classDiagram
     ReplicaSync --> ReplicaStore : apply
     ReplicaSync --> Cluster : holdsLocally
     ReplicaStore ..> ScheduledFlight : newer revision wins
+    EndpointHealth ..> ReplicaSync : a peer answers (via HealthRegistry)

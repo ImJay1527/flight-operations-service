@@ -400,9 +400,13 @@ one after 2 minutes of low load. It changes one pod per minute, so each change i
    treated like an instance that is down: the backups take its bookings, the outbox keeps its copies.
 3. While starting, before it reports ready, it asks every peer for the flights it should hold (catch-up). A peer
    that has not discovered it yet still counts it in (`Cluster.replicasOf(registration, instance)`).
-4. 10 s after the change every instance runs the catch-up again and **hands off** the flights it no longer holds:
-   it sends them to their current holders and deletes its own copy once every holder has it (if one can't be
-   reached, it keeps the copy and tries again later). Otherwise a stale copy would still be answered locally.
+4. As soon as the new pod answers its first health check (1 s later), and also 10 s after the change and every
+   60 s, every instance runs the catch-up again and **hands off** the flights it no longer holds: it sends them to
+   their current holders and deletes its own copy once every holder has it (if one can't be reached, it keeps the
+   copy and tries again later).
+5. Until the hand-off, a lookup or cancel that reaches such a **left-over copy** goes to the aircraft's holders first
+   (`FlightQueryService.isLeftover`); the copy is only used if no holder answers (AP: an old copy rather than an
+   error). So a client never gets an out-of-date flight while a holder is reachable.
 
 **When a pod leaves** (scale-down): each of its flights is also on another instance (replication factor 2). The
 others notice within 5 s, and 10 s later the new holders fetch those flights from the instance that still has them.
@@ -422,13 +426,17 @@ Its disk is deleted (`whenScaled: Delete`): everything on it exists elsewhere.
   every booking calls the real aircraft and airports/routes services. Valid bookings 201; unknown aircraft and
   unknown route 404; aircraft under maintenance, model not certified at the origin airport, deactivated route and
   an overlapping booking 409 - the same answers as with the stub data. Flight-ops saw both services healthy.
+* Hand-off timing, re-tested after the improvement (2026-10-16, 3 to 4 pods): `flightops-3` finished starting at
+  11:11:29, the others saw it answer at 11:11:32-34 and `flightops-2` handed it 4 flights at **11:11:35**, ~6 s after
+  it started (before: up to 60 s, the next periodic catch-up). 8 s later nothing was waiting anywhere; back at 3 pods
+  the 12 flights were again each on their owner and one backup.
 * 5 pods used most of the laptop's 16 GB: `maxReplicas` stays at 5 here only because the test machine allows it.
 
 **Limits (honest):**
 
-* A new pod needs ~40 s to start, longer than the 10-s rebalance delay, so the first hand-off to it is skipped
-  ("not reachable") and done by the next periodic catch-up (every 60 s). Nothing is lost meanwhile: the old holder
-  keeps its copy until the new one has it.
+* The hand-off to a new pod waits until it answers (start-up takes about 25 s on the test laptop, plus up to 5 s until the next health
+  check). Meanwhile its aircraft are served by their other holder and left-over copies aren't answered while a holder
+  can be reached, so nothing is lost or read out of date; if no holder can be reached, the left-over copy is used.
 * Removing two pods at once could remove both holders of some aircraft before the rebalance. The auto-scaler removes
   one pod per minute, but `kubectl scale` by hand could do it.
 * For ~15 s after a change instances may disagree on an aircraft's owner, so two of them could accept overlapping

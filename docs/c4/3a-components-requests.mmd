@@ -15,7 +15,7 @@ flowchart TB
         flightApi["<b>Flight API</b><br/>[Component: api]<br/><br/>ScheduledFlight, AircraftUtilization<br/>and FuelEfficiency controllers"]
         sfs["<b>ScheduledFlightService</b><br/>[Component: services]<br/><br/>Booking: on the aircraft's owner (its backup<br/>if the owner can't be reached).<br/>Cancel: on a copy here, else on an<br/>instance that has one"]
         lbs["<b>LocalBookingService</b><br/>[Component: services]<br/><br/>Business rules, per-aircraft lock;<br/>saves the flight and its outbox task<br/>in one transaction"]
-        query["<b>FlightQueryService</b><br/>[Component: services]<br/><br/>Local database first, then the peers;<br/>merges lists, newest copy wins"]
+        query["<b>FlightQueryService</b><br/>[Component: services]<br/><br/>Local database first, then the peers;<br/>merges lists, newest copy wins.<br/>A left-over copy: its holders first"]
         reports["<b>Report services</b><br/>[Component: services]<br/><br/>Aircraft utilization, fuel efficiency"]
         clients["<b>Service clients</b><br/>[Component: clients]<br/><br/>Aircraft and airports/routes clients:<br/>round-robin + failover over their instances<br/>(built-in data in stub mode)"]
         repos["<b>Repositories + field encryption</b><br/>[Component: repositories, common.crypto]<br/><br/>Spring Data JPA; route, aircraft and<br/>airports of each flight AES-256 encrypted"]

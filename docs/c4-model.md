@@ -73,7 +73,8 @@ of a client request, and the parts that make the instances work together.
   `LocalBookingService` checks the business rules (with the other two services), locks the aircraft and saves the
   flight together with its outbox task; otherwise the booking is forwarded to the owner (diagram 5).
 * A lookup goes to `FlightQueryService`: the local database first, then the peers. Lists ask every peer at once
-  and keep the newest copy of each flight.
+  and keep the newest copy of each flight. A left-over copy of an aircraft this instance no longer holds (after
+  instances joined, before its hand-off) is not answered while one of the aircraft's holders can be asked.
 
 ### 3b – Working with the other instances (sharding, replication, resilience)
 
@@ -84,7 +85,8 @@ of a client request, and the parts that make the instances work together.
   without asking anyone.
 * Replication: the outbox task saved with a change is sent by `ReplicationSender` after the commit (retried while
   the target is down); `ReplicaStore` keeps a copy only if its revision is newer; `ReplicaSync` catches up at
-  startup and every 60 s and, on Kubernetes, rebalances when instances join or leave.
+  startup and every 60 s and, on Kubernetes, rebalances when instances join or leave and as soon as a new
+  instance answers.
 * The **Internal API** answers from local data only and never forwards, so a query can't loop between instances.
 * Every call to another instance goes through `PeerClient` and **Resilience** (timeouts, retries for reads,
   circuit breaker per instance, health checks).
