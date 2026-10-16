@@ -10,6 +10,7 @@ import pt.isep.sidis.flightops.resilience.ResilientCaller;
 
 import java.time.Duration;
 import java.util.List;
+import pt.isep.sidis.flightops.common.http.HttpClientFactory;
 
 @Component
 @Profile("!stub")   // replaced by built-in data in the "stub" profile

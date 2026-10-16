@@ -1,4 +1,4 @@
-package pt.isep.sidis.flightops.clients;
+package pt.isep.sidis.flightops.common.http;
 
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;

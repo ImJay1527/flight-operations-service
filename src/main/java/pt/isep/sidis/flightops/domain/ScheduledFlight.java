@@ -17,6 +17,9 @@ import java.util.UUID;
 @Table(name = "scheduled_flight")
 public class ScheduledFlight {
 
+    /** Minimum time between two flights of the same aircraft, before and after (overlap check). */
+    public static final int TURNAROUND_BUFFER_MINUTES = 30;
+
     @Id
     private String flightNumber;
 

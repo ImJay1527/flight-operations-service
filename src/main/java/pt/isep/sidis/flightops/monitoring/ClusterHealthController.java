@@ -1,4 +1,4 @@
-package pt.isep.sidis.flightops.resilience;
+package pt.isep.sidis.flightops.monitoring;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -13,6 +13,8 @@ import pt.isep.sidis.flightops.replication.ReplicationSender;
 
 import java.util.List;
 import java.util.Map;
+import pt.isep.sidis.flightops.resilience.EndpointHealth;
+import pt.isep.sidis.flightops.resilience.HealthRegistry;
 
 /** What this instance currently knows about its peers and the other services' instances. */
 @RestController

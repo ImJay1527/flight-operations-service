@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 
 /** PL3 p.19 monitoring metrics of this instance since it started, in one readable answer. */
 @RestController

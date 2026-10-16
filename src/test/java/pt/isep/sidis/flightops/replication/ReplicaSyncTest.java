@@ -7,7 +7,7 @@ import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.cluster.DnsDiscovery;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 import pt.isep.sidis.flightops.resilience.HealthRegistry;

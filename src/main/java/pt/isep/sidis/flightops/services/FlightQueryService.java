@@ -6,7 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;

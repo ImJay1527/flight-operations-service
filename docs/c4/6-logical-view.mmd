@@ -1,0 +1,83 @@
+---
+config:
+  fontFamily: arial
+---
+%% Logical view (UML class diagram): the entities of Flight Operations and what it reads from the other services.
+%% Other services' data is referenced by id only (no foreign keys across services, each has its own database).
+classDiagram
+    direction LR
+
+    class ScheduledFlight {
+        <<entity: scheduled_flight>>
+        -String flightNumber «id, UUID»
+        -String routeId «encrypted»
+        -String aircraftRegistration «encrypted»
+        -String aircraftModel «encrypted»
+        -String originIata «encrypted»
+        -String destinationIata «encrypted»
+        -double distanceKm
+        -double fuelBurnRate
+        -LocalDateTime scheduledDeparture
+        -LocalDateTime scheduledArrival
+        -FlightStatus status
+        -Long version «optimistic lock»
+        -long revision «replication»
+        +cancel() void
+        +restoreCopyState(status, revision) void
+        +updateFromCopy(status, revision) boolean
+    }
+    class FlightStatus {
+        <<enumeration>>
+        SCHEDULED
+        CANCELED
+        COMPLETED
+    }
+    class AircraftBookingLock {
+        <<entity: aircraft_booking_lock>>
+        -String aircraftRegistration «id»
+    }
+    class ReplicationTask {
+        <<entity: replication_outbox>>
+        -Long id «id»
+        -String target «instance name»
+        -String flightNumber
+        -Instant createdAt
+    }
+    class SystemUser {
+        <<entity: system_user>>
+        -Long id «id»
+        -String username «unique»
+        -String passwordHash «BCrypt»
+        -String roles
+    }
+
+    class AircraftInfo {
+        <<read from Aircraft & Maintenance>>
+        String registrationNumber
+        String status
+        String modelName
+        double maxRange
+        double fuelCapacity
+        int activeCapacity
+    }
+    class RouteInfo {
+        <<read from Airports & Routes>>
+        String routeId
+        String status
+        double distanceKm
+        double minRangeRequired
+        int minCapacityRequired
+    }
+    class AirportInfo {
+        <<read from Airports & Routes>>
+        String iataCode
+        String status
+        List~String~ certifiedModels
+    }
+
+    ScheduledFlight --> "1" FlightStatus : status
+    ReplicationTask ..> ScheduledFlight : copy of (flightNumber)
+    AircraftBookingLock ..> AircraftInfo : one row per aircraft (registration)
+    ScheduledFlight ..> AircraftInfo : aircraftRegistration (by id)
+    ScheduledFlight ..> RouteInfo : routeId (by id)
+    RouteInfo *-- "2" AirportInfo : origin, destination

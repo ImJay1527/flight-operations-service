@@ -2,7 +2,7 @@ package pt.isep.sidis.flightops.resilience;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -40,7 +40,7 @@ public class HealthRegistry {
         return endpoints.computeIfAbsent(url, u -> {
             EndpointHealth health = new EndpointHealth(group, u, failureThreshold, openDuration, maxOpenDuration, clock);
             health.onReachable(() -> reachableListeners.forEach(listener -> listener.accept(health)));
-            metrics.registerHealthGauge(health);
+            metrics.registerHealthGauge(group, u, () -> health.snapshot().healthy());
             return health;
         });
     }

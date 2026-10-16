@@ -7,9 +7,8 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.domain.FlightStatus;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
-import pt.isep.sidis.flightops.monitoring.FlightOpsMetrics;
+import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
-import pt.isep.sidis.flightops.services.LocalBookingService;
 
 import java.time.LocalDateTime;
 
@@ -62,8 +61,8 @@ public class ReplicaStore {
      * cancel one of them.
      */
     private void reportOverlaps(ScheduledFlight incoming) {
-        LocalDateTime from = incoming.getScheduledDeparture().minusMinutes(LocalBookingService.TURNAROUND_BUFFER_MINUTES);
-        LocalDateTime to = incoming.getScheduledArrival().plusMinutes(LocalBookingService.TURNAROUND_BUFFER_MINUTES);
+        LocalDateTime from = incoming.getScheduledDeparture().minusMinutes(ScheduledFlight.TURNAROUND_BUFFER_MINUTES);
+        LocalDateTime to = incoming.getScheduledArrival().plusMinutes(ScheduledFlight.TURNAROUND_BUFFER_MINUTES);
         flights.findByAircraftRegistration(incoming.getAircraftRegistration()).stream()
                 .filter(f -> f.getStatus() == FlightStatus.SCHEDULED)
                 .filter(f -> !f.getScheduledDeparture().isAfter(to) && !f.getScheduledArrival().isBefore(from))

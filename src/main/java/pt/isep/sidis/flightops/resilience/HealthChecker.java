@@ -4,7 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import pt.isep.sidis.flightops.clients.HttpClientFactory;
+import pt.isep.sidis.flightops.common.http.HttpClientFactory;
 
 import java.time.Duration;
 

@@ -1,12 +1,20 @@
 # Flight Operations – C4+1 model
 
 The architecture of the Flight Operations service at four zoom levels (C4: Context, Containers, Components, Code),
-plus the scenarios that show it working (the "+1") and how it is deployed. The other two AISafe services are
-shown as external systems: they belong to other teams.
+plus the views of Kruchten's 4+1 model (logical, development, process, physical) and the scenarios that tie them
+together (the "+1"). The other two AISafe services are shown as external systems: they belong to other teams.
 
 Contents: [Notation](#notation) · [L1 Context](#level-1--system-context) · [L2 Containers](#level-2--containers) ·
-[L3 Components](#level-3--components) · [L4 Code](#level-4--code) · [+1 Scenarios](#1--scenarios) ·
-[Deployment](#deployment)
+[L3 Components](#level-3--components) · [L4 Code](#level-4--code) · [Logical view](#logical-view-uml) ·
+[Development view](#development-view-packages) · [+1 Scenarios](#1--scenarios) · [Deployment](#deployment)
+
+| 4+1 view (Week 5 slides p.8) | Where |
+|---|---|
+| Logical view: entities and their relationships | [Logical view (UML)](#logical-view-uml) |
+| Development view: packages, modules, dependencies | [Development view](#development-view-packages) |
+| Process view: runtime behaviour, HTTP flows between instances | the sequence diagrams in [+1 Scenarios](#1--scenarios) |
+| Physical view: deployment topology, containers, ports | [Deployment](#deployment) |
+| +1 Scenarios: use cases tying the views together | [+1 Scenarios](#1--scenarios) |
 
 Each level answers a different question for a different reader, like a map that zooms in: what the system is for
 (L1), what runs where (L2), how one part is built (L3), which classes do the work (L4). Every diagram stays on one
@@ -115,6 +123,55 @@ Design points visible here:
 * **Revisions**: `ScheduledFlight.updateFromCopy` accepts a copy only if its revision is higher, so copies
   converge whatever the order they arrive in (eventual consistency).
 * **Circuit breaker per instance**: `ResilientCaller` asks `EndpointHealth.allowRequest()` before every call.
+
+## Logical view (UML)
+
+*For developers and reviewers: what Flight Operations stores, and what it only reads from the other services.*
+
+![Logical view - UML class diagram](c4/6-logical-view.png)
+
+* **`ScheduledFlight`** is the only business entity. Its id is a UUID, so instances create flights independently
+  without clashes. Route, aircraft, model and airports are stored encrypted. `version` guards against two updates of
+  the same row on one instance (optimistic lock); `revision` orders the copies of a flight across instances (the
+  newest wins).
+* **`AircraftBookingLock`** has one row per aircraft; a booking locks it (`SELECT ... FOR UPDATE`) so two bookings of
+  the same aircraft on one instance can't both pass the overlap check.
+* **`ReplicationTask`** is the outbox: "send the current state of flight X to instance Y", saved in the same
+  transaction as the change.
+* **`SystemUser`** holds the users who sign in (password as a BCrypt hash, roles as a list).
+* **`AircraftInfo`, `RouteInfo`, `AirportInfo`** are not stored: they are what the other two services answer.
+  A flight refers to its aircraft and route **by id only**, with no foreign key: each service has its own database.
+
+## Development view (packages)
+
+*For developers: how the code is organised.* Generated from the `import` statements by
+`scripts/generate-development-view.py`, so it always matches the code; the script fails if two packages import each
+other or a package imports one of a higher layer. Arrows: how many package dependencies go from one group to the
+other. Every package may use `common`.
+
+![Development view - package groups](c4/7-development-view.png)
+
+<!-- development-view:start -->
+| Group | Package | Classes | Purpose | Imports (besides `common`) |
+|---|---|---|---|---|
+| Entry points | `api` | 6 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
+| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `peers`, `replication`, `repositories`, `resilience` |
+| Entry points | `security` | 5 | sign-in, users | - |
+| Entry points | `bootstrap` | 1 | sample data | `cluster`, `domain`, `repositories`, `security` |
+| Application | `services` | 10 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `peers`, `replication`, `repositories`, `resilience` |
+| Distribution | `replication` | 4 | outbox, copies, catch-up | `api.dto`, `cluster`, `domain`, `peers`, `repositories`, `resilience` |
+| Distribution | `peers` | 3 | calls to the other instances | `api.dto`, `cluster`, `resilience` |
+| Distribution | `cluster` | 2 | instances, owner of each aircraft | - |
+| Integration | `clients` | 8 | calls to the other services | `resilience` |
+| Integration | `stub` | 2 | built-in data (test mode) | `clients` |
+| Integration | `resilience` | 5 | retry, circuit breaker, health | - |
+| Data | `repositories` | 3 | Spring Data JPA | `domain` |
+| Data | `api.dto` | 8 | request / response objects | `domain` |
+| Data | `domain` | 4 | entities | - |
+| Shared | `common` | 14 | crypto, exceptions, HTTP client, JWT, metrics, tracing | - |
+
+No package cycles: no two packages import each other.
+<!-- development-view:end -->
 
 ## +1 – Scenarios
 
