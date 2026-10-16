@@ -24,5 +24,5 @@ sequenceDiagram
     I2-->>I1: 201 flight
     I1-->>C: 201 flight, X-Stored-On: instance2, X-Replicas: instance2,instance1
     I2->>I1: after the commit: POST /internal/replicas (copy, revision 1)
-    Note over I1,I2: a 2nd booking of CS-TPC at the same moment (via either instance) waits for the lock,<br/>then sees this flight: 409 "already scheduled"
+    Note over I1,I2: a 2nd booking of CS-TPC at the same moment<br/>(via either instance) waits for the lock,<br/>then sees this flight: 409 "already scheduled"
     Note over I1: owner unreachable (connection refused / circuit open): the backup books it (AP)<br/>owner reached but no answer in time: 503 "booking state unknown"
