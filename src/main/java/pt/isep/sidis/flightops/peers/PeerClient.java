@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,14 +44,20 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       request to spread the load (PL3 p.12).</li>
  *   <li>Copies of flights (replication): pushed to the instances that hold them, and fetched when catching up.</li>
  * </ul>
+ * The peers are always the current members of the {@link Cluster}: with discovery (Kubernetes) they change while the
+ * instance runs, and an instance that left is forgotten (no more health checks or circuit for it).
  */
 @Component
 public class PeerClient {
 
     private static final Logger log = LoggerFactory.getLogger(PeerClient.class);
 
-    private final List<Peer> peers = new ArrayList<>();
-    private final int replicationFactor;
+    private final Map<String, Peer> peersByName = new ConcurrentHashMap<>();
+    private final Cluster cluster;
+    private final HealthRegistry registry;
+    private final RestClient.Builder builder;
+    private final ClientHttpRequestFactory reads;
+    private final ClientHttpRequestFactory writes;
     private final JwtUtils jwtUtils;
     private final ResilientCaller caller;
     private final AtomicInteger nextFirst = new AtomicInteger();
@@ -67,17 +74,33 @@ public class PeerClient {
                       HealthRegistry registry, ResilientCaller caller) {
         this.jwtUtils = jwtUtils;
         this.caller = caller;
-        this.replicationFactor = cluster.replicationFactor();
-        ClientHttpRequestFactory reads = httpClientFactory.create(Duration.ofMillis(timeoutMs));
+        this.cluster = cluster;
+        this.registry = registry;
+        this.builder = builder;
+        this.reads = httpClientFactory.create(Duration.ofMillis(timeoutMs));
         // forwarded bookings: the owner itself calls the other services before answering, so allow more time
-        ClientHttpRequestFactory writes = httpClientFactory.create(Duration.ofMillis(writeTimeoutMs));
-        for (Cluster.Member member : cluster.peers()) {
-            peers.add(new Peer(member.name(), registry.register("flight-operations peer", member.url()),
-                    builder.clone().baseUrl(member.url()).requestFactory(reads)
-                            .requestInterceptor(RequestIdPropagation.INSTANCE).build(),
-                    builder.clone().baseUrl(member.url()).requestFactory(writes)
-                            .requestInterceptor(RequestIdPropagation.INSTANCE).build()));
-        }
+        this.writes = httpClientFactory.create(Duration.ofMillis(writeTimeoutMs));
+        peers();   // registers the peers known now, so health checks start at once
+        cluster.onChange(change -> change.left().forEach(this::forget));
+    }
+
+    /** The current peers, in the cluster's order. */
+    private List<Peer> peers() {
+        return cluster.peers().stream().map(this::peerFor).toList();
+    }
+
+    private Peer peerFor(Cluster.Member member) {
+        return peersByName.computeIfAbsent(member.name(), name -> new Peer(name,
+                registry.register("flight-operations peer", member.url()),
+                builder.clone().baseUrl(member.url()).requestFactory(reads)
+                        .requestInterceptor(RequestIdPropagation.INSTANCE).build(),
+                builder.clone().baseUrl(member.url()).requestFactory(writes)
+                        .requestInterceptor(RequestIdPropagation.INSTANCE).build()));
+    }
+
+    private void forget(Cluster.Member member) {
+        peersByName.remove(member.name());
+        registry.unregister(member.url());
     }
 
     /**
@@ -124,11 +147,12 @@ public class PeerClient {
     }
 
     public boolean hasPeers() {
-        return !peers.isEmpty();
+        return !cluster.peers().isEmpty();
     }
 
+    /** A current peer; IllegalArgumentException if no instance has this name (any more). */
     private Peer peer(String name) {
-        return peers.stream().filter(p -> p.name().equals(name)).findFirst()
+        return cluster.peers().stream().filter(m -> m.name().equals(name)).findFirst().map(this::peerFor)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown peer " + name));
     }
 
@@ -136,7 +160,7 @@ public class PeerClient {
     public <T> PeerResult<T> getList(String path, ParameterizedTypeReference<List<T>> type, Object... uriVariables) {
         Map<String, String> logContext = MDC.getCopyOfContextMap();   // keeps the request id in the peer threads' logs
         List<Future<List<T>>> answers = new ArrayList<>();
-        for (Peer peer : peers) {
+        for (Peer peer : peers()) {
             answers.add(parallel.submit(() -> withLogContext(logContext, () -> listFrom(peer, path, type, uriVariables))));
         }
 
@@ -159,7 +183,7 @@ public class PeerClient {
         }
         // Every flight is on replicationFactor instances, this one included. Data can only be missing if at least
         // that many peers did not answer.
-        PartialResults.record(unreachable, unreachable >= replicationFactor);
+        PartialResults.record(unreachable, unreachable >= cluster.replicationFactor());
         return new PeerResult<>(all, unreachable);
     }
 
@@ -239,6 +263,7 @@ public class PeerClient {
     }
 
     private List<Peer> rotated() {
+        List<Peer> peers = peers();
         if (peers.size() < 2) {
             return peers;
         }

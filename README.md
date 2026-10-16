@@ -21,21 +21,21 @@ Architecture diagrams, key benefits, performance measurements and scaling decisi
 # certificates for HTTPS (once; output in certs/, which is git-ignored)
 ./scripts/generate-dev-certs.sh
 
-# 2 instances without Docker (8083, 8093); Ctrl+C stops both. Add --tls for HTTPS, -n 3 for a third instance.
+# 3 instances without Docker (8083, 8093, 8103); Ctrl+C stops them. Add --tls for HTTPS, -n 2 for only two.
 # Prints "READY FOR TESTS" once every instance has fully started.
 ./scripts/run-local.sh
 
-# instances started another way (e.g. VS Code): wait until they are ready (-n 3, --tls as above)
+# instances started another way (e.g. VS Code): wait until they are ready (-n 2, --tls as above)
 ./scripts/wait-ready.sh
 
-# whole system, 2 instances per service (needs the 3 repos side by side)
+# whole system, 3 instances per service (needs the 3 repos side by side)
 docker compose up --build
 
-# only flight ops: 2 instances + their databases behind the load balancer (https://localhost:8443)
+# only flight ops: 3 instances + their databases behind the load balancer (https://localhost:8443)
 docker compose up --build flightops-lb
 
-# scale-up: 3 flight-ops instances
-docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build flightops-1 flightops-2 flightops-3
+# Kubernetes (Docker Desktop) with auto-scaling between 3 and 5 instances: see "Kubernetes" below
+./k8s/deploy.sh --stub
 
 # load test (k6 in Docker, 1 CPU per instance); results in loadtest/results/
 ./loadtest/run.sh 2
@@ -49,18 +49,18 @@ docker compose -f docker-compose.yml -f docker-compose.scale-3.yml up --build fl
 
 **Instances = Spring profiles.** Each instance has its own file with its own port, database and the list of all
 instances (`flightops.cluster`): `application-instance1.properties` (8083, `flightops_db_1`), `application-instance2.properties`
-(8093, `flightops_db_2`) and `application-instance3.properties` (8103, scale-up). Start one with
+(8093, `flightops_db_2`) and `application-instance3.properties` (8103, `flightops_db_3`). Start one with
 `java -jar target/flight-operations-service-*.jar --spring.profiles.active=instance1` (add `,tls` for HTTPS).
 Environment variables override the files, and docker-compose uses them for container hostnames.
 
-**VS Code:** Run and Debug panel → "Flight Ops: 2 instances (HTTP)" or "(HTTPS)" starts both instances
+**VS Code:** Run and Debug panel → "Flight Ops: 3 instances (HTTP)" or "(HTTPS)" starts the 3 instances
 (`.vscode/launch.json`).
 
 Port scheme and scaling decisions: [docs/architecture.md](docs/architecture.md).
 
 In docker-compose clients use the **load balancer**, https://localhost:8443 (nginx, `lb/nginx.conf`: least
-connections, an instance that fails is left out for 10 s, failover to the other instance). The instances also stay
-reachable directly on https://localhost:8083 and https://localhost:8093, **HTTPS only (TLS 1.3)**. Docker checks
+connections, an instance that fails is left out for 10 s, failover to another instance). The instances also stay
+reachable directly on https://localhost:8083, https://localhost:8093 and https://localhost:8103, **HTTPS only (TLS 1.3)**. Docker checks
 each instance's health every 10 s (`docker compose ps`) and restarts an instance whose process stops.
 Swagger UI: https://localhost:8083/swagger-ui.html
 
@@ -71,7 +71,8 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 
 ## How the distribution works
 
-* **Sharding by aircraft** (P1 p.15): every instance knows all instances (`flightops.cluster`) and ranks them for
+* **Sharding by aircraft** (P1 p.15): every instance knows all instances (`flightops.cluster`, or on Kubernetes
+  found through DNS, see "Kubernetes" below) and ranks them for
   each aircraft by rendezvous hashing of its registration. A booking is made on the first of them, the **owner**,
   forwarded there if it arrived elsewhere (`X-Stored-On` says where); `GET /api/cluster/owner/{registration}` shows
   the owner and the backup.
@@ -147,10 +148,10 @@ Files in `postman/`:
 `flight-operations.postman_collection.json` (51 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
-1. Start 2 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
-   two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "2 instances for the Postman tests".
+1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
+   two services): `./scripts/run-local.sh --stub`, or in VS Code the compound "3 instances for the Postman tests".
    Wait for **READY FOR TESTS** (from VS Code: run `./scripts/wait-ready.sh` in a terminal).
-2. Select the environment "Flight Ops - local (2 instances)".
+2. Select the environment "Flight Ops - local (3 instances)".
 3. Run the whole collection (about 30 s). Nothing to do by hand: folder **03 Resilience** stops instance 2 itself
    (`POST /actuator/shutdown`, only possible in stub/test mode and only for ADMIN), checks the failure behaviour, then
    waits until `run-local.sh` has restarted instance 2 and checks the automatic recovery.
@@ -164,12 +165,12 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
 | 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower; skipped when every read is local because of the copies), forwarding success rate, peer health, both instances served requests |
-| 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped unless 3 instances run: `./scripts/run-local.sh -n 3 --stub` |
+| 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped when only 2 instances run (`-n 2`) |
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
 | 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
-and select "Flight Ops - local HTTPS (2 instances)". Postman must trust the dev CA: Settings → Certificates →
+and select "Flight Ops - local HTTPS (3 instances)". Postman must trust the dev CA: Settings → Certificates →
 CA certificates → on → select `certs/ca.crt` (created by `./scripts/generate-dev-certs.sh`). If that setting isn't
 available (Postman on the web), turn off Settings → General → "SSL certificate verification" instead: the traffic is
 still encrypted, only the server's identity isn't checked. Command line:
@@ -227,7 +228,7 @@ isolated from the others and **survives restarts**:
 |---|---|---|---|
 | 1 | `flightops-db-1` | 5433 | `flightops-db-1-data` |
 | 2 | `flightops-db-2` | 5434 | `flightops-db-2-data` |
-| 3 (scale-up) | `flightops-db-3` | 5435 | `flightops-db-3-data` |
+| 3 | `flightops-db-3` | 5435 | `flightops-db-3-data` |
 
 * `docker compose up`, `./scripts/run-local.sh` and the VS Code "PostgreSQL" configurations start the database
   containers automatically. Docker Desktop must be running.
@@ -239,11 +240,57 @@ isolated from the others and **survives restarts**:
 * Without Docker: `./scripts/run-local.sh --h2` or the VS Code "H2 in-memory" configuration (data is lost on stop).
   The automated tests always use in-memory H2, so they need no setup.
 
+## Kubernetes (auto-scaling)
+
+`k8s/` runs the system on the Kubernetes of Docker Desktop (Settings → Kubernetes → Create cluster, **kubeadm**):
+
+```bash
+./scripts/generate-dev-certs.sh   # once (keeps an existing CA; adds the pod names to the certificates)
+./k8s/deploy.sh --stub            # only Flight Operations (stub data); without --stub also the other two services
+kubectl -n aisafe get pods,hpa -w # watch the instances and the auto-scaler
+./k8s/deploy.sh --down            # remove everything
+```
+
+Clients use https://localhost:9443 (a Kubernetes `LoadBalancer` Service: it only sends requests to pods whose
+readiness probe passes).
+
+**Windows / WSL:** Kubernetes 1.35+ needs cgroup v2. If Docker Desktop stays on "Starting Kubernetes" and its log
+(`%LOCALAPPDATA%\Docker\log\vm\init.log`) says `kubelet is configured to not run on a host using cgroup v1`, create
+`%USERPROFILE%\.wslconfig` with
+
+```ini
+[wsl2]
+kernelCommandLine = cgroup_no_v1=all
+```
+
+then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WSL: `wsl --update`).
+
+* **Each instance is a pod** of the StatefulSet `flightops` (`k8s/flightops.yaml`): `flightops-0`, `flightops-1`, ...
+  The pod name is the instance name, so an aircraft keeps its owner when a pod restarts. The pod also runs the
+  instance's **own PostgreSQL** (a second container) with its own disk: a pod added by the auto-scaler brings its
+  database along.
+* **Service discovery instead of a fixed list** (PL3 p.25): the `k8s` profile replaces `flightops.cluster` by
+  `flightops.discovery.url-pattern`. Every 5 s each instance looks up `flightops-{i}.flightops-peers` (the DNS names
+  the headless Service gives the pods); the names that exist are the instances (`cluster.DnsDiscovery`).
+* **Auto-scaling** (`k8s/hpa.yaml`): a HorizontalPodAutoscaler keeps 3 to 5 instances, adding one when the average
+  CPU of the application containers passes 70 % of what they request, and removing one after 2 minutes of low load,
+  one pod at a time.
+* **Rebalancing**: when an instance joins, rendezvous hashing gives it only the aircraft it wins; it fetches their
+  flights before it reports ready. 10 s after a change every instance runs its catch-up again, and hands off the
+  flights it no longer holds (sends them to the new holders, then deletes its own copy). When an instance is removed,
+  each of its flights is still on its other holder, which copies it to the new one. `GET /api/cluster/health` and the
+  logs (`Discovery: ... joined`, `Rebalancing: ...`) show it happening.
+* **Self-healing**: Kubernetes restarts a container whose liveness probe fails and recreates a deleted pod
+  (`kubectl -n aisafe delete pod flightops-1`: it comes back with the same name and disk, then catches up).
+* Secrets (JWT key, database password, encryption key, certificates) are Kubernetes Secrets created by `deploy.sh`,
+  never in the manifests.
+
 ## TODO
 
 - [x] HTTPS for flight-ops replicas and their outgoing calls
 - [ ] HTTPS on aircraft-maintenance-service and airports-routes-service (their owners), then switch the URLs in docker-compose to `https://`
 - [x] PostgreSQL container per instance in docker-compose
+- [x] 3 instances per service; Kubernetes with service discovery and auto-scaling (k8s/)
 - [x] Postman collection (postman/)
 - [x] Architecture diagrams and performance analysis (docs/architecture.md)
 - [x] Consistency model, failure scenarios (docs/architecture.md)

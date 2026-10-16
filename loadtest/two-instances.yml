@@ -1,0 +1,8 @@
+# Load-test override: only 2 flight-ops instances (to compare with the default 3). Used by loadtest/run.sh 2.
+services:
+  flightops-1:
+    environment:
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083
+  flightops-2:
+    environment:
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083

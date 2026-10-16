@@ -5,9 +5,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Start databases (flightops-db-1, flightops-db-2)",
+            "label": "Start databases (flightops-db-1..3)",
             "type": "shell",
-            "command": "docker compose up -d --wait flightops-db-1 flightops-db-2",
+            "command": "docker compose up -d --wait flightops-db-1 flightops-db-2 flightops-db-3",
             "options": { "cwd": "${workspaceFolder}" },
             "problemMatcher": []
         }

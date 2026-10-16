@@ -3,8 +3,8 @@
 # "Ready" = /actuator/health/readiness answers UP: Spring has fully started and the sample data is loaded
 # (/actuator/health turns UP earlier, while the sample data may still be loading).
 #
-#   ./scripts/wait-ready.sh              instances 1 and 2, plain HTTP (8083, 8093)
-#   ./scripts/wait-ready.sh -n 3         instances 1..3
+#   ./scripts/wait-ready.sh              instances 1..3, plain HTTP (8083, 8093, 8103)
+#   ./scripts/wait-ready.sh -n 2         instances 1 and 2
 #   ./scripts/wait-ready.sh --tls        HTTPS (verified against certs/ca.crt)
 #   ./scripts/wait-ready.sh --instance 2 only instance 2, no banner (run-local.sh uses this after a restart)
 #   ./scripts/wait-ready.sh --timeout 300
@@ -14,7 +14,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-N=2
+N=3
 SCHEME=http
 ONLY=""
 TIMEOUT=180
@@ -78,8 +78,8 @@ for i in $(seq 1 "$N"); do
 done
 (( failed )) && exit 1
 
-env_name="Flight Ops - local (2 instances)"
-[[ "$SCHEME" == https ]] && env_name="Flight Ops - local HTTPS (2 instances)"
+env_name="Flight Ops - local (3 instances)"
+[[ "$SCHEME" == https ]] && env_name="Flight Ops - local HTTPS (3 instances)"
 echo
 echo "=================================================================="
 echo "  READY FOR TESTS - all $N instance(s) are up"

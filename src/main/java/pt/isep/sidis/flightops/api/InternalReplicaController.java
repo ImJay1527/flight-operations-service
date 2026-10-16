@@ -47,7 +47,7 @@ public class InternalReplicaController {
     @Transactional(readOnly = true)
     public List<FlightView> copiesFor(@RequestParam("for") String instance) {
         return flights.findAll().stream()
-                .filter(f -> cluster.replicasOf(f.getAircraftRegistration()).contains(instance))
+                .filter(f -> cluster.replicasOf(f.getAircraftRegistration(), instance).contains(instance))
                 .map(FlightView::of)
                 .toList();
     }
