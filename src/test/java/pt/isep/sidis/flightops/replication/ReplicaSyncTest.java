@@ -22,7 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-/** Rebalancing on Kubernetes: flights this instance no longer holds go to their new holders. */
+/** Rebalancing (Kubernetes, or a changed fixed list): flights this instance no longer holds go to their new holders. */
 class ReplicaSyncTest {
 
     private static final Set<String> PODS = Set.of("flightops-0", "flightops-1", "flightops-2", "flightops-3");
@@ -74,6 +74,25 @@ class ReplicaSyncTest {
 
         assertThat(sync.handOff()).isZero();
         verify(flights, never()).delete(any(ScheduledFlight.class));
+    }
+
+    @Test
+    void withAFixedListLeftOverCopiesAreHandedOffToo() {
+        // instance1 kept copies from when the list had 2 instances (both held everything); a third one was added
+        Cluster fixed = new Cluster("instance1", List.of("instance1=https://a:8083", "instance2=https://b:8083",
+                "instance3=https://c:8083"), List.of(), 2);
+        ScheduledFlight leftOver = flight(IntStream.range(0, 1000).mapToObj(i -> "CS-" + i)
+                .filter(reg -> !fixed.holdsLocally(reg)).findFirst().orElseThrow());
+        when(flights.findAll()).thenReturn(List.of(leftOver));
+        ReplicaSync staticSync = new ReplicaSync(fixed, peers, mock(ReplicaStore.class), flights, healthRegistry,
+                0, 60_000, 0);
+
+        staticSync.syncOnce();
+
+        for (String holder : fixed.replicasOf(leftOver.getAircraftRegistration())) {
+            verify(peers).pushCopy(eq(holder), any(FlightView.class));
+        }
+        verify(flights).delete(leftOver);
     }
 
     @Test

@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * just became ready, or one that is back): flights waiting to be handed off to it don't wait for the next 60-s run.
  * Flights this instance no longer holds are handed off: sent to their current holders, and deleted here once every
  * holder has them (otherwise this stale copy would still be answered locally). Kept if a holder can't be reached.
+ * With a fixed list this happens after the list was changed and the instances restarted (e.g. a third one added).
  */
 @Component
 @Order(Ordered.LOWEST_PRECEDENCE)   // after the sample data is loaded
@@ -123,9 +124,8 @@ public class ReplicaSync implements ApplicationRunner {
             }
             changed += fromPeer;
         }
-        if (cluster.isDynamic()) {
-            handOff();
-        }
+        // also with a fixed list: after it changes (an instance added, restarts) the old holders still have copies
+        handOff();
         return changed;
     }
 
