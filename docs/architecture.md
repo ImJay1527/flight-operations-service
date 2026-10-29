@@ -304,7 +304,8 @@ On Kubernetes this is automatic (see "Kubernetes and auto-scaling"). With docker
 3. Restart the existing instances so they pick up the new list. Aircraft are re-sharded by rendezvous hashing: only
    the aircraft the new instance wins move to it (~1/3 with 3 instances, `ClusterTest`). The new instance fetches
    the flights it should now hold from the others when it starts (catch-up), new bookings go to the new owner, and
-   copies that an old instance no longer needs simply stay there (they are merged away in reads).
+   copies that an old instance no longer needs are handed off: sent to their holders, then deleted there (at startup
+   and every 60 s, as on Kubernetes; kept while a holder is unreachable).
 
 Limitation: with a hardcoded list, scaling needs a configuration change and restarts. On Kubernetes the instances
 find each other through DNS instead, so the auto-scaler can add and remove them while the system runs.
