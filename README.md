@@ -364,7 +364,9 @@ instance of each other service was running, so their other two instances show `O
   kept and one must be cancelled by hand. Preventing it would need a quorum (CP for bookings).
 * **Two copies per flight.** One instance down: everything is still served. Both holders of an aircraft down at the
   same time: its flights are unavailable (`404` saying how many instances could not be reached, lists flagged with
-  `X-Partial-Result`) until one of them is back. `REPLICATION_FACTOR` can raise the number of copies.
+  `X-Partial-Result`) until one of them is back. A new booking for that aircraft is still accepted by the instance
+  that receives it, with a best-effort overlap check; it reaches the holders when they are back (an overlap is then
+  logged as `REPLICATION CONFLICT`). `REPLICATION_FACTOR` can raise the number of copies.
 * **Reports ask every instance** (utilization, fuel efficiency), so they don't get faster with more instances
   (load test in [docs/architecture.md](docs/architecture.md#horizontal-scaling)).
 * **Kubernetes rebalancing.** Removing two pods at once (e.g. `kubectl scale` by hand) could remove both holders of

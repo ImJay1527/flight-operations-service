@@ -233,6 +233,13 @@ check is just as complete as the owner's would have been. If the owner *was* rea
 the outcome is unknown, so the client gets `503 "the booking may or may not have been made"` instead of risking a
 second booking.
 
+**Both holders down: the instance that received it takes it.** If none of the aircraft's holders can be reached
+(connection refused, circuit open), the instance that received the booking makes it itself - availability first -
+with the overlap check it can still do (its own database and the peers that answer), so that check is only best
+effort. The booking is queued in its outbox for the holders; when they are back they receive it, and a holder that
+already has an overlapping flight logs `REPLICATION CONFLICT` (as for a partition, below). The receiving instance
+then hands its left-over copy off: sent to the holders, deleted once every holder has it (Postman folder 11c-11d).
+
 **What remains: a network partition.** If owner and backup are both running but cannot reach each other, a client
 on each side can book the same aircraft for the same time, and both bookings succeed (availability first). When the
 copies meet, the instance receiving the second one notices the overlap and logs
