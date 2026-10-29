@@ -191,8 +191,9 @@ By hand (Postman app, e.g. in a demo): run 00 Setup, set the environment variabl
 11a, `docker compose stop flightops-2`, set it to `b` and run 11b, and so on (each phase's description says what to
 stop or start). In a normal run of the collection folder 11 is skipped.
 
-Last runs: stub mode 122 assertions (2026-10-16); whole system 114 assertions, plus 57 in folder 11 through the
-script (2026-10-29); 0 failed.
+Last runs (2026-10-29): stub mode 122 assertions, whole system 114 assertions plus 57 in folder 11 through the
+script; 0 failed, and no request errors (folder 03 asks instance 1 whether instance 2 is up, instead of calling the
+stopped instance itself).
 
 | Folder | PL3 p.16 test |
 |---|---|
