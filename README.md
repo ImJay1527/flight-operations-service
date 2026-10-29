@@ -45,6 +45,8 @@ what is running.
 
 # whole system, 3 instances per service (needs the 3 repos side by side)
 docker compose up --build
+# failure tests on the whole system (stops and starts containers; see "Postman" below)
+./scripts/test-failures.sh
 
 # only flight ops: 3 instances + their databases behind the load balancer (https://localhost:8443)
 docker compose up --build flightops-lb
@@ -160,7 +162,7 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (57 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (79 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -175,8 +177,22 @@ instance): `local.postman_environment.json` (HTTP) and `local-https.postman_envi
 The collection also runs against the **whole system** (no `--stub`: the real aircraft and airports/routes services,
 e.g. `docker compose up`). The first folder detects the mode from `GET /api/cluster/health` (in stub mode no
 instances of the other services are known): in the whole system, folder **10** checks requests that cross the three
-services, and folder 03 is skipped (it needs `/actuator/shutdown`, which only stub mode exposes - stop an instance
-by hand instead). Last runs, 2026-10-16: stub mode 122 assertions, whole system 111 assertions, 0 failed in both.
+services, and folder 03 is skipped (it needs `/actuator/shutdown`, which only stub mode exposes). The failure tests
+for the whole system are folder **11**, run by a script that stops and starts the containers between its phases
+(Postman can't stop a container):
+
+```bash
+docker compose up -d --build                        # whole system, wait until every instance is healthy
+./scripts/test-failures.sh                          # 11a-11e, about 1.5 min; starts again whatever it stopped
+./scripts/test-failures.sh --skip-other-services    # without 11e (aircraft/airports on other machines)
+```
+
+By hand (Postman app, e.g. in a demo): run 00 Setup, set the environment variable `failurePhase` to `a` and run
+11a, `docker compose stop flightops-2`, set it to `b` and run 11b, and so on (each phase's description says what to
+stop or start). In a normal run of the collection folder 11 is skipped.
+
+Last runs: stub mode 122 assertions (2026-10-16); whole system 114 assertions, plus 57 in folder 11 through the
+script (2026-10-29); 0 failed.
 
 | Folder | PL3 p.16 test |
 |---|---|
@@ -190,6 +206,7 @@ by hand instead). Last runs, 2026-10-16: stub mode 122 assertions, whole system 
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
 | 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 | 10 Whole system | Week 5 slides p.14 "cross-component tests" (whole system only): the other services are known and healthy; a booking checked with both services → 201; aircraft unknown to Aircraft & Maintenance and route unknown to Airports & Routes → 404; departures of an airport the airports service knows → 200, doesn't know → 404 |
+| 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **404** "could not be reached", list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances) |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
 and select "Flight Ops - local HTTPS (3 instances)". Postman must trust the dev CA: Settings → Certificates →
