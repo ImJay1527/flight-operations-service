@@ -274,10 +274,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -374,10 +374,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -880,10 +880,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -939,10 +939,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -998,10 +998,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -1057,10 +1057,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -1116,10 +1116,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -1175,10 +1175,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -1448,10 +1448,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -1906,10 +1906,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -1986,10 +1986,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
@@ -2126,10 +2126,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set(\"departure\", fmt(dep));",
@@ -2194,10 +2194,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set(\"departure\", fmt(dep));",
@@ -2257,10 +2257,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set(\"departure\", fmt(dep));",
@@ -2359,6 +2359,1185 @@
                   "} else {",
                   "  pm.test(\"status 404\", () => pm.response.to.have.status(404));",
                   "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 Whole system - failures (scripts/test-failures.sh)",
+      "description": "Week 5 p.14 \"simulate instance failure (stop container, verify 404)\", Week 4 p.11 \"stop one instance mid-test\", PL3 p.14/p.16, P1 p.10 \"redundancy-based fault tolerance\" - on the whole system (`docker compose up`), where Postman can't stop an instance by itself.\n\nRun `./scripts/test-failures.sh`: it runs 11a, stops flightops-2 and runs 11b, stops CS-TPC's backup and runs 11c, starts both and runs 11d, stops aircraft-1 and airports-1 and runs 11e, then starts everything again. Each phase only runs when the script sets `failurePhase`; in a normal run of the collection the whole folder is skipped.\n\nBy hand (e.g. in the Postman app during a demo): run 00 Setup with everything up, set the environment variable `failurePhase` to `a`, run 11a; `docker compose stop flightops-2`, set it to `b`, run 11b; and so on (00 Setup only once: it logs in on instance 2, which is down in 11b-11c).",
+      "item": [
+        {
+          "name": "11a Before - everything up",
+          "description": "Everything running. Records which instances hold the test aircraft and books one flight each.\n\nCS-TPC is the aircraft under test: its owner is instance2 (rendezvous hashing over instance1..3, the same on every machine), its copy is on another instance. CS-TPA is the control: it has a copy on the instance that stays up in 11c.",
+          "item": [
+            {
+              "name": "Who holds CS-TPC (owner instance2 + its backup)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/cluster/owner/CS-TPC",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "owner",
+                    "CS-TPC"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "const r = pm.response.json();",
+                      "pm.test(\"owner is instance2 (the instance this test stops first)\", () => pm.expect(r.owner).to.eql(\"instance2\"));",
+                      "pm.test(\"two copies (REPLICATION_FACTOR=2)\", () => pm.expect(r.replicas.length).to.eql(2));",
+                      "const backup = r.replicas.find(n => n !== \"instance2\");",
+                      "const survivor = r.instances.find(n => !r.replicas.includes(n));",
+                      "pm.environment.set(\"failBackup\", backup);",
+                      "pm.environment.set(\"failBackupUrl\", pm.environment.get(backup));",
+                      "pm.environment.set(\"failSurvivor\", survivor);",
+                      "pm.environment.set(\"failSurvivorUrl\", pm.environment.get(survivor));",
+                      "pm.test(\"backup \" + backup + \", the instance that holds no copy: \" + survivor, () => pm.expect(survivor).to.be.a(\"string\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Who holds CS-TPA (control aircraft)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/cluster/owner/CS-TPA",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "owner",
+                    "CS-TPA"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "const survivor = pm.environment.get(\"failSurvivor\");",
+                      "pm.test(\"a copy is on \" + survivor + \" (stays up in 11c)\", () => pm.expect(pm.response.json().replicas).to.include(survivor));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Book CS-TPC: stored on its owner, instance2",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const arr = new Date(dep.getTime() + 45 * 60000);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(arr));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"X-Stored-On: instance2\", () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(\"instance2\"));",
+                      "pm.environment.set(\"failFlightTarget\", pm.response.json().flightNumber);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Book CS-TPA (control)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const arr = new Date(dep.getTime() + 45 * 60000);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(arr));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "pm.environment.set(\"failFlightControl\", pm.response.json().flightNumber);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "CS-TPC's flights with every instance up",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/aircraft/CS-TPC",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "aircraft",
+                    "CS-TPC"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"no peer unreachable\", () => pm.expect(pm.response.headers.has(\"X-Unreachable-Peers\")).to.eql(false));",
+                      "const flights = (j => j._embedded ? Object.values(j._embedded)[0] : (Array.isArray(j) ? j : []))(pm.response.json());",
+                      "pm.environment.set(\"failCountTarget\", flights.length);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the containers in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"a\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11b flightops-2 stopped",
+          "description": "`docker compose stop flightops-2` (the script does it). P1 p.10 \"redundancy-based fault tolerance\": the stopped instance's data stays readable from its copy, lists stay complete, and its backup takes the bookings.",
+          "item": [
+            {
+              "name": "CS-TPC's flight is read from the copy on the backup",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/{{failFlightTarget}}",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightTarget}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "const backupHost = pm.environment.get(\"failBackup\").replace(\"instance\", \"flightops-\");",
+                      "pm.test(\"X-Data-Source: peer:...\" + backupHost, () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.include(\"peer:\").and.to.include(backupHost));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "CS-TPC's list is still complete, one peer unreachable",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/aircraft/CS-TPC",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "aircraft",
+                    "CS-TPC"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"X-Unreachable-Peers: 1\", () => pm.expect(pm.response.headers.get(\"X-Unreachable-Peers\")).to.eql(\"1\"));",
+                      "pm.test(\"no X-Partial-Result: every flight has a copy on a running instance\", () => pm.expect(pm.response.headers.has(\"X-Partial-Result\")).to.eql(false));",
+                      "const flights = (j => j._embedded ? Object.values(j._embedded)[0] : (Array.isArray(j) ? j : []))(pm.response.json());",
+                      "pm.test(\"same number of flights as before\", () => pm.expect(flights.length).to.eql(Number(pm.environment.get(\"failCountTarget\"))));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Book CS-TPC while its owner is down: the backup takes it",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const arr = new Date(dep.getTime() + 45 * 60000);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(arr));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "const backup = pm.environment.get(\"failBackup\");",
+                      "pm.test(\"X-Stored-On: \" + backup, () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(backup));",
+                      "pm.environment.set(\"failFlightWhileDown\", pm.response.json().flightNumber);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The backup keeps the copy for instance2 in its outbox",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failBackupUrl}}/api/cluster/health",
+                  "host": [
+                    "{{failBackupUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "health"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"replicationBacklog.instance2 >= 1\", () => pm.expect(pm.response.json().replicationBacklog.instance2).to.be.at.least(1));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the containers in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"b\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11c Both holders of CS-TPC stopped",
+          "description": "`docker compose stop flightops-2` and the backup (the script does it). Week 5 p.14 \"simulate instance failure (stop container, verify 404)\" and PL3 p.16: with every copy of the data down, a lookup answers 404. Other aircraft are not affected. A booking is still accepted (AP: availability first): it is made on the instance that received it, with a best-effort overlap check, and copied to the holders when they are back (11d).",
+          "item": [
+            {
+              "name": "CS-TPC's flight: 404, its holders could not be reached",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/{{failFlightTarget}}",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightTarget}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                      "pm.test(\"error says the holders could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "CS-TPC's list: flagged as partial",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/aircraft/CS-TPC",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "aircraft",
+                    "CS-TPC"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"X-Unreachable-Peers: 2\", () => pm.expect(pm.response.headers.get(\"X-Unreachable-Peers\")).to.eql(\"2\"));",
+                      "pm.test(\"X-Partial-Result: true (P1 p.12)\", () => pm.expect(pm.response.headers.get(\"X-Partial-Result\")).to.eql(\"true\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The control flight (CS-TPA) is still served",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/{{failFlightControl}}",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightControl}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"X-Data-Source: local\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Book CS-TPC anyway: kept where it was received (AP)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const arr = new Date(dep.getTime() + 45 * 60000);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(arr));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "const survivor = pm.environment.get(\"failSurvivor\");",
+                      "pm.test(\"X-Stored-On: \" + survivor + \" (no holder reachable)\", () => pm.expect(pm.response.headers.get(\"X-Stored-On\")).to.eql(survivor));",
+                      "pm.environment.set(\"failFlightBothDown\", pm.response.json().flightNumber);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the containers in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"c\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11d Both started again - automatic recovery",
+          "description": "`docker compose start` (the script does it and waits until they are healthy). PL3 p.14: the instances catch up before reporting ready, and the backup's outbox delivers the copy it kept. The booking kept by the instance that holds no copy (11c) reaches the holders, and that instance hands its left-over copy off (checked every 60 s, so this phase can take up to a minute).",
+          "item": [
+            {
+              "name": "instance2 has the booking made while it was down",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance2}}/api/scheduled-flights/{{failFlightWhileDown}}",
+                  "host": [
+                    "{{instance2}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightWhileDown}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"X-Data-Source: local (caught up)\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "instance2 also has the booking made while both holders were down",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance2}}/api/scheduled-flights/{{failFlightBothDown}}",
+                  "host": [
+                    "{{instance2}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightBothDown}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"X-Data-Source: local\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"local\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "CS-TPC's first flight is readable again",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/{{failFlightTarget}}",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightTarget}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "CS-TPC's list: complete, one flight more",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/aircraft/CS-TPC",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "aircraft",
+                    "CS-TPC"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"no peer unreachable\", () => pm.expect(pm.response.headers.has(\"X-Unreachable-Peers\")).to.eql(false));",
+                      "const flights = (j => j._embedded ? Object.values(j._embedded)[0] : (Array.isArray(j) ? j : []))(pm.response.json());",
+                      "pm.test(\"both bookings made during the failures are there (2 more)\", () => pm.expect(flights.length).to.eql(Number(pm.environment.get(\"failCountTarget\")) + 2));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The backup's outbox is empty again",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failBackupUrl}}/api/cluster/health",
+                  "host": [
+                    "{{failBackupUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "health"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "// the outbox retries every second; give it up to 20 s after the instance is back",
+                      "const url = pm.environment.get(\"failBackupUrl\") + \"/api/cluster/health\";",
+                      "const auth = { key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") };",
+                      "const deadline = Date.now() + 20000;",
+                      "(function check(res) {",
+                      "  const left = res.replicationBacklog.instance2 || 0;",
+                      "  if (left === 0 || Date.now() > deadline) {",
+                      "    pm.test(\"nothing waiting for instance2\", () => pm.expect(left).to.eql(0));",
+                      "    return;",
+                      "  }",
+                      "  setTimeout(() => pm.sendRequest({ url, header: [auth] }, (err, r) => check(err ? res : r.json())), 1000);",
+                      "})(pm.response.json());"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The left-over copy is handed off (nothing left to hand off)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/cluster/overview",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "overview"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "// the instance that kept the booking checks every 60 s: wait up to 75 s",
+                      "const survivor = pm.environment.get(\"failSurvivor\");",
+                      "const url = pm.environment.get(\"failSurvivorUrl\") + \"/api/cluster/overview\";",
+                      "const auth = { key: \"Authorization\", value: \"Bearer \" + pm.environment.get(\"atccToken\") };",
+                      "const deadline = Date.now() + 75000;",
+                      "(function check(res) {",
+                      "  const me = res.instances.find(i => i.instance === survivor);",
+                      "  const left = me ? me.flightsToHandOff : -1;",
+                      "  if (left === 0 || Date.now() > deadline) {",
+                      "    pm.test(survivor + \": flightsToHandOff = 0\", () => pm.expect(left).to.eql(0));",
+                      "    return;",
+                      "  }",
+                      "  setTimeout(() => pm.sendRequest({ url, header: [auth] }, (err, r) => check(err ? res : r.json())), 2000);",
+                      "})(pm.response.json());"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the containers in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"d\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11e Other services: aircraft-1 and airports-1 stopped",
+          "description": "`docker compose stop aircraft-1 airports-1` (the script does it). Bookings still check the aircraft and the route with another instance of each service (retry, circuit breaker, next instance). The first call may take a few seconds (connect timeouts until the circuit opens). Skipped with --skip-other-services (other services on other machines).",
+          "item": [
+            {
+              "name": "Book CS-TPC: aircraft and route checked with their other instances",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPC\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const arr = new Date(dep.getTime() + 45 * 60000);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(arr));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"answered in \" + pm.response.responseTime + \" ms (a few seconds while a stopped instance is still tried)\", () => {});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Book CS-TPA too",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const arr = new Date(dep.getTime() + 45 * 60000);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(arr));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"answered in \" + pm.response.responseTime + \" ms (a few seconds while a stopped instance is still tried)\", () => {});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Departures of MAD (airport checked with Airports & Routes)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{failSurvivorUrl}}/api/scheduled-flights/departures/MAD?hours=24",
+                  "host": [
+                    "{{failSurvivorUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "departures",
+                    "MAD"
+                  ],
+                  "query": [
+                    {
+                      "key": "hours",
+                      "value": "24"
+                    }
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the containers in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"e\") { pm.execution.skipRequest(); }"
                 ]
               }
             }
@@ -2597,10 +3776,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "// random departure 30..3000 days ahead at a random time of day, so repeated runs don't overlap for the same aircraft",
                   "const days = 30 + Math.floor(Math.random() * 3000);",
                   "const dep = new Date(Date.now() + days * 86400000);",
-                  "dep.setUTCSeconds(0, 0);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
                   "const arr = new Date(dep.getTime() + 45 * 60000);",
                   "const fmt = d => d.toISOString().substring(0, 19);",
                   "pm.variables.set('departure', fmt(dep));",
