@@ -1,5 +1,5 @@
-# Whole AISafe system: 3 services x 3 instances. Each flight-ops instance has its own PostgreSQL container
-# (its shard of the data), whose data survives restarts in a named volume.
+# Whole AISafe system: 3 services x 3 instances. Every instance of every service has its own PostgreSQL container
+# (database per instance), whose data survives restarts in a named volume.
 # Expects the three repos cloned side by side:
 #   IdeaProjects/
 #     aircraft-maintenance-service/
@@ -46,6 +46,64 @@ x-tls-env: &tls-env
   SPRING_PROFILES_ACTIVE: tls
   SSL_TRUSTSTORE: file:/certs/truststore.p12
   SSL_PASSWORD: ${SSL_PASSWORD:-changeit}
+
+# Aircraft & Maintenance and Airports & Routes (the other two repos): one PostgreSQL server per instance, as in their
+# own docker-compose.yml files. DDL_AUTO=update keeps their data across restarts.
+x-aircraft-db: &aircraft-db
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_DB: aircraft
+    POSTGRES_USER: aircraft
+    POSTGRES_PASSWORD: ${DB_PASSWORD:-aircraft}
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U aircraft -d aircraft"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+x-aircraft-env: &aircraft-env
+  PORT: 8081
+  DB_USER: aircraft
+  DB_PASSWORD: ${DB_PASSWORD:-aircraft}
+  DDL_AUTO: update
+
+x-aircraft-instance: &aircraft-instance
+  build: ../aircraft-maintenance-service
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fs http://localhost:8081/actuator/health"]
+    interval: 10s
+    timeout: 3s
+    start_period: 60s
+    retries: 3
+
+x-airports-db: &airports-db
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_DB: airports
+    POSTGRES_USER: airports
+    POSTGRES_PASSWORD: ${DB_PASSWORD:-airports}
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U airports -d airports"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+x-airports-env: &airports-env
+  PORT: 8082
+  DB_USER: airports
+  DB_PASSWORD: ${DB_PASSWORD:-airports}
+  DDL_AUTO: update
+
+x-airports-instance: &airports-instance
+  build: ../airports-routes-service
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fs http://localhost:8082/actuator/health"]
+    interval: 10s
+    timeout: 3s
+    start_period: 60s
+    retries: 3
 
 services:
   # ---------------- Flight Operations (this repo) ----------------
@@ -129,55 +187,114 @@ services:
 
   # The two services below still serve plain HTTP. When they enable their "tls" profile, mount ./certs the same way,
   # set SSL_KEYSTORE to certs/aircraft.p12 / certs/airports.p12, and switch the URLs above to https://.
+  # Each instance gets its instance profile and INSTANCE_NAME (their bootstrap data depends on it) and its own
+  # PostgreSQL. Their databases have no host port: only their instance uses them.
 
   # ---------------- Aircraft & Maintenance ----------------
   aircraft-1:
-    build: ../aircraft-maintenance-service
+    <<: *aircraft-instance
+    depends_on:
+      aircraft-db-1: { condition: service_healthy }
     ports: ["8081:8081"]
     environment:
-      <<: *common-env
+      <<: [*common-env, *aircraft-env]
+      SPRING_PROFILES_ACTIVE: instance1,postgres
+      INSTANCE_NAME: instance1
+      DB_URL: jdbc:postgresql://aircraft-db-1:5432/aircraft
       PEERS: http://aircraft-2:8081,http://aircraft-3:8081
 
   aircraft-2:
-    build: ../aircraft-maintenance-service
+    <<: *aircraft-instance
+    depends_on:
+      aircraft-db-2: { condition: service_healthy }
     ports: ["8091:8081"]
     environment:
-      <<: *common-env
+      <<: [*common-env, *aircraft-env]
+      SPRING_PROFILES_ACTIVE: instance2,postgres
+      INSTANCE_NAME: instance2
+      DB_URL: jdbc:postgresql://aircraft-db-2:5432/aircraft
       PEERS: http://aircraft-1:8081,http://aircraft-3:8081
 
   aircraft-3:
-    build: ../aircraft-maintenance-service
+    <<: *aircraft-instance
+    depends_on:
+      aircraft-db-3: { condition: service_healthy }
     ports: ["8101:8081"]
     environment:
-      <<: *common-env
+      <<: [*common-env, *aircraft-env]
+      SPRING_PROFILES_ACTIVE: instance3,postgres
+      INSTANCE_NAME: instance3
+      DB_URL: jdbc:postgresql://aircraft-db-3:5432/aircraft
       PEERS: http://aircraft-1:8081,http://aircraft-2:8081
+
+  aircraft-db-1:
+    <<: *aircraft-db
+    volumes: ["aircraft-db-1-data:/var/lib/postgresql/data"]
+
+  aircraft-db-2:
+    <<: *aircraft-db
+    volumes: ["aircraft-db-2-data:/var/lib/postgresql/data"]
+
+  aircraft-db-3:
+    <<: *aircraft-db
+    volumes: ["aircraft-db-3-data:/var/lib/postgresql/data"]
 
   # ---------------- Airports & Routes ----------------
   airports-1:
-    build: ../airports-routes-service
+    <<: *airports-instance
+    depends_on:
+      airports-db-1: { condition: service_healthy }
     ports: ["8082:8082"]
     environment:
-      <<: *common-env
-      PEERS: http://airports-2:8082,http://airports-3:8082
+      <<: [*common-env, *airports-env]
+      SPRING_PROFILES_ACTIVE: instance1,postgres
       INSTANCE_NAME: instance1
+      DB_URL: jdbc:postgresql://airports-db-1:5432/airports
+      PEERS: http://airports-2:8082,http://airports-3:8082
 
   airports-2:
-    build: ../airports-routes-service
+    <<: *airports-instance
+    depends_on:
+      airports-db-2: { condition: service_healthy }
     ports: ["8092:8082"]
     environment:
-      <<: *common-env
-      PEERS: http://airports-1:8082,http://airports-3:8082
+      <<: [*common-env, *airports-env]
+      SPRING_PROFILES_ACTIVE: instance2,postgres
       INSTANCE_NAME: instance2
+      DB_URL: jdbc:postgresql://airports-db-2:5432/airports
+      PEERS: http://airports-1:8082,http://airports-3:8082
 
   airports-3:
-    build: ../airports-routes-service
+    <<: *airports-instance
+    depends_on:
+      airports-db-3: { condition: service_healthy }
     ports: ["8102:8082"]
     environment:
-      <<: *common-env
-      PEERS: http://airports-1:8082,http://airports-2:8082
+      <<: [*common-env, *airports-env]
+      SPRING_PROFILES_ACTIVE: instance3,postgres
       INSTANCE_NAME: instance3
+      DB_URL: jdbc:postgresql://airports-db-3:5432/airports
+      PEERS: http://airports-1:8082,http://airports-2:8082
+
+  airports-db-1:
+    <<: *airports-db
+    volumes: ["airports-db-1-data:/var/lib/postgresql/data"]
+
+  airports-db-2:
+    <<: *airports-db
+    volumes: ["airports-db-2-data:/var/lib/postgresql/data"]
+
+  airports-db-3:
+    <<: *airports-db
+    volumes: ["airports-db-3-data:/var/lib/postgresql/data"]
 
 volumes:
   flightops-db-1-data:
   flightops-db-2-data:
   flightops-db-3-data:
+  aircraft-db-1-data:
+  aircraft-db-2-data:
+  aircraft-db-3-data:
+  airports-db-1-data:
+  airports-db-2-data:
+  airports-db-3-data:
