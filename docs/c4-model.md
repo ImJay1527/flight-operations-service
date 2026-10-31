@@ -64,8 +64,7 @@ Sources: `docs/c4/*.mmd` and `docs/diagrams/*.mmd` (Mermaid, kept in git next to
 | Dashboard | HTML + JavaScript in the browser (served by the API) | live view of all instances, refreshed every 2 s |
 
 Clients, the load balancer and the API instances talk HTTPS with TLS 1.3 only. Calls to the other two services
-use the URLs configured for them: HTTPS (TLS 1.3) for Aircraft & Maintenance, plain HTTP for Airports & Routes until
-it serves HTTPS. Users carry a user
+use HTTPS with TLS 1.3 too (the same dev CA), also between their own instances. Users carry a user
 JWT; instances calling each other or the other services carry a short-lived service JWT (role `SERVICE`), and
 `/internal/**` accepts only that.
 

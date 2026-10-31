@@ -99,12 +99,17 @@ x-airports-env: &airports-env
   DB_USER: airports
   DB_PASSWORD: ${DB_PASSWORD:-airports}
   DDL_AUTO: update
+  # their "tls" profile (HTTPS, TLS 1.3 only): the same dev CA as flight ops, so each side trusts the other
+  SSL_KEYSTORE: file:/certs/airports.p12
+  SSL_TRUSTSTORE: file:/certs/truststore.p12
+  SSL_PASSWORD: ${SSL_PASSWORD:-changeit}
 
 x-airports-instance: &airports-instance
   build: ../airports-routes-service
   restart: unless-stopped
+  volumes: ["./certs:/certs:ro"]
   healthcheck:
-    test: ["CMD-SHELL", "curl -fs http://localhost:8082/actuator/health"]
+    test: ["CMD-SHELL", "curl -fsk https://localhost:8082/actuator/health"]
     interval: 10s
     timeout: 3s
     start_period: 60s
@@ -128,7 +133,7 @@ services:
       SSL_KEYSTORE: file:/certs/flightops.p12
       CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083   # all instances, same on each
       AIRCRAFT_SERVICE_URLS: https://aircraft-1:8081,https://aircraft-2:8081,https://aircraft-3:8081
-      AIRPORTS_ROUTES_SERVICE_URLS: http://airports-1:8082,http://airports-2:8082,http://airports-3:8082
+      AIRPORTS_ROUTES_SERVICE_URLS: https://airports-1:8082,https://airports-2:8082,https://airports-3:8082
 
   flightops-2:
     <<: *flightops-instance
@@ -146,7 +151,7 @@ services:
       SSL_KEYSTORE: file:/certs/flightops.p12
       CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083
       AIRCRAFT_SERVICE_URLS: https://aircraft-2:8081,https://aircraft-3:8081,https://aircraft-1:8081
-      AIRPORTS_ROUTES_SERVICE_URLS: http://airports-2:8082,http://airports-3:8082,http://airports-1:8082
+      AIRPORTS_ROUTES_SERVICE_URLS: https://airports-2:8082,https://airports-3:8082,https://airports-1:8082
 
   flightops-3:
     <<: *flightops-instance
@@ -164,7 +169,7 @@ services:
       SSL_KEYSTORE: file:/certs/flightops.p12
       CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083
       AIRCRAFT_SERVICE_URLS: https://aircraft-3:8081,https://aircraft-1:8081,https://aircraft-2:8081
-      AIRPORTS_ROUTES_SERVICE_URLS: http://airports-3:8082,http://airports-1:8082,http://airports-2:8082
+      AIRPORTS_ROUTES_SERVICE_URLS: https://airports-3:8082,https://airports-1:8082,https://airports-2:8082
 
   flightops-lb:
     image: nginx:1.27-alpine
@@ -190,9 +195,8 @@ services:
     ports: ["5435:5432"]
     volumes: ["flightops-db-3-data:/var/lib/postgresql/data"]
 
-  # Aircraft & Maintenance serves HTTPS (its "tls" profile, TLS 1.3 only, certs/aircraft.p12), also between its own
-  # instances. Airports & Routes still serves plain HTTP: when it has a "tls" profile, mount ./certs the same way, set
-  # SSL_KEYSTORE to certs/airports.p12, and switch its URLs above and its PEERS to https://.
+  # Both services serve HTTPS (their "tls" profile, TLS 1.3 only, certs/aircraft.p12 / certs/airports.p12 from the
+  # same dev CA as flight ops), also between their own instances.
   # Each instance gets its instance profile and INSTANCE_NAME (their bootstrap data depends on it) and its own
   # PostgreSQL. Their databases have no host port: only their instance uses them.
 
@@ -253,10 +257,10 @@ services:
     ports: ["8082:8082"]
     environment:
       <<: [*common-env, *airports-env]
-      SPRING_PROFILES_ACTIVE: instance1,postgres
+      SPRING_PROFILES_ACTIVE: instance1,tls,postgres
       INSTANCE_NAME: instance1
       DB_URL: jdbc:postgresql://airports-db-1:5432/airports
-      PEERS: http://airports-2:8082,http://airports-3:8082
+      PEERS: https://airports-2:8082,https://airports-3:8082
 
   airports-2:
     <<: *airports-instance
@@ -265,10 +269,10 @@ services:
     ports: ["8092:8082"]
     environment:
       <<: [*common-env, *airports-env]
-      SPRING_PROFILES_ACTIVE: instance2,postgres
+      SPRING_PROFILES_ACTIVE: instance2,tls,postgres
       INSTANCE_NAME: instance2
       DB_URL: jdbc:postgresql://airports-db-2:5432/airports
-      PEERS: http://airports-1:8082,http://airports-3:8082
+      PEERS: https://airports-1:8082,https://airports-3:8082
 
   airports-3:
     <<: *airports-instance
@@ -277,10 +281,10 @@ services:
     ports: ["8102:8082"]
     environment:
       <<: [*common-env, *airports-env]
-      SPRING_PROFILES_ACTIVE: instance3,postgres
+      SPRING_PROFILES_ACTIVE: instance3,tls,postgres
       INSTANCE_NAME: instance3
       DB_URL: jdbc:postgresql://airports-db-3:5432/airports
-      PEERS: http://airports-1:8082,http://airports-2:8082
+      PEERS: https://airports-1:8082,https://airports-2:8082
 
   airports-db-1:
     <<: *airports-db
