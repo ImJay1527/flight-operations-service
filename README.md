@@ -374,8 +374,9 @@ instance of each other service was running, so their other two instances show `O
   joins or leaves, instances may disagree on an aircraft's owner (an overlap is then reported as above).
 * **Docker Compose / scripts** use a fixed list of instances: adding one needs a configuration change and restarts
   (Kubernetes discovers instances by DNS instead).
-* **Calls to the other services are plain HTTP** until those services serve HTTPS (this service already supports
-  `https://` URLs for them); everything else is TLS 1.3 only.
+* **Calls to Airports & Routes are plain HTTP** until that service serves HTTPS (this service already supports
+  `https://` URLs for it). Aircraft & Maintenance is called over HTTPS (TLS 1.3, its own instances too); everything
+  else is TLS 1.3 only.
 * **Development defaults.** The JWT key, database password and encryption key have defaults in the configuration for
   local runs; a real deployment must override them (Kubernetes takes them from Secrets). Encryption keys can be
   versioned, but re-encrypting old data with a new key is not implemented.
@@ -385,7 +386,8 @@ instance of each other service was running, so their other two instances show `O
 ## TODO
 
 - [x] HTTPS for flight-ops replicas and their outgoing calls
-- [ ] HTTPS on aircraft-maintenance-service and airports-routes-service (their owners), then switch the URLs in docker-compose to `https://`
+- [x] HTTPS on aircraft-maintenance-service (its owner) and its URLs in docker-compose switched to `https://`
+- [ ] HTTPS on airports-routes-service (its owner), then switch its URLs and PEERS in docker-compose to `https://`
 - [x] PostgreSQL container per instance in docker-compose
 - [x] 3 instances per service; Kubernetes with service discovery and auto-scaling (k8s/)
 - [x] Postman collection (postman/)
