@@ -43,6 +43,11 @@ public class FlightQueryService {
     }
 
     @Transactional(readOnly = true)
+    public List<FlightView> localAll() {
+        return repository.findAll().stream().map(FlightView::of).toList();
+    }
+
+    @Transactional(readOnly = true)
     public List<FlightView> localByAircraft(String registration) {
         return repository.findByAircraftRegistration(registration).stream().map(FlightView::of).toList();
     }

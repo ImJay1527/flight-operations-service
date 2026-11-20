@@ -1,5 +1,6 @@
 package pt.isep.sidis.flightops.replication;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -25,6 +26,7 @@ class ReplicaStoreTest {
 
     @Mock ScheduledFlightRepository flights;
     @Mock FlightOpsMetrics metrics;
+    @Mock ApplicationEventPublisher events;
 
     @InjectMocks ReplicaStore store;
 

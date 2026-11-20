@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
+import pt.isep.sidis.flightops.readmodel.ReadModel;
 import pt.isep.sidis.flightops.replication.ReplicationSender;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 import pt.isep.sidis.flightops.resilience.HealthRegistry;
@@ -42,10 +43,11 @@ public class ClusterOverviewController {
     private final ReplicationSender replication;
     private final MeterRegistry registry;
     private final CpuSampler cpu;
+    private final ReadModel readModel;
 
     public ClusterOverviewController(Cluster cluster, PeerClient peers, ScheduledFlightRepository flights,
                                      HealthRegistry healthRegistry, ReplicationSender replication,
-                                     FlightOpsMetrics metrics, CpuSampler cpu) {
+                                     FlightOpsMetrics metrics, CpuSampler cpu, ReadModel readModel) {
         this.cluster = cluster;
         this.peers = peers;
         this.flights = flights;
@@ -53,6 +55,7 @@ public class ClusterOverviewController {
         this.replication = replication;
         this.registry = metrics.registry();
         this.cpu = cpu;
+        this.readModel = readModel;
     }
 
     public record Overview(String answeredBy, Instant generatedAt, List<InstanceStatus> instances) {
@@ -98,7 +101,7 @@ public class ClusterOverviewController {
                 cluster.members().stream().map(Cluster.Member::name).toList(),
                 cluster.replicationFactor(), owner, backup, handOff, aircraft, requestsServed(), cpu.percent(),
                 (runtime.totalMemory() - runtime.freeMemory()) >> 20, runtime.maxMemory() >> 20,
-                healthRegistry.snapshot(), replication.backlog(), cluster.recentChanges());
+                healthRegistry.snapshot(), replication.backlog(), cluster.recentChanges(), readModel.state().snapshot());
     }
 
     /** Client requests answered by this instance: not the dashboard, health checks or monitoring themselves. */

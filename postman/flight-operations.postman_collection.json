@@ -236,7 +236,7 @@
     },
     {
       "name": "01 Local Data Access",
-      "description": "PL3 p.16 test 01: data present on instance 1, asked from instance 1. Expected 200 and NO peer query: the X-Data-Source response header must be \"local\".",
+      "description": "PL3 p.16 test 01: data present on instance 1, asked from instance 1. Expected 200 and NO peer query: the X-Data-Source response header must be \"local\".\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "Create flight on instance 1",
@@ -294,7 +294,7 @@
                   "pm.test(\"answered by instance1 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance1\"));",
                   "pm.environment.set(\"replicas_flight1\", pm.response.headers.get(\"X-Replicas\") || \"\");",
                   "pm.environment.set(\"flight_on_instance1\", pm.response.json().flightNumber);",
-                      "pm.test(\"201 with Location: the new flight's URL\", () => pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/api/scheduled-flights/\" + pm.response.json().flightNumber + \"$\")));"
+                  "pm.test(\"201 with Location: the new flight's URL\", () => pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/api/scheduled-flights/\" + pm.response.json().flightNumber + \"$\")));"
                 ]
               }
             }
@@ -333,11 +333,23 @@
             }
           ]
         }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// CQRS: read from the write side (as in Assignment 1) - this folder tests forwarding, not the read model",
+              "pm.request.headers.upsert({ key: 'X-Read-Side', value: 'write-side' });"
+            ]
+          }
+        }
       ]
     },
     {
       "name": "02 Successful Forwarding",
-      "description": "PL3 p.16 test 02: data created on instance 2, then requested from instance 1. Expected 200 with the data. With replication every flight is also kept on a second instance (the booking's X-Replicas header): with 2 instances that is the other one, so instance 1 answers from its own copy (X-Data-Source \"local\"). Without a copy (REPLICATION_FACTOR=1, or 3 instances - folder 07) the read is forwarded: X-Data-Source \"peer:<URL>\". Both instances' logs show the request id \"postman-forwarding-1\".",
+      "description": "PL3 p.16 test 02: data created on instance 2, then requested from instance 1. Expected 200 with the data. With replication every flight is also kept on a second instance (the booking's X-Replicas header): with 2 instances that is the other one, so instance 1 answers from its own copy (X-Data-Source \"local\"). Without a copy (REPLICATION_FACTOR=1, or 3 instances - folder 07) the read is forwarded: X-Data-Source \"peer:<URL>\". Both instances' logs show the request id \"postman-forwarding-1\".\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "Create flight on instance 2 only",
@@ -614,6 +626,18 @@
               }
             }
           ]
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// CQRS: read from the write side (as in Assignment 1) - this folder tests forwarding, not the read model",
+              "pm.request.headers.upsert({ key: 'X-Read-Side', value: 'write-side' });"
+            ]
+          }
         }
       ]
     },
@@ -1351,10 +1375,15 @@
                   "  pm.test.skip(\"SKIPPED forwarded-lookup checks: instance 1 keeps a copy of every flight (2 instances, 2 copies), so no read is forwarded - run with 3 instances or REPLICATION_FACTOR=1\", () => {});",
                   "} else {",
                   "  pm.test(\"forwarded lookups counted\", () => pm.expect(m.lookupResponseTimes.forwarded.count).to.be.above(0));",
-                  "  pm.test(\"forwarded lookups are slower than local ones (median, network hop)\", () =>",
-                  "    pm.expect(m.lookupResponseTimes.forwarded.medianMs).to.be.above(m.lookupResponseTimes.local.medianMs));",
                   "  pm.test(\"forwarding success rate reported\", () => pm.expect(m.forwarding.successRatePercent).to.be.a(\"number\"));",
                   "}",
+                  "// CQRS: most lookups are answered by the read model (X-Read-Side: read-model) when the instance has a read database",
+                  "if (m.lookupResponseTimes.readModel.count > 0 || pm.environment.get(\"cqrsOn\") === true) {",
+                  "  pm.test(\"read-model lookups counted (CQRS query side)\", () => pm.expect(m.lookupResponseTimes.readModel.count).to.be.above(0));",
+                  "}",
+                  "// times right after startup are dominated by cold connections and a handful of samples: shown, not compared",
+                  "const t = m.lookupResponseTimes;",
+                  "console.log(\"lookup medians (ms): read model \" + t.readModel.medianMs + \", local \" + t.local.medianMs + \", forwarded \" + t.forwarded.medianMs);",
                   "const known = name => [pm.environment.get(name), \"https://flightops-\" + name.slice(-1) + \":8083\", \"http://flightops-\" + name.slice(-1) + \":8083\"];   // environment URL, or the Docker Compose name",
                   "pm.test(\"peer instance 2: healthy, calls and failure rate reported\", () => {",
                   "  const peer = m.remoteInstances.find(r => known(\"instance2\").includes(r.url));",
@@ -1411,7 +1440,7 @@
     },
     {
       "name": "07 Three instances",
-      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh --stub starts 3; -n 2 starts only 2); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy. With 3 instances and 2 copies, each flight is on 2 of them: the instance without a copy forwards the read to one that has it.",
+      "description": "PL3 p.27 \"Test with 3+ instances\". Only runs when instance 3 is up (./scripts/run-local.sh --stub starts 3; -n 2 starts only 2); otherwise its requests are skipped (not sent). Data created on instance 3 must be reachable from instances 1 and 2, and every instance must see its 2 peers as healthy. With 3 instances and 2 copies, each flight is on 2 of them: the instance without a copy forwards the read to one that has it.\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "Create flight on instance 3",
@@ -1686,6 +1715,8 @@
           "script": {
             "type": "text/javascript",
             "exec": [
+              "// CQRS: read from the write side (as in Assignment 1) - this folder tests forwarding, not the read model",
+              "pm.request.headers.upsert({ key: 'X-Read-Side', value: 'write-side' });",
               "// Only 2 instances running? Then don't send this folder's requests at all (they would fail with",
               "// 'could not be sent'): skip the request; its tests report 'SKIPPED: instance 3 is not running'.",
               "const url = pm.environment.get('instance3');",
@@ -1838,7 +1869,7 @@
     },
     {
       "name": "09 Sharding by aircraft",
-      "description": "P1 p.15 data-based sharding: every aircraft has an owner instance (rendezvous hashing over the instance names) that takes all of its bookings; the next instance in the ranking keeps a copy (replication). A booking sent to another instance is forwarded to the owner (X-Stored-On), and the owner's per-aircraft lock prevents double-booking even when the requests arrive at different instances.",
+      "description": "P1 p.15 data-based sharding: every aircraft has an owner instance (rendezvous hashing over the instance names) that takes all of its bookings; the next instance in the ranking keeps a copy (replication). A booking sent to another instance is forwarded to the owner (X-Stored-On), and the owner's per-aircraft lock prevents double-booking even when the requests arrive at different instances.\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "Who owns CS-TPC?",
@@ -2022,6 +2053,18 @@
               }
             }
           ]
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// CQRS: read from the write side (as in Assignment 1) - this folder tests forwarding, not the read model",
+              "pm.request.headers.upsert({ key: 'X-Read-Side', value: 'write-side' });"
+            ]
+          }
         }
       ]
     },
@@ -2369,7 +2412,7 @@
     },
     {
       "name": "11 Whole system - failures (scripts/test-failures.sh)",
-      "description": "Week 5 p.14 \"simulate instance failure (stop container, verify 404)\", Week 4 p.11 \"stop one instance mid-test\", PL3 p.14/p.16, P1 p.10 \"redundancy-based fault tolerance\" - on the whole system (`docker compose up`), where Postman can't stop an instance by itself.\n\nRun `./scripts/test-failures.sh`: it runs 11a, stops flightops-2 and runs 11b, stops CS-TPC's backup and runs 11c, starts both and runs 11d, stops aircraft-1 and airports-1 and runs 11e, then starts everything again. Each phase only runs when the script sets `failurePhase`; in a normal run of the collection the whole folder is skipped.\n\nBy hand (e.g. in the Postman app during a demo): run 00 Setup with everything up, set the environment variable `failurePhase` to `a`, run 11a; `docker compose stop flightops-2`, set it to `b`, run 11b; and so on (00 Setup only once: it logs in on instance 2, which is down in 11b-11c).",
+      "description": "Week 5 p.14 \"simulate instance failure (stop container, verify 404)\", Week 4 p.11 \"stop one instance mid-test\", PL3 p.14/p.16, P1 p.10 \"redundancy-based fault tolerance\" - on the whole system (`docker compose up`), where Postman can't stop an instance by itself.\n\nRun `./scripts/test-failures.sh`: it runs 11a, stops flightops-2 and runs 11b, stops CS-TPC's backup and runs 11c, starts both and runs 11d, stops aircraft-1 and airports-1 and runs 11e, then starts everything again. Each phase only runs when the script sets `failurePhase`; in a normal run of the collection the whole folder is skipped.\n\nBy hand (e.g. in the Postman app during a demo): run 00 Setup with everything up, set the environment variable `failurePhase` to `a`, run 11a; `docker compose stop flightops-2`, set it to `b`, run 11b; and so on (00 Setup only once: it logs in on instance 2, which is down in 11b-11c).\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "11a Before - everything up",
@@ -3545,11 +3588,394 @@
             }
           ]
         }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// CQRS: read from the write side (as in Assignment 1) - this folder tests forwarding, not the read model",
+              "pm.request.headers.upsert({ key: 'X-Read-Side', value: 'write-side' });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 CQRS - commands and queries",
+      "description": "Assignment 2, CQRS. Commands (POST, PATCH) go to the write side: the PostgreSQL database of the instances that hold the aircraft (sharding + 2 copies). Queries (GET) are answered from the read model: each instance's own MongoDB, which holds EVERY flight of the cluster and the reports already computed, updated by the write side's events (eventual consistency). Response headers show it: X-Read-Side (read-model / write-side), X-Read-Model (READY, STALE: reason, ...), X-Read-Model-Updated (last change applied). Sending X-Read-Side: write-side asks for a read from the write side instead (every change already made). Skipped without a read database (run-local.sh --h2).",
+      "item": [
+        {
+          "name": "Instance 1's read model is READY",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const rm = pm.response.json().readModel;",
+                  "pm.environment.set(\"cqrsOn\", !!rm && rm.state !== \"DISABLED\");",
+                  "if (!rm || rm.state === \"DISABLED\") {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  pm.test(\"read model READY\", () => pm.expect(rm.state).to.eql(\"READY\"));",
+                  "  pm.test(\"it has been synced with the write side\", () => pm.expect(rm.lastSync).to.be.a(\"string\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book a flight via instance 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPB\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set('departure', fmt(dep));",
+                  "pm.variables.set('arrival', fmt(new Date(dep.getTime() + 45 * 60000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.environment.set(\"cqrs_flight\", pm.response.json().flightNumber);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query: read it back at once on instance 1 (read your own write)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/{{cqrs_flight}}",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{cqrs_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"cqrsOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Read-Side: read-model (the query never touched the write database)\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"X-Data-Source: read-model\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"X-Read-Model: READY\", () => pm.expect(pm.response.headers.get(\"X-Read-Model\")).to.eql(\"READY\"));",
+                  "  pm.test(\"X-Read-Model-Updated: when the last change was applied\", () => pm.expect(pm.response.headers.get(\"X-Read-Model-Updated\")).to.be.a(\"string\"));",
+                  "  pm.test(\"same flight, SCHEDULED\", () => { pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"cqrs_flight\")); pm.expect(pm.response.json().status).to.eql(\"SCHEDULED\"); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The same query from the write side (X-Read-Side: write-side)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Read-Side",
+                "value": "write-side"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/{{cqrs_flight}}",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{cqrs_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"X-Read-Side: write-side\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"write-side\"));",
+                  "pm.test(\"X-Data-Source: local or peer:... (as in Assignment 1)\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.match(/^(local|peer:)/));",
+                  "pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"cqrs_flight\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eventual consistency: instance 2's read model gets it too",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/aircraft/CS-TPB",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "aircraft",
+                "CS-TPB"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.variables.get(\"cqrsTries\") || 0) > 0) { setTimeout(() => {}, 2000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"cqrsOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  const tries = Number(pm.variables.get(\"cqrsTries\") || 0);",
+                  "  const list = (j => j._embedded ? Object.values(j._embedded)[0] : [])(pm.response.json()).map(f => f.flightNumber);",
+                  "  const found = list.includes(pm.environment.get(\"cqrs_flight\"));",
+                  "  if (!found && tries < 20) {",
+                  "    pm.variables.set(\"cqrsTries\", tries + 1);",
+                  "    pm.execution.setNextRequest(pm.info.requestName);   // not there yet: ask again in 2 s",
+                  "  } else {",
+                  "    pm.variables.set(\"cqrsTries\", 0);",
+                  "    pm.test(\"the flight is in instance 2 read model (after \" + (tries * 2) + \" s of waiting)\", () => pm.expect(found).to.eql(true));",
+                  "    pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: cancel it via instance 2",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/{{cqrs_flight}}/cancel",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{cqrs_flight}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"CANCELED\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query: instance 2 reads the cancellation back at once",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/{{cqrs_flight}}",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{cqrs_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"cqrsOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"CANCELED\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELED\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query: utilization report, already computed in the read model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/aircraft-utilization",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "aircraft-utilization"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"cqrsOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"one entry per aircraft\", () => pm.expect(pm.response.json()._embedded.utilizations.length).to.be.above(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query: departures board of Porto, from the read model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/departures/OPO?hours=87600",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "departures",
+                "OPO"
+              ],
+              "query": [
+                {
+                  "key": "hours",
+                  "value": "87600"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"cqrsOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"by departure time\", () => { const t = pm.response.json().map(f => f.scheduledDeparture); pm.expect(t).to.eql([...t].sort()); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
       ]
     },
     {
       "name": "03 Resilience - instance 2 is stopped and restarted",
-      "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication: each of its flights has a copy on instance 1 or 3). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and the outbox of the instance that took that booking is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2.\n\nOnly in stub mode: it stops instance 2 through `POST /actuator/shutdown`, which the normal (whole-system) configuration does not expose.",
+      "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication: each of its flights has a copy on instance 1 or 3). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and the outbox of the instance that took that booking is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2.\n\nOnly in stub mode: it stops instance 2 through `POST /actuator/shutdown`, which the normal (whole-system) configuration does not expose.\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "Stop instance 2 (POST /actuator/shutdown)",
@@ -4047,6 +4473,8 @@
           "script": {
             "type": "text/javascript",
             "exec": [
+              "// CQRS: read from the write side (as in Assignment 1) - this folder tests forwarding, not the read model",
+              "pm.request.headers.upsert({ key: 'X-Read-Side', value: 'write-side' });",
               "if (pm.environment.get(\"wholeSystem\") === true) { pm.execution.skipRequest(); }",
               "// Is instance 2 running? Asked to instance 1, which calls it (GET /api/cluster/overview -> reachable): Postman",
               "// itself never calls a stopped instance, so no request shows up as failed while instance 2 is down.",

@@ -26,7 +26,7 @@ class ConcurrentBookingTest {
     private static final int ROUNDS = 20;
 
     @Autowired
-    ScheduledFlightService service;
+    FlightCommandService service;
 
     @Test
     void simultaneousOverlappingBookingsForOneAircraftOnlyOneSucceeds() throws Exception {
@@ -44,7 +44,7 @@ class ConcurrentBookingTest {
                     attempts.add(pool.submit(() -> {
                         start.await();
                         try {
-                            service.scheduleFlight("route-opo-lis", "CS-TPA", departure, arrival);
+                            service.handle(new ScheduleFlightCommand("route-opo-lis", "CS-TPA", departure, arrival));
                             return true;
                         } catch (IllegalStateException alreadyScheduled) {
                             return false;

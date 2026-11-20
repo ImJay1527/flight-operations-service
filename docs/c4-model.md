@@ -59,7 +59,8 @@ Sources: `docs/c4/*.mmd` and `docs/diagrams/*.mmd` (Mermaid, kept in git next to
 | Container | Technology | Responsibility |
 |---|---|---|
 | Flight Operations API | Java 21, Spring Boot | REST API. **3 instances** (Kubernetes: 3 to 5, auto-scaled). Flights are sharded by aircraft and each is kept on 2 instances (owner + backup); an instance asks the others for what it doesn't hold |
-| Flight database | PostgreSQL 16 | **one per instance**: that instance's flights, the replication outbox, the users. Route, aircraft and airports of each flight are encrypted (AES-256) |
+| Flight database (write side) | PostgreSQL 16 | **one per instance**: that instance's flights, the replication outbox, the users. Route, aircraft and airports of each flight are encrypted (AES-256). Changed by commands only |
+| Read database (CQRS read model) | MongoDB 7 | **one per instance**: every flight of the cluster and the reports already computed (`flights`, `aircraft_stats`, `route_stats`), the same fields encrypted. Answers the queries; updated after every change and rebuilt from the write side ([CQRS](architecture.md#cqrs-assignment-2)) |
 | Load balancer | nginx (Docker Compose) or a Kubernetes Service | one address for the clients; requests go to healthy instances only |
 | Dashboard | HTML + JavaScript in the browser (served by the API) | live view of all instances, refreshed every 2 s |
 
@@ -155,17 +156,19 @@ other. Every package may use `common`.
 | Group | Package | Classes | Purpose | Imports (besides `common`) |
 |---|---|---|---|---|
 | Entry points | `api` | 6 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
-| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `peers`, `replication`, `repositories`, `resilience` |
+| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
 | Entry points | `security` | 5 | sign-in, users | - |
 | Entry points | `bootstrap` | 1 | sample data | `cluster`, `domain`, `repositories`, `security` |
-| Application | `services` | 10 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `peers`, `replication`, `repositories`, `resilience` |
-| Distribution | `replication` | 4 | outbox, copies, catch-up | `api.dto`, `cluster`, `domain`, `peers`, `repositories`, `resilience` |
+| Application | `services` | 13 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Read side (CQRS) | `readmodel` | 13 | CQRS read side: read database (MongoDB), projections, sync | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
+| Distribution | `replication` | 4 | outbox, copies, catch-up | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
 | Distribution | `peers` | 3 | calls to the other instances | `api.dto`, `cluster`, `resilience` |
 | Distribution | `cluster` | 2 | instances, owner of each aircraft | - |
 | Integration | `clients` | 8 | calls to the other services | `resilience` |
 | Integration | `stub` | 2 | built-in data (test mode) | `clients` |
 | Integration | `resilience` | 5 | retry, circuit breaker, health | - |
 | Data | `repositories` | 3 | Spring Data JPA | `domain` |
+| Data | `events` | 1 | domain events (write side -> read side) | `api.dto` |
 | Data | `api.dto` | 8 | request / response objects | `domain` |
 | Data | `domain` | 4 | entities | - |
 | Shared | `common` | 14 | crypto, exceptions, HTTP client, JWT, metrics, tracing | - |
@@ -204,13 +207,14 @@ No package cycles: no two packages import each other.
 
 ![Deployment - Kubernetes](c4/5-deployment-kubernetes.png)
 
-Each instance is a pod of a StatefulSet: a stable name (rendezvous hashing needs it), the API and its own PostgreSQL
-side by side, its own disk. The headless Service gives every pod a DNS name, which is how the instances find each
+Each instance is a pod of a StatefulSet: a stable name (rendezvous hashing needs it), the API with its own PostgreSQL
+(write side) and MongoDB (read side) next to it, and their own disks. The headless Service gives every pod a DNS name, which is how the instances find each
 other. Details and test results: [architecture.md – Kubernetes and auto-scaling](architecture.md#kubernetes-and-auto-scaling).
 
 ### Docker Compose (`docker-compose.yml`)
 
 ![Deployment - Docker Compose](diagrams/1-system-overview.png)
 
-Three API containers, each with its own PostgreSQL container and named volume, behind nginx on
+Three API containers, each with its own PostgreSQL container (write side) and MongoDB container (read side) and
+their named volumes, behind nginx on
 https://localhost:8443; the instances know each other from a fixed list (`CLUSTER`).

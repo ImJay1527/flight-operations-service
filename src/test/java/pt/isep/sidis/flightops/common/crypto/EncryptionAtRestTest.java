@@ -7,7 +7,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
-import pt.isep.sidis.flightops.services.ScheduledFlightService;
+import pt.isep.sidis.flightops.services.FlightCommandService;
+import pt.isep.sidis.flightops.services.ScheduleFlightCommand;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -19,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("stub")
 class EncryptionAtRestTest {
 
-    @Autowired ScheduledFlightService service;
+    @Autowired FlightCommandService service;
     @Autowired ScheduledFlightRepository repository;
     @Autowired JdbcTemplate jdbc;
     @Autowired EncryptionMigration migration;
@@ -27,7 +28,7 @@ class EncryptionAtRestTest {
     @Test
     void routeAssignmentIsEncryptedInTheDatabase() {
         LocalDateTime departure = LocalDateTime.now().plusDays(2500).withNano(0);
-        FlightView flight = service.scheduleFlight("route-opo-lis", "CS-TPC", departure, departure.plusMinutes(45)).flight();
+        FlightView flight = service.handle(new ScheduleFlightCommand("route-opo-lis", "CS-TPC", departure, departure.plusMinutes(45))).flight();
 
         Map<String, Object> row = jdbc.queryForMap(
                 "SELECT route_id, aircraft_registration, aircraft_model, origin_iata, destination_iata, status " +

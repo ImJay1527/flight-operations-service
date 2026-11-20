@@ -5,15 +5,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import pt.isep.sidis.flightops.api.dto.FlightView;
-import pt.isep.sidis.flightops.clients.AircraftDirectory;
-import pt.isep.sidis.flightops.clients.RouteDirectory;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
+import pt.isep.sidis.flightops.events.FlightChanged;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
 import pt.isep.sidis.flightops.resilience.CircuitOpenException;
@@ -34,16 +34,15 @@ import static org.mockito.Mockito.*;
  * last resort. And cancelling across instances.
  */
 @ExtendWith(MockitoExtension.class)
-class ScheduledFlightServiceTest {
+class FlightCommandServiceTest {
 
-    @Mock AircraftDirectory aircraftClient;
-    @Mock RouteDirectory airportsRoutesClient;
     @Mock FlightQueryService flightQueryService;
     @Mock PeerClient peers;
     @Mock LocalBookingService localBookings;
     @Mock Cluster cluster;
+    @Mock ApplicationEventPublisher events;
 
-    @InjectMocks ScheduledFlightService service;
+    @InjectMocks FlightCommandService service;
 
     private final LocalDateTime dep = LocalDateTime.now().plusDays(3);
     private final LocalDateTime arr = dep.plusMinutes(45);
@@ -58,13 +57,13 @@ class ScheduledFlightServiceTest {
     }
 
     private Booking book() {
-        return service.scheduleFlight("route-opo-lis", "CS-TPC", dep, arr);
+        return service.handle(new ScheduleFlightCommand("route-opo-lis", "CS-TPC", dep, arr));
     }
 
     @Test
     void aircraftOwnedHereIsBookedHere() {
         heldBy("instance1", "instance2");
-        when(localBookings.book("route-opo-lis", "CS-TPC", dep, arr)).thenReturn(booked);
+        when(localBookings.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPC", dep, arr))).thenReturn(booked);
 
         Booking booking = book();
 
@@ -83,6 +82,8 @@ class ScheduledFlightServiceTest {
         assertThat(booking.storedOn()).isEqualTo("instance2");
         assertThat(booking.flight()).isEqualTo(booked);
         verifyNoInteractions(localBookings);
+        // the peer made the change: this instance's read model learns it now (read your own writes)
+        verify(events).publishEvent(new FlightChanged(booked));
     }
 
     @Test
@@ -104,7 +105,7 @@ class ScheduledFlightServiceTest {
         heldBy("instance2", "instance1");
         when(peers.postTo(any(), any(), any(), any()))
                 .thenThrow(new ResourceAccessException("I/O error", new ConnectException("Connection refused")));
-        when(localBookings.book("route-opo-lis", "CS-TPC", dep, arr)).thenReturn(booked);
+        when(localBookings.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPC", dep, arr))).thenReturn(booked);
 
         assertThat(book().storedOn()).isEqualTo("instance1");
     }
@@ -124,7 +125,7 @@ class ScheduledFlightServiceTest {
     void noHolderReachableMeansBookingHere() {
         heldBy("instance2", "instance3");
         when(peers.postTo(any(), any(), any(), any())).thenThrow(new CircuitOpenException("down"));
-        when(localBookings.book("route-opo-lis", "CS-TPC", dep, arr)).thenReturn(booked);
+        when(localBookings.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPC", dep, arr))).thenReturn(booked);
 
         Booking booking = book();
 
@@ -153,7 +154,7 @@ class ScheduledFlightServiceTest {
         when(peers.patchOne(anyString(), eq(FlightView.class), eq("F-9")))
                 .thenReturn(new PeerResult<>(List.of(cancelled), 0));
 
-        assertThat(service.cancelFlight("F-9").status()).isEqualTo("CANCELED");
+        assertThat(service.handle(new CancelFlightCommand("F-9")).status()).isEqualTo("CANCELED");
     }
 
     @Test
@@ -162,7 +163,7 @@ class ScheduledFlightServiceTest {
                 277.0, 3.8, dep, arr, "CANCELED", 2);
         when(localBookings.cancel("F-1")).thenReturn(cancelled);
 
-        assertThat(service.cancelFlight("F-1").status()).isEqualTo("CANCELED");
+        assertThat(service.handle(new CancelFlightCommand("F-1")).status()).isEqualTo("CANCELED");
         verifyNoInteractions(peers);
     }
 
@@ -170,7 +171,7 @@ class ScheduledFlightServiceTest {
     void cancelUnknownFlightIs404WhenAllPeersAnswered() {
         when(peers.patchOne(anyString(), eq(FlightView.class), eq("nope"))).thenReturn(new PeerResult<>(List.of(), 0));
 
-        assertThatThrownBy(() -> service.cancelFlight("nope")).isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> service.handle(new CancelFlightCommand("nope"))).isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
@@ -178,7 +179,7 @@ class ScheduledFlightServiceTest {
         when(cluster.replicationFactor()).thenReturn(2);
         when(peers.patchOne(anyString(), eq(FlightView.class), eq("nope"))).thenReturn(new PeerResult<>(List.of(), 1));
 
-        assertThatThrownBy(() -> service.cancelFlight("nope")).isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> service.handle(new CancelFlightCommand("nope"))).isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
@@ -186,7 +187,7 @@ class ScheduledFlightServiceTest {
         when(cluster.replicationFactor()).thenReturn(2);
         when(peers.patchOne(anyString(), eq(FlightView.class), eq("nope"))).thenReturn(new PeerResult<>(List.of(), 2));
 
-        assertThatThrownBy(() -> service.cancelFlight("nope"))
+        assertThatThrownBy(() -> service.handle(new CancelFlightCommand("nope")))
                 .isInstanceOf(ServiceUnavailableException.class)
                 .hasMessageContaining("2 instance(s) could not be reached");
     }

@@ -17,7 +17,10 @@ import pt.isep.sidis.flightops.api.dto.ScheduledFlightResponseDTO;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.services.Booking;
 import pt.isep.sidis.flightops.services.FlightLookup;
-import pt.isep.sidis.flightops.services.ScheduledFlightService;
+import pt.isep.sidis.flightops.services.CancelFlightCommand;
+import pt.isep.sidis.flightops.services.FlightCommandService;
+import pt.isep.sidis.flightops.services.FlightQueries;
+import pt.isep.sidis.flightops.services.ScheduleFlightCommand;
 
 import java.util.List;
 
@@ -30,7 +33,9 @@ import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 @Tag(name = "Scheduled Flights", description = "Endpoints para agendamento de voos e gestão da frota nas rotas (WP#3B)")
 public class ScheduledFlightController {
 
-    private final ScheduledFlightService scheduledFlightService;
+    // CQRS: changes go to the command side, reads to the query side
+    private final FlightCommandService commands;
+    private final FlightQueries queries;
     private final ScheduledFlightModelAssembler assembler;
 
     @Operation(summary = "US212: Assign an aircraft to a route for a specific date and time",
@@ -49,12 +54,11 @@ public class ScheduledFlightController {
     public ResponseEntity<ScheduledFlightResponseDTO> scheduleFlight(
             @Valid @RequestBody CreateScheduledFlightDTO dto) {
 
-        Booking booking = scheduledFlightService.scheduleFlight(
+        Booking booking = commands.handle(new ScheduleFlightCommand(
                 dto.getRouteId(),
                 dto.getAircraftRegistration(),
                 dto.getDepartureTime(),
-                dto.getArrivalTime()
-        );
+                dto.getArrivalTime()));
 
         // X-Stored-On: the instance that made the booking (the aircraft's owner, or its backup while the owner is down)
         // X-Replicas: every instance that keeps a copy of the flight
@@ -80,7 +84,7 @@ public class ScheduledFlightController {
     public ResponseEntity<CollectionModel<ScheduledFlightResponseDTO>> getFlightsByAircraft(
             @PathVariable String registration) {
 
-        List<FlightView> flights = scheduledFlightService.getScheduledFlightsByAircraft(registration);
+        List<FlightView> flights = queries.flightsOfAircraft(registration);
 
         CollectionModel<ScheduledFlightResponseDTO> collectionModel = assembler.toCollectionModel(flights);
         collectionModel.add(linkTo(methodOn(ScheduledFlightController.class)
@@ -103,8 +107,8 @@ public class ScheduledFlightController {
     public ResponseEntity<ScheduledFlightResponseDTO> getFlightById(
             @PathVariable String flightNumber) {
 
-        FlightLookup lookup = scheduledFlightService.getFlightById(flightNumber);
-        // X-Data-Source: "local" or "peer:<url>" - shows whether the request was forwarded
+        FlightLookup lookup = queries.flight(flightNumber);
+        // X-Data-Source: "read-model" (CQRS query side), or on the fallback path "local" / "peer:<url>"
         return ResponseEntity.ok()
                 .header("X-Data-Source", lookup.source())
                 .body(assembler.toModel(lookup.flight()));
@@ -124,7 +128,7 @@ public class ScheduledFlightController {
     @PatchMapping("/{flightNumber}/cancel")
     public ResponseEntity<ScheduledFlightResponseDTO> cancelFlight(@PathVariable String flightNumber) {
         
-        FlightView canceledFlight = scheduledFlightService.cancelFlight(flightNumber);
+        FlightView canceledFlight = commands.handle(new CancelFlightCommand(flightNumber));
         
         return ResponseEntity.ok(assembler.toModel(canceledFlight));
     }
@@ -144,7 +148,7 @@ public class ScheduledFlightController {
             @PathVariable String iata,
             @RequestParam(defaultValue = "24") int hours) {
 
-        List<FlightView> upcomingFlights = scheduledFlightService.getUpcomingDepartures(iata, hours);
+        List<FlightView> upcomingFlights = queries.departures(iata, hours);
 
         List<DeparturesBoardResponseDTO> board = upcomingFlights.stream()
                 .map(f -> new DeparturesBoardResponseDTO(

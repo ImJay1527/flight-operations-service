@@ -10,6 +10,7 @@ import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.services.FlightQueryService;
 import pt.isep.sidis.flightops.services.InternalBookingRequest;
 import pt.isep.sidis.flightops.services.LocalBookingService;
+import pt.isep.sidis.flightops.services.ScheduleFlightCommand;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,8 +32,8 @@ public class InternalFlightController {
             + "because this instance holds the aircraft). Never forwarded again.")
     @PostMapping
     public ResponseEntity<FlightView> book(@RequestBody InternalBookingRequest request) {
-        FlightView flight = localBookings.book(request.routeId(), request.aircraftRegistration(),
-                request.departureTime(), request.arrivalTime());
+        FlightView flight = localBookings.book(new ScheduleFlightCommand(request.routeId(),
+                request.aircraftRegistration(), request.departureTime(), request.arrivalTime()));
         return ResponseEntity.status(HttpStatus.CREATED).body(flight);
     }
 
@@ -53,6 +54,12 @@ public class InternalFlightController {
     @GetMapping("/active")
     public List<FlightView> active(@RequestParam(required = false) String aircraft) {
         return flightQueryService.localActive(aircraft);
+    }
+
+    @Operation(summary = "Every local flight, cancelled ones too (the peers' read models are built from these)")
+    @GetMapping("/all")
+    public List<FlightView> all() {
+        return flightQueryService.localAll();
     }
 
     @Operation(summary = "Local upcoming departures from an airport")

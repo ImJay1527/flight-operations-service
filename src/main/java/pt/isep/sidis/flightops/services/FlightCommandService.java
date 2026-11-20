@@ -4,16 +4,16 @@ import lombok.RequiredArgsConstructor;
 import org.apache.hc.client5.http.ConnectTimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import pt.isep.sidis.flightops.api.dto.FlightView;
-import pt.isep.sidis.flightops.clients.AircraftDirectory;
-import pt.isep.sidis.flightops.clients.RouteDirectory;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
 import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
+import pt.isep.sidis.flightops.events.FlightChanged;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
 import pt.isep.sidis.flightops.resilience.CircuitOpenException;
@@ -21,27 +21,30 @@ import pt.isep.sidis.flightops.resilience.CircuitOpenException;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.UnknownHostException;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Bookings are sharded by aircraft (P1 p.15) and replicated: the aircraft's flights are kept on the instances
+ * The write side of CQRS: handles the commands. Reads are not here: they are answered by {@link FlightQueries}.
+ *
+ * <p>Bookings are sharded by aircraft (P1 p.15) and replicated: the aircraft's flights are kept on the instances
  * {@link Cluster#replicasOf} returns. A booking is made on the first of them that can be reached - the owner, or
  * its backup while the owner is down - so that instance's per-aircraft lock prevents double-booking across
  * instances too. That instance then copies the flight to the others.
+ *
+ * <p>Every change ends with a {@link FlightChanged} event, which updates this instance's read model. A change made
+ * by a peer comes back as its answer, and is published here too, so this instance reads it back at once.
  */
 @Service
 @RequiredArgsConstructor
-public class ScheduledFlightService {
+public class FlightCommandService {
 
-    private static final Logger log = LoggerFactory.getLogger(ScheduledFlightService.class);
+    private static final Logger log = LoggerFactory.getLogger(FlightCommandService.class);
 
-    private final AircraftDirectory aircraftClient;
-    private final RouteDirectory airportsRoutesClient;
     private final FlightQueryService flightQueryService;
     private final PeerClient peers;
     private final LocalBookingService localBookings;
     private final Cluster cluster;
+    private final ApplicationEventPublisher events;
 
     /**
      * Tries the aircraft's instances in order. One that certainly did not get the request (connection refused,
@@ -49,18 +52,18 @@ public class ScheduledFlightService {
      * rather than risking a second booking. If none can be reached, the booking is made here - availability first
      * (AP) - and copied to them when they are back.
      */
-    public Booking scheduleFlight(String routeId, String aircraftRegistration,
-                                  LocalDateTime departureTime, LocalDateTime arrivalTime) {
+    public Booking handle(ScheduleFlightCommand command) {
+        String aircraftRegistration = command.aircraftRegistration();
         List<String> replicas = cluster.replicasOf(aircraftRegistration);
         for (String instance : replicas) {
             if (instance.equals(cluster.self())) {
-                return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime),
-                        instance, replicas);
+                return new Booking(localBookings.book(command), instance, replicas);
             }
             try {
-                FlightView flight = peers.postTo(instance, "/internal/flights",
-                        new InternalBookingRequest(routeId, aircraftRegistration, departureTime, arrivalTime), FlightView.class);
-                return new Booking(flight, instance, replicas);
+                FlightView flight = peers.postTo(instance, "/internal/flights", new InternalBookingRequest(
+                        command.routeId(), aircraftRegistration, command.departureTime(), command.arrivalTime()),
+                        FlightView.class);
+                return new Booking(changedElsewhere(flight), instance, replicas);
             } catch (HttpClientErrorException refused) {
                 throw ownersAnswer(refused);
             } catch (HttpServerErrorException failed) {
@@ -77,8 +80,7 @@ public class ScheduledFlightService {
         }
         log.warn("No instance holding aircraft {} reachable ({}): booking it here (overlap check best effort)",
                 aircraftRegistration, replicas);
-        return new Booking(localBookings.book(routeId, aircraftRegistration, departureTime, arrivalTime),
-                cluster.self(), replicas);
+        return new Booking(localBookings.book(command), cluster.self(), replicas);
     }
 
     /** The owner's 4xx as the same error here, so the client gets the owner's status and message. */
@@ -113,27 +115,19 @@ public class ScheduledFlightService {
         return false;
     }
 
-    public List<FlightView> getScheduledFlightsByAircraft(String aircraftRegistration) {
-        aircraftClient.getAircraft(aircraftRegistration); // 404 if the aircraft does not exist
-        return flightQueryService.findByAircraft(aircraftRegistration);
-    }
-
-    public FlightLookup getFlightById(String flightNumber) {
-        return flightQueryService.findById(flightNumber);
-    }
-
     /**
      * Cancels the flight: here if this instance has a copy, otherwise on a peer that has one. A left-over copy of an
      * aircraft this instance no longer holds is cancelled on the aircraft's holders instead; only if none of them can
      * be reached is it cancelled here (the outbox then sends the change to them).
      */
-    public FlightView cancelFlight(String flightNumber) {
+    public FlightView handle(CancelFlightCommand command) {
+        String flightNumber = command.flightNumber();
         FlightView copy = flightQueryService.localById(flightNumber);
         if (copy != null && flightQueryService.isLeftover(copy)) {
             PeerResult<FlightView> onHolders = peers.patchOneOn(cluster.replicasOf(copy.aircraftRegistration()),
                     "/internal/flights/{n}/cancel", FlightView.class, flightNumber);
             if (!onHolders.items().isEmpty()) {
-                return onHolders.items().get(0);
+                return changedElsewhere(onHolders.items().get(0));
             }
         }
         FlightView local = localBookings.cancel(flightNumber);
@@ -142,7 +136,7 @@ public class ScheduledFlightService {
         }
         PeerResult<FlightView> remote = peers.patchOne("/internal/flights/{n}/cancel", FlightView.class, flightNumber);
         if (!remote.items().isEmpty()) {
-            return remote.items().get(0);
+            return changedElsewhere(remote.items().get(0));
         }
         if (remote.mayHideIt(cluster.replicationFactor())) {
             throw new ServiceUnavailableException(remote.unavailableMessage("scheduled flight " + flightNumber));
@@ -150,12 +144,9 @@ public class ScheduledFlightService {
         throw new ResourceNotFoundException("Scheduled flight not found with number: " + flightNumber);
     }
 
-    public List<FlightView> getUpcomingDepartures(String originIata, int hoursWindow) {
-        if (hoursWindow <= 0) {
-            throw new IllegalArgumentException("The time window must be greater than zero hours.");
-        }
-        String iataCode = originIata.toUpperCase();
-        airportsRoutesClient.getAirport(iataCode); // 404 if the airport does not exist
-        return flightQueryService.findUpcomingDepartures(iataCode, hoursWindow);
+    /** A change a peer made for this request: this instance's read model learns it now (read your own writes). */
+    private FlightView changedElsewhere(FlightView flight) {
+        events.publishEvent(new FlightChanged(flight));
+        return flight;
     }
 }

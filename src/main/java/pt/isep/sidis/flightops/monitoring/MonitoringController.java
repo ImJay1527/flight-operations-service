@@ -38,11 +38,12 @@ public class MonitoringController {
     }
 
     @Operation(summary = "Monitoring metrics of this instance (PL3 p.19)",
-               description = "Response times local vs forwarded, forwarding success rate, peer health and failure rates, "
+               description = "Response times read model vs local vs forwarded, forwarding success rate, peer health and failure rates, "
                            + "requests served. Counted since this instance started.")
     @PreAuthorize("hasAnyRole('ADMIN', 'ATCC', 'BACKOFFICE_OPERATOR')")
     @GetMapping("/metrics")
     public Metrics metrics() {
+        TimerStats readModel = timerStats(FlightOpsMetrics.READ_MODEL);
         TimerStats local = timerStats(FlightOpsMetrics.LOCAL);
         TimerStats forwarded = timerStats(FlightOpsMetrics.FORWARDED);
         TimerStats notFound = timerStats(FlightOpsMetrics.NOT_FOUND);
@@ -51,7 +52,7 @@ public class MonitoringController {
         Double successRate = askedPeers == 0 ? null : round(100.0 * forwarded.count() / askedPeers);
 
         return new Metrics(instanceName, requestsServed(),
-                new Lookups(local, forwarded, notFound),
+                new Lookups(readModel, local, forwarded, notFound),
                 new Forwarding(askedPeers, forwarded.count(), successRate),
                 remoteInstances());
     }
@@ -120,7 +121,12 @@ public class MonitoringController {
     public record Served(long total, Map<String, Long> byStatus) {
     }
 
-    public record Lookups(TimerStats local, TimerStats forwarded, TimerStats notFound) {
+    /**
+     * @param readModel answered from the CQRS read model (this instance's read database)
+     * @param local     write side, this instance's write database (fallback path, or X-Read-Side: write-side)
+     * @param forwarded write side, asked a peer that had it
+     */
+    public record Lookups(TimerStats readModel, TimerStats local, TimerStats forwarded, TimerStats notFound) {
     }
 
     /** Times in ms. medianMs is robust against a few slow calls (e.g. the first ones on a cold JVM); avgMs is not. */

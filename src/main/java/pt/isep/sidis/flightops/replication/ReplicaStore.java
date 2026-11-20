@@ -2,9 +2,11 @@ package pt.isep.sidis.flightops.replication;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
+import pt.isep.sidis.flightops.events.FlightChanged;
 import pt.isep.sidis.flightops.domain.FlightStatus;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
@@ -25,10 +27,12 @@ public class ReplicaStore {
 
     private final ScheduledFlightRepository flights;
     private final FlightOpsMetrics metrics;
+    private final ApplicationEventPublisher events;
 
-    public ReplicaStore(ScheduledFlightRepository flights, FlightOpsMetrics metrics) {
+    public ReplicaStore(ScheduledFlightRepository flights, FlightOpsMetrics metrics, ApplicationEventPublisher events) {
         this.flights = flights;
         this.metrics = metrics;
+        this.events = events;
     }
 
     /** True if this instance's data changed. */
@@ -40,6 +44,7 @@ public class ReplicaStore {
             boolean changed = existing.updateFromCopy(status, copy.revision());
             if (changed) {
                 metrics.recordReplication("applied");
+                events.publishEvent(new FlightChanged(FlightView.of(existing)));   // read side, after commit
             }
             return changed;
         }
@@ -52,6 +57,7 @@ public class ReplicaStore {
         }
         flights.save(flight);
         metrics.recordReplication("applied");
+        events.publishEvent(new FlightChanged(FlightView.of(flight)));
         return true;
     }
 

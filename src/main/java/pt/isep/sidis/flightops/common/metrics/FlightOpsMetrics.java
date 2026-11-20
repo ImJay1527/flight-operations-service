@@ -14,7 +14,8 @@ import java.util.function.BooleanSupplier;
 /**
  * The metrics of PL3 p.19 (Micrometer):
  * <ul>
- *   <li>{@value #LOOKUPS}: lookup times local vs forwarded, and the forwarding success rate;</li>
+ *   <li>{@value #LOOKUPS}: lookup times from the CQRS read model, local (write side) and forwarded, and the
+ *       forwarding success rate;</li>
  *   <li>{@value #REMOTE_CALLS}: every call to another instance, by outcome - peer failure rates;</li>
  *   <li>{@value #REMOTE_HEALTHY}: 1/0 per instance - peer availability;</li>
  *   <li>{@value #REPLICATION}: copies sent to and applied from other instances, and conflicts found;</li>
@@ -30,6 +31,7 @@ public class FlightOpsMetrics {
     public static final String REMOTE_HEALTHY = "flightops.remote.healthy";
     public static final String REPLICATION = "flightops.replication";
 
+    public static final String READ_MODEL = "read_model";
     public static final String LOCAL = "local";
     public static final String FORWARDED = "forwarded";
     public static final String NOT_FOUND = "not_found";
@@ -45,10 +47,10 @@ public class FlightOpsMetrics {
         return registry;
     }
 
-    /** @param source {@link #LOCAL}, {@link #FORWARDED} or {@link #NOT_FOUND} */
+    /** @param source {@link #READ_MODEL}, {@link #LOCAL}, {@link #FORWARDED} or {@link #NOT_FOUND} */
     public void recordLookup(String source, long startNanos) {
         Timer.builder(LOOKUPS)
-                .description("Flight lookup by number: local vs forwarded to a peer")
+                .description("Flight lookup by number: read model, local (write side) or forwarded to a peer")
                 .tag("source", source)
                 .publishPercentiles(0.5, 0.95)
                 .register(registry)

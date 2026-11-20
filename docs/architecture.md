@@ -1,6 +1,6 @@
 # Flight Operations – architecture notes
 
-Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Consistency model](#consistency-model) · [Horizontal scaling](#horizontal-scaling) · [Kubernetes and auto-scaling](#kubernetes-and-auto-scaling)
+Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Consistency model](#consistency-model) · [CQRS (Assignment 2)](#cqrs-assignment-2) · [Horizontal scaling](#horizontal-scaling) · [Kubernetes and auto-scaling](#kubernetes-and-auto-scaling)
 
 ## System architecture (PL3 p.20)
 
@@ -218,10 +218,10 @@ resource may be (teacher's feedback at the A1 defense; PL3 p.11 used 404 for bot
 
 | Operation | Guarantee | Why |
 |---|---|---|
-| Read one flight (`GET /api/scheduled-flights/{n}`) | **200 while at least one copy is reachable**; `503` (+ `Retry-After`) if every copy may be on instances that don't answer; `404` only when it really doesn't exist | Answered from the local copy if there is one (`X-Data-Source: local`), else forwarded to a peer that has one |
-| Read your own write | **Yes**, from any instance | The write is committed on the instance that made it before the `201`; reads ask every instance, and duplicates are merged keeping the newest copy |
+| Read one flight (`GET /api/scheduled-flights/{n}`) | **200 while at least one copy is reachable**; `503` (+ `Retry-After`) if every copy may be on instances that don't answer; `404` only when it really doesn't exist | From the read model (`X-Data-Source: read-model`, see [CQRS](#cqrs-assignment-2)); if it is not there yet, or the read model can't be used, from the local copy (`local`) or forwarded to a peer that has one (`peer:<url>`) |
+| Read your own write | **Yes** on the instance that received the change, at once; a single flight **from any instance**; lists on other instances **after a short delay** | The change is in the receiving instance's read model before the `201`/`200`; a single flight not yet in a read model is looked up on the write side; other read models get it at their next sync (see CQRS) |
 | Cancel a flight | **Applied once per copy**; a second cancel is `409` | Made on one copy and replicated; `@Version` optimistic locking on each instance |
-| Lists and reports (flights of an aircraft, departures, utilization, fuel) | **Complete while fewer instances are down than there are copies** (one, with 2 copies); `X-Unreachable-Peers: n` says a peer did not answer, `X-Partial-Result: true` only when data may really be missing | Scatter-gather over all instances, duplicates merged (newest wins) |
+| Lists and reports (flights of an aircraft, departures, utilization, fuel) | **Every flight of the cluster, as of the read model's last update** (`X-Read-Model-Updated`); without a usable read model: **complete while fewer instances are down than there are copies**, `X-Unreachable-Peers: n` / `X-Partial-Result: true` as before | From this instance's read model, which holds every flight; fallback: scatter-gather over all instances, duplicates merged (newest wins) |
 | "An aircraft is never in two flights at the same time" | **Guaranteed** while the aircraft's owner - or, if it is down, its backup - takes the bookings; **reported, not prevented** if the two holders are cut off from each other and both accept one | All bookings of an aircraft go to its first reachable holder, where the per-aircraft lock serialises them |
 
 ### The weak spot: double-booking an aircraft
@@ -289,6 +289,96 @@ Replication can be switched off (`REPLICATION_FACTOR=1`): then each flight has a
 as in the week-3 practical session (PL3 p.16 test 03: data whose instance is down can't be read, `X-Partial-Result`),
 except that the lookup answers `503`, not `404` (see "Status codes").
 The two-instance integration test runs that way to check the plain forwarding on its own.
+
+## CQRS (Assignment 2)
+
+*(Assignment 2, P2 p.2: "Adopt the Command-Query Responsibility Segregation (CQRS) pattern for the core domain
+resources", "Evidence of independent read and write models (CQRS) and of data isolation across service instances".)*
+
+### In one sentence
+
+**Commands** (book, cancel) change the **write model** - PostgreSQL, sharded by aircraft with two copies, exactly as
+in Assignment 1 - and **queries** are answered from a **read model**: a separate **MongoDB** database per instance
+that holds **every flight of the cluster** and the reports already computed, kept up to date by the write side's
+events (eventual consistency).
+
+### The two sides
+
+| | Write side (commands) | Read side (queries) |
+|---|---|---|
+| Code | `services.FlightCommandService` handles `ScheduleFlightCommand` / `CancelFlightCommand`; `LocalBookingService` applies them | `services.FlightQueries` (and the report services) read `readmodel.ReadModel` |
+| Endpoints | `POST /api/scheduled-flights`, `PATCH .../{n}/cancel` | every `GET` of flights and reports |
+| Database | PostgreSQL, one per instance (`flightops-db-<i>`) | MongoDB, one per instance (`flightops-read-db-<i>`) |
+| What each instance holds | only its aircraft's flights (owner + backup copies) | every flight of the cluster |
+| Shape | normalised rows, transactions, a lock per aircraft (no double-booking) | one document per answer: `flights`, `aircraft_stats` (utilization by month, fuel), `route_stats` |
+| Consistency | strong per aircraft (its holder serialises bookings) | eventual: at once on the instance that made the change, up to the sync interval elsewhere |
+
+### How the read model is kept up to date
+
+1. Every change on the write side ends with a domain event, `events.FlightChanged`, published in the change's
+   transaction: a booking or cancel made here, a copy received from another instance (replication), or a change a
+   peer made for this request (a booking forwarded to the aircraft's owner - its answer is published here too).
+2. `readmodel.ReadModelProjection` applies it **after the transaction commits** (`@TransactionalEventListener`), so a
+   rolled-back change never reaches the read model, and it runs in the request's thread: the client reads its own
+   change back at once from this instance.
+3. `readmodel.ReadModelSync` repairs everything else: at startup (before the instance reports ready), every
+   `flightops.read-model.sync-interval-ms` (30 s), every 5 s while the model is not READY and shortly after a peer
+   becomes reachable, it rebuilds the read model from the write side of every instance (`GET /internal/flights/all`).
+   This is how an instance learns the changes it was not involved in. *(Next step of Assignment 2: these events go
+   through the message broker, so every instance learns every change within milliseconds; the sync stays as the
+   safety net.)*
+
+**Idempotent, in any order.** A flight's document is only replaced by a **newer** state - higher `revision`, or the
+same revision and a later status: the rule the write side already uses for copies. The condition is part of the
+upsert, so it is atomic. Applying the same change twice, or an old change after a newer one, changes nothing.
+**Reports are recomputed, not incremented**: when a flight of CS-TPA changes, `aircraft_stats` of CS-TPA is computed
+again from the `flights` collection. A "+1" would count a repeated event twice.
+
+### Which side answered (evidence)
+
+| Response header | Meaning |
+|---|---|
+| `X-Read-Side: read-model` | answered from this instance's read database |
+| `X-Read-Side: write-side` | answered as in Assignment 1 (local copy or forwarded to the holders) |
+| `X-Read-Model` | `READY`, `BUILDING`, `STALE: <reason>` or `DISABLED` (no read database configured) |
+| `X-Read-Model-Updated` | when the last change was applied to the read model: how fresh the answer is |
+| `X-Data-Source: read-model` | for a single flight, next to the A1 values `local` / `peer:<url>` |
+
+A client that must see every change already made (e.g. right after making it on another instance) sends
+**`X-Read-Side: write-side`** and gets the write side's answer. `GET /api/cluster/health` and the dashboard show
+each instance's read model state; `GET /api/cluster/metrics` counts the lookups answered by the read model.
+
+### Failures
+
+| Failure | What happens |
+|---|---|
+| Read database of an instance down | Queries fall back to the write side within ~2 s (short Mongo timeouts), then at once (`X-Read-Model: STALE: read database unavailable`); commands are not affected. When it is back, the next sync rebuilds the read model and it is READY again |
+| Write database down | Commands fail as before; queries keep being answered from the read model |
+| An instance down | The other read models still have its flights (they hold every flight); a sync during the outage stays READY while fewer instances are down than there are copies, otherwise STALE and queries use the write side (which then answers `503` for data it can't reach) |
+| Instance restarted with an empty read database | Rebuilt by the startup sync before the instance reports ready, so it never answers from an empty read model |
+| A change that never reached a read model | Repaired by the next sync |
+
+### Decisions and alternatives
+
+* **Separate database for reads (chosen) vs. separate models on the same database.** Two classes over the same
+  table (or two tables in one PostgreSQL) would already split the code, but reads and writes would still compete for
+  one database and fail together. A database of its own makes the read side independent: it can fail, be rebuilt or
+  be scaled without touching the write side, as the failure table shows.
+* **MongoDB (chosen) vs. a second PostgreSQL.** A read model is denormalised on purpose - each document is the answer
+  (an aircraft's report embeds its months; in SQL that is a second table and a join on every read) - and it can be
+  thrown away and rebuilt from the write side, so a fixed schema brings nothing. A different technology also makes
+  sharing tables or entities between the two sides impossible ("polyglot persistence"). PostgreSQL stays on the
+  write side: the per-aircraft lock and the overlap check need its transactions.
+* **Every instance has the whole read model (chosen) vs. a read model sharded like the write side.** Sharded, every
+  list would still be a scatter-gather over all instances. Whole, every query is local - the reason to separate reads
+  from writes here. The cost: each instance stores every flight, and lists elsewhere are eventually consistent.
+* **No event sourcing.** The write side keeps the current state, as in Assignment 1; events are only used to update
+  the read model. Event sourcing (storing the events as the source of truth) would allow replaying history, but would
+  change the whole write side and its replication.
+* **Fallback to the write side vs. `503` when the read model can't be used.** Availability first, as in Assignment 1
+  (AP): the fallback is slower, but its data is fresher, never older.
+* **Encryption at rest on the read side too.** Registration, model, route and airports are stored encrypted with the
+  same deterministic scheme as the write database, so the indexes (by aircraft, by airport) still work.
 
 ## Horizontal scaling
 
