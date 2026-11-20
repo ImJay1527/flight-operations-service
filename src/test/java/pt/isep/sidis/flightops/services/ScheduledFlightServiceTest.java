@@ -174,11 +174,20 @@ class ScheduledFlightServiceTest {
     }
 
     @Test
-    void cancelUnknownFlightIs404WhenSomePeerIsDownAndSaysSo() {
+    void cancelUnknownFlightIs404WhenFewerPeersThanCopiesAreDown() {
+        when(cluster.replicationFactor()).thenReturn(2);
         when(peers.patchOne(anyString(), eq(FlightView.class), eq("nope"))).thenReturn(new PeerResult<>(List.of(), 1));
 
+        assertThatThrownBy(() -> service.cancelFlight("nope")).isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void cancelIs503WhenEveryCopyMayBeOnPeersThatAreDown() {
+        when(cluster.replicationFactor()).thenReturn(2);
+        when(peers.patchOne(anyString(), eq(FlightView.class), eq("nope"))).thenReturn(new PeerResult<>(List.of(), 2));
+
         assertThatThrownBy(() -> service.cancelFlight("nope"))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("1 peer instance(s) could not be reached");
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining("2 instance(s) could not be reached");
     }
 }

@@ -109,11 +109,13 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
   Try: `GET http://localhost:8083/api/aircraft-utilization` and `GET http://localhost:8093/api/aircraft-utilization`.
   Both return the 10 sample flights once, although each is stored on two instances.
 * **Fault tolerance**: an unreachable peer is skipped (logged as a warning). A stopped instance's flights are served
-  from their copies. Only if no instance holding a flight answers is a single lookup `404` (PL3 p.11), with the
-  number of unreachable peers in the message, because the flight may exist there.
+  from their copies. If every instance that may hold a flight is unreachable, a single lookup is `503 Service Unavailable` with
+  `Retry-After: 10` and the number of unreachable instances in the message: the flight may exist there, so it is
+  not a `404`. `404` only when the instances that could have it answered "not here" (docs/architecture.md
+  "Status codes: 404 or 503?").
 * **Calls to other services** (`AircraftClient`, `AirportsRoutesClient`) go round-robin over their instances and
-  fail over to the next one on timeout or 5xx. If none can be reached the answer is `404`, with
-  "(… could not be reached)" in the message.
+  fail over to the next one on timeout or 5xx. If none can be reached the answer is `503`
+  "… could not be reached"; a `404` from the service itself stays `404`.
 * **Resilience** (PL3 p.12, p.14; package `resilience`):
   * *Retry with exponential backoff*: a failed GET to another instance is retried up to 2 more times, after
     ~100 ms and ~200 ms (plus random jitter). A PATCH is never retried, because the first attempt may have worked.
@@ -156,7 +158,7 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 | `services/*Test`, `resilience/*Test`, `cluster/ClusterTest`, `common/crypto/*Test`, `replication/ReplicaStoreTest`, `replication/ReplicaSyncTest`, `api/*Test` | Unit tests: forwarding/merge logic, scheduling rules, routing a booking to the aircraft's owner (and to its backup when the owner is down), retry/backoff, circuit breaker, rendezvous hashing (agreement, spread, minimal movement, replica sets), DNS discovery (pods joining and leaving), hand-off of flights an instance no longer holds, applying copies (newest wins, any order, conflicts reported), encryption, fuel efficiency and utilization (ported from PSOFT) |
 | `ConcurrentBookingTest`, `EncryptionAtRestTest` | Real database: simultaneous bookings of one aircraft (exactly one succeeds), what is really stored (raw SQL shows only ciphertext) |
 | `SecurityIntegrationTest` | One instance: login, 401/403 rules, service-only `/internal/**` |
-| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP, replication off (the week-3 behaviour on its own): local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 404, partial lists flagged, circuit open |
+| `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP, replication off (the week-3 behaviour on its own): local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 503 (+ `Retry-After`), partial lists flagged, circuit open; `201` with `Location` |
 | `ReplicationIntegrationTest` | **Three real instances**, 2 copies of each flight: a booking copied to the backup, the owner stopped → its flights still readable and lists complete, bookings go to the backup, a cancel while it is down; the owner restarts with an empty database and catches up; the backup's outbox empties; `/api/cluster/overview` shows the 3 instances and each flight once as owner and once as backup |
 
 ### Postman (PL3 p.17)
@@ -199,7 +201,7 @@ stopped instance itself).
 |---|---|
 | 01 Local Data Access | 01: data on instance 1, asked from instance 1 → 200, `X-Data-Source: local` (no peer query) |
 | 02 Successful Forwarding | 02: data created on instance 2, asked from instance 1 → 200; `X-Data-Source: local` when instance 1 keeps a copy (2 instances, 2 copies), `peer:…` when it doesn't (3 instances, or `REPLICATION_FACTOR=1`) |
-| 03 Resilience | 03 + P1 p.2 redundancy: instance 2 stopped → its flights still 200 from their copies, lists complete (`X-Unreachable-Peers: 1`, no `X-Partial-Result`), a booking for its aircraft taken by the backup and queued in its outbox; instance 2 restarted → trusted again, has caught up with that booking, outbox empty (PL3 p.14 automatic recovery). With `REPLICATION_FACTOR=1`: 404 and `X-Partial-Result` as in PL3 p.16 |
+| 03 Resilience | 03 + P1 p.2 redundancy: instance 2 stopped → its flights still 200 from their copies, lists complete (`X-Unreachable-Peers: 1`, no `X-Partial-Result`), a booking for its aircraft taken by the backup and queued in its outbox; instance 2 restarted → trusted again, has caught up with that booking, outbox empty (PL3 p.14 automatic recovery). With `REPLICATION_FACTOR=1`: 503 (not 404: the flight exists but can't be reached) and `X-Partial-Result` as in PL3 p.16 |
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
 | 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower; skipped when every read is local because of the copies), forwarding success rate, peer health, both instances served requests |
@@ -207,7 +209,7 @@ stopped instance itself).
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
 | 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 | 10 Whole system | Week 5 slides p.14 "cross-component tests" (whole system only): the other services are known and healthy; a booking checked with both services → 201; aircraft unknown to Aircraft & Maintenance and route unknown to Airports & Routes → 404; departures of an airport the airports service knows → 200, doesn't know → 404 |
-| 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **404** "could not be reached", list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances) |
+| 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **503** "could not be reached" with `Retry-After`, list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances) |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
 and select "Flight Ops - local HTTPS (3 instances)". Postman must trust the dev CA: Settings → Certificates →
@@ -363,7 +365,7 @@ instance of each other service was running, so their other two instances show `O
   an overlapping booking. It is detected when the copies meet and logged as `REPLICATION CONFLICT`; both flights are
   kept and one must be cancelled by hand. Preventing it would need a quorum (CP for bookings).
 * **Two copies per flight.** One instance down: everything is still served. Both holders of an aircraft down at the
-  same time: its flights are unavailable (`404` saying how many instances could not be reached, lists flagged with
+  same time: its flights are unavailable (`503` saying how many instances could not be reached, lists flagged with
   `X-Partial-Result`) until one of them is back. A new booking for that aircraft is still accepted by the instance
   that receives it, with a best-effort overlap check; it reaches the holders when they are back (an overlap is then
   logged as `REPLICATION CONFLICT`). `REPLICATION_FACTOR` can raise the number of copies.

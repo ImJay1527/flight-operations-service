@@ -101,7 +101,7 @@ balancer does that for every client: in the run through it **no request reached 
 instance 2 out for 10 s at a time. (The higher whole-run figure is also helped by a shorter outage in that run.)
 
 What still failed during the outage was the **flights stored on instance 2**: the reachable instance answered 404
-"could not be reached" for them. Instance 1's own data stayed 100 % available the whole time, and recovery was
+"could not be reached" for them (since then `503 Service Unavailable`: see "Status codes" below). Instance 1's own data stayed 100 % available the whole time, and recovery was
 automatic: as soon as instance 2 answered again, everything was back to 100 % within one 10-s window.
 
 **With replication** every flight is also on the other instance, so those reads are answered from the copy:
@@ -193,11 +193,32 @@ system prefers **availability** (AP in CAP).
 The window of inconsistency is short: a copy normally arrives within milliseconds; while an instance is down, its
 copies arrive when it is back (in practice before it accepts traffic, thanks to the startup catch-up).
 
+### Status codes: 404 or 503?
+
+`404 Not Found` says **the resource does not exist**; `503 Service Unavailable` says **we can't tell right now,
+try again later** (RFC 9110 15.5.5 / 15.6.4). An instance answers 404 only when it could ask every place the
+resource may be (teacher's feedback at the A1 defense; PL3 p.11 used 404 for both cases).
+
+* **One flight** (`GET /api/scheduled-flights/{n}`, `PATCH .../cancel`): the flight number doesn't say which
+  aircraft it belongs to, so every instance is asked. Every flight is on `REPLICATION_FACTOR` instances. If fewer
+  peers than that did not answer, at least one copy of every flight was asked: not found = `404`. If at least that
+  many did not answer (with 2 copies and 3 instances: two instances down), all its copies may be there: `503`.
+  With `REPLICATION_FACTOR=1`, one instance down is already enough for a `503`.
+* **One aircraft's report** (`GET /api/aircraft-utilization/{reg}`, `/api/fuel-efficiency/aircraft/{reg}`):
+  nothing found, this instance isn't one of its holders and the same rule says its holders may be among the
+  unreachable ones: `503`.
+* **Another service** (Aircraft & Maintenance, Airports & Routes): `404` only when the service itself answered 404;
+  if none of its instances answers, `503`.
+* **Lists** (flights of an aircraft, departures, reports of all aircraft) stay `200` with what the reachable
+  instances have, flagged with `X-Unreachable-Peers` / `X-Partial-Result` (P1 p.12 "partial response scenarios").
+* Every `503` carries `Retry-After: 10`, the time an open circuit breaker waits before trying the instance again.
+* `201 Created` (a booking) carries `Location: /api/scheduled-flights/{n}`, the URL of the new flight.
+
 ### What a client can rely on
 
 | Operation | Guarantee | Why |
 |---|---|---|
-| Read one flight (`GET /api/scheduled-flights/{n}`) | **200 while at least one copy is reachable**; `404` only if no instance holding it answers | Answered from the local copy if there is one (`X-Data-Source: local`), else forwarded to a peer that has one |
+| Read one flight (`GET /api/scheduled-flights/{n}`) | **200 while at least one copy is reachable**; `503` (+ `Retry-After`) if every copy may be on instances that don't answer; `404` only when it really doesn't exist | Answered from the local copy if there is one (`X-Data-Source: local`), else forwarded to a peer that has one |
 | Read your own write | **Yes**, from any instance | The write is committed on the instance that made it before the `201`; reads ask every instance, and duplicates are merged keeping the newest copy |
 | Cancel a flight | **Applied once per copy**; a second cancel is `409` | Made on one copy and replicated; `@Version` optimistic locking on each instance |
 | Lists and reports (flights of an aircraft, departures, utilization, fuel) | **Complete while fewer instances are down than there are copies** (one, with 2 copies); `X-Unreachable-Peers: n` says a peer did not answer, `X-Partial-Result: true` only when data may really be missing | Scatter-gather over all instances, duplicates merged (newest wins) |
@@ -265,7 +286,8 @@ queued copies (no change, they are already there) - measured in "Availability wh
 shown by `ReplicationIntegrationTest` and the Postman folder "03 Resilience".
 
 Replication can be switched off (`REPLICATION_FACTOR=1`): then each flight has a single copy and the system behaves
-as in the week-3 practical session (PL3 p.16 test 03: `404` for data whose instance is down, `X-Partial-Result`).
+as in the week-3 practical session (PL3 p.16 test 03: data whose instance is down can't be read, `X-Partial-Result`),
+except that the lookup answers `503`, not `404` (see "Status codes").
 The two-instance integration test runs that way to check the plain forwarding on its own.
 
 ## Horizontal scaling

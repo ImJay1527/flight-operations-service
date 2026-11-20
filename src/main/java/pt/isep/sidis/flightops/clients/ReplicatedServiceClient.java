@@ -83,6 +83,8 @@ public abstract class ReplicatedServiceClient {
                 log.warn("{} instance {} failed for {}: {}", targetName, instance.health().url(), path, e.getMessage());
             }
         }
-        throw new ResourceNotFoundException(notFoundMessage + " (" + targetName + " could not be reached)");
+        // nobody answered: we don't know whether it exists, so 503 (a 404 only comes from the service itself)
+        throw new ServiceUnavailableException(targetName + " could not be reached (" + instances.size()
+                + " instance(s) tried). Try again later.");
     }
 }

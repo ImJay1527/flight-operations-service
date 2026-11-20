@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
+import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.peers.PeerClient;
@@ -86,8 +87,11 @@ public class FlightQueryService {
             return FlightLookup.fromPeer(remote.items().get(0), remote.answeredBy());
         }
         metrics.recordLookup(FlightOpsMetrics.NOT_FOUND, start);
-        // 404 as in PL3 p.11; the message says when a peer was unreachable, since the flight may be there
-        throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
+        if (remote.mayHideIt(cluster.replicationFactor())) {
+            // every copy of it could be on the instances we couldn't ask: "unavailable", not "doesn't exist"
+            throw new ServiceUnavailableException(remote.unavailableMessage("scheduled flight " + flightNumber));
+        }
+        throw new ResourceNotFoundException("Scheduled flight not found with number: " + flightNumber);
     }
 
     /** True for a copy of an aircraft this instance doesn't hold any more (its hand-off is still to come). */
@@ -102,15 +106,25 @@ public class FlightQueryService {
 
     /** Non-cancelled flights (optionally of one aircraft) on all instances. */
     public List<FlightView> findActive(String registrationOrNull) {
-        return merge(localActive(registrationOrNull), activeOnPeers(registrationOrNull));
+        PeerResult<FlightView> remote = activeOnPeersResult(registrationOrNull);
+        List<FlightView> flights = merge(localActive(registrationOrNull), remote.items());
+        // one aircraft, nothing found, and all its copies may be on the instances that didn't answer: 503
+        if (registrationOrNull != null && flights.isEmpty() && !cluster.holdsLocally(registrationOrNull)
+                && remote.mayHideIt(cluster.replicationFactor())) {
+            throw new ServiceUnavailableException(remote.unavailableMessage("aircraft " + registrationOrNull));
+        }
+        return flights;
     }
 
     /** Non-cancelled flights on the peers only. */
     public List<FlightView> activeOnPeers(String registrationOrNull) {
-        PeerResult<FlightView> remote = registrationOrNull == null
+        return activeOnPeersResult(registrationOrNull).items();
+    }
+
+    private PeerResult<FlightView> activeOnPeersResult(String registrationOrNull) {
+        return registrationOrNull == null
                 ? peers.getList("/internal/flights/active", FLIGHT_LIST)
                 : peers.getList("/internal/flights/active?aircraft={reg}", FLIGHT_LIST, registrationOrNull);
-        return remote.items();
     }
 
     public List<FlightView> findUpcomingDepartures(String originIata, int hours) {

@@ -7,7 +7,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.hateoas.CollectionModel;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -37,11 +36,12 @@ public class ScheduledFlightController {
     @Operation(summary = "US212: Assign an aircraft to a route for a specific date and time",
                description = "Creates a new scheduled flight ensuring no time overlap for the aircraft. Requires ATCC role.")
     @ApiResponses(value = {
-        @ApiResponse(responseCode = "201", description = "Scheduled flight created successfully"),
+        @ApiResponse(responseCode = "201", description = "Scheduled flight created; the Location header is its URL"),
         @ApiResponse(responseCode = "400", description = "Invalid input data or arrival time before departure"),
         @ApiResponse(responseCode = "401", description = "Missing or invalid JWT token"),
         @ApiResponse(responseCode = "403", description = "Insufficient role — ATCC required"),
         @ApiResponse(responseCode = "404", description = "Flight route or aircraft not found"),
+        @ApiResponse(responseCode = "503", description = "Aircraft & Maintenance or Airports & Routes could not be reached, or the aircraft's instance did not answer in time (Retry-After: 10)"),
         @ApiResponse(responseCode = "409", description = "Concurrency conflict: Aircraft already scheduled for another flight during this timeframe")
     })
     @PreAuthorize("hasRole('ATCC')")
@@ -58,7 +58,9 @@ public class ScheduledFlightController {
 
         // X-Stored-On: the instance that made the booking (the aircraft's owner, or its backup while the owner is down)
         // X-Replicas: every instance that keeps a copy of the flight
-        return ResponseEntity.status(HttpStatus.CREATED)
+        // 201 Created + Location: where the new flight can be read (RFC 9110 15.3.2)
+        return ResponseEntity.created(linkTo(methodOn(ScheduledFlightController.class)
+                        .getFlightById(booking.flight().flightNumber())).toUri())
                 .header("X-Stored-On", booking.storedOn())
                 .header("X-Replicas", String.join(",", booking.replicas()))
                 .body(assembler.toModel(booking.flight()));
@@ -70,7 +72,8 @@ public class ScheduledFlightController {
         @ApiResponse(responseCode = "200", description = "List of scheduled flights returned successfully"),
         @ApiResponse(responseCode = "401", description = "Missing or invalid JWT token"),
         @ApiResponse(responseCode = "403", description = "Insufficient role — ATCC required"),
-        @ApiResponse(responseCode = "404", description = "Aircraft not found")
+        @ApiResponse(responseCode = "404", description = "Aircraft not found"),
+        @ApiResponse(responseCode = "503", description = "Aircraft & Maintenance could not be reached (Retry-After: 10)")
     })
     @PreAuthorize("hasRole('ATCC')")
     @GetMapping("/aircraft/{registration}")
@@ -92,7 +95,8 @@ public class ScheduledFlightController {
         @ApiResponse(responseCode = "200", description = "Scheduled flight returned successfully"),
         @ApiResponse(responseCode = "401", description = "Missing or invalid JWT token"),
         @ApiResponse(responseCode = "403", description = "Insufficient role — ATCC required"),
-        @ApiResponse(responseCode = "404", description = "Scheduled flight not found")
+        @ApiResponse(responseCode = "404", description = "Scheduled flight not found"),
+        @ApiResponse(responseCode = "503", description = "Not found on the instances that answered, and every copy of it may be on instances that did not (Retry-After: 10)")
     })
     @PreAuthorize("hasRole('ATCC')")
     @GetMapping("/{flightNumber}")
@@ -113,6 +117,7 @@ public class ScheduledFlightController {
         @ApiResponse(responseCode = "401", description = "Missing or invalid JWT token"),
         @ApiResponse(responseCode = "403", description = "Insufficient role — ATCC required"),
         @ApiResponse(responseCode = "404", description = "Scheduled flight not found"),
+        @ApiResponse(responseCode = "503", description = "Not found on the instances that answered, and every copy of it may be on instances that did not (Retry-After: 10)"),
         @ApiResponse(responseCode = "409", description = "Flight is already canceled or completed")
     })
     @PreAuthorize("hasRole('ATCC')")
