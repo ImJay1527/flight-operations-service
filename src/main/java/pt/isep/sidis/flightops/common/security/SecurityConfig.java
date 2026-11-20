@@ -66,9 +66,10 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id", "X-Read-Side"));
         config.setExposedHeaders(List.of("X-Instance", "X-Request-Id", "X-Data-Source",
-                "X-Partial-Result", "X-Unreachable-Peers", "X-Stored-On"));
+                "X-Partial-Result", "X-Unreachable-Peers", "X-Stored-On", "X-Replicas", "Location", "Retry-After",
+                "X-Read-Side", "X-Read-Model", "X-Read-Model-Updated"));
         config.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", config);   // not /internal/**: services don't use browsers

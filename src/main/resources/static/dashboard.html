@@ -270,6 +270,7 @@
           <dt>Flights as backup</dt><dd>${i.flightsAsBackup}</dd>
           ${i.flightsToHandOff ? `<dt>Being handed off</dt><dd>${i.flightsToHandOff}</dd>` : ''}
           <dt>Copies waiting</dt><dd>${backlogN}</dd>
+          <dt>Read model (CQRS)</dt><dd>${readModelChip(i.readModel, now)}</dd>
         </dl>
         <div class="chips">${peers.map(peerChip).join('') || '<span class="muted">no peers</span>'}</div>
       </div>`;
@@ -317,6 +318,15 @@
   function peerChip(r) {
     const cls = r.healthy ? 'ok' : (r.circuit === 'HALF_OPEN' ? 'warn' : 'bad');
     return `<span class="chip" title="circuit ${esc(r.circuit)}"><span class="dot ${cls}"></span>${esc(hostOf(r.url).split('.')[0])}</span>`;
+  }
+  // CQRS read model: READY (green, last change applied N s ago), BUILDING / STALE (amber, queries use the write side),
+  // DISABLED (no read database: run without the cqrs profile)
+  function readModelChip(rm, now) {
+    if (!rm) return '-';
+    const cls = rm.state === 'READY' ? 'ok' : rm.state === 'DISABLED' ? 'bad' : 'warn';
+    const last = rm.lastProjection || rm.lastSync;
+    const note = rm.state === 'READY' ? (last ? 'updated ' + since(last, now) + ' ago' : '') : (rm.reason || '');
+    return `<span class="chip" title="${esc(note)}"><span class="dot ${cls}"></span>${esc(rm.state)}</span>`;
   }
   function hostOf(url) { try { return new URL(url).host; } catch { return url; } }
   function since(iso, now) {

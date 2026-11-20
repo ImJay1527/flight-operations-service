@@ -70,13 +70,14 @@ kubectl -n "$NS" create secret generic flightops-certs \
 kubectl -n "$NS" create secret generic flightops-secrets \
   --from-literal=JWT_SECRET="${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}" \
   --from-literal=DB_PASSWORD="${DB_PASSWORD:-flightops}" \
+  --from-literal=READ_DB_PASSWORD="${READ_DB_PASSWORD:-flightops}" \
   --from-literal=SSL_PASSWORD="${SSL_PASSWORD:-changeit}" \
   --from-literal=DATA_ENCRYPTION_KEY="${DATA_ENCRYPTION_KEY:-9BvH3kXoOq3m1o9mJmPFjB6m4cO1kz3Hqk2iY7G1M8o=}" \
   --dry-run=client -o yaml | apply
 
 peer_urls() { local u=""; for ((i = 0; i < OTHERS; i++)); do u+="${u:+,}http://$1-$i.$1-peers:$2"; done; echo "$u"; }
 kubectl -n "$NS" create configmap flightops-config \
-  --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,k8s${STUB:+,stub}" \
+  --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,cqrs,k8s${STUB:+,stub}" \
   --from-literal=AIRCRAFT_SERVICE_URLS="$(peer_urls aircraft 8081)" \
   --from-literal=AIRPORTS_ROUTES_SERVICE_URLS="$(peer_urls airports 8082)" \
   --dry-run=client -o yaml | apply

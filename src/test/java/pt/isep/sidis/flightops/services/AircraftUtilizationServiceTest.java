@@ -1,8 +1,10 @@
 package pt.isep.sidis.flightops.services;
 
+import org.junit.jupiter.api.BeforeEach;
+import pt.isep.sidis.flightops.readmodel.DisabledReadModel;
+import pt.isep.sidis.flightops.readmodel.ReadModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import pt.isep.sidis.flightops.api.dto.AircraftUtilizationDTO;
@@ -20,13 +22,24 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** US223, ported from the PSOFT AircraftUtilizationServiceTest. The flights now come from all instances. */
+/**
+ * US223, ported from the PSOFT AircraftUtilizationServiceTest. Without a read model (DisabledReadModel) every
+ * query takes the fallback path: the flights of all instances, as in Assignment 1. The read-model path is tested in
+ * ReadModelQueriesTest.
+ */
 @ExtendWith(MockitoExtension.class)
 class AircraftUtilizationServiceTest {
 
     @Mock FlightQueryService flightQueryService;
 
-    @InjectMocks AircraftUtilizationService service;
+    AircraftUtilizationService service;
+
+    @BeforeEach
+    void setUp() {
+        ReadModel none = new DisabledReadModel();
+        service = new AircraftUtilizationService(flightQueryService, none,
+                new FlightQueries(none, flightQueryService, null, null, null));
+    }
 
     @Test
     void ensureGetUtilizationForAllAircraftReturnsEmptyListWhenNoFlights() {

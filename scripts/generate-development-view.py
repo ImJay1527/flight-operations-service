@@ -20,16 +20,18 @@ DESCRIPTION = {
     'services': 'business logic', 'bootstrap': 'sample data',
     'cluster': 'instances, owner of each aircraft', 'peers': 'calls to the other instances',
     'replication': 'outbox, copies, catch-up', 'resilience': 'retry, circuit breaker, health',
-    'monitoring': 'monitoring API, dashboard', 'repositories': 'Spring Data JPA', 'domain': 'entities',
+    'monitoring': 'monitoring API, dashboard', 'repositories': 'Spring Data JPA', 'domain': 'entities', 'events': 'domain events (write side -> read side)',
+    'readmodel': 'CQRS read side: read database (MongoDB), projections, sync',
     'clients': 'calls to the other services', 'stub': 'built-in data (test mode)',
     'common': 'crypto, exceptions, HTTP client, JWT, metrics, tracing',
 }
 GROUPS = [   # layers, top to bottom: a package only uses packages of its own layer or of layers below
     ('Entry points', ['api', 'monitoring', 'security', 'bootstrap']),
     ('Application', ['services']),
+    ('Read side (CQRS)', ['readmodel']),
     ('Distribution', ['replication', 'peers', 'cluster']),
     ('Integration', ['clients', 'stub', 'resilience']),
-    ('Data', ['repositories', 'api.dto', 'domain']),
+    ('Data', ['repositories', 'events', 'api.dto', 'domain']),
     ('Shared', ['common']),
 ]
 

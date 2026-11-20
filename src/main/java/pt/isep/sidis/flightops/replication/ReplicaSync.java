@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * With a fixed list this happens after the list was changed and the instances restarted (e.g. a third one added).
  */
 @Component
-@Order(Ordered.LOWEST_PRECEDENCE)   // after the sample data is loaded
+@Order(Ordered.LOWEST_PRECEDENCE - 5)   // after the sample data is loaded, before the read model sync
 public class ReplicaSync implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ReplicaSync.class);

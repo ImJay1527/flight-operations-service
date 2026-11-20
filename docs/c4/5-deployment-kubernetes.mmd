@@ -23,19 +23,22 @@ flowchart TB
                     direction TB
                     app0["<b>Flight Operations API</b><br/>[Container: Java 21, Spring Boot]<br/>CPU 0.25-1, memory 512-768 MiB<br/>probes: startup, readiness, liveness"]
                     pg0[("<b>Flight database</b><br/>[Container: PostgreSQL 16, sidecar]")]
-                    pvc0[("<b>Disk</b><br/>[PersistentVolumeClaim 1 GiB]")]
+                    mg0[("<b>Read database</b><br/>[Container: MongoDB 7, sidecar]")]
+                    pvc0[("<b>Disks</b><br/>[2 PersistentVolumeClaims, 1 GiB each]")]
                 end
                 subgraph POD1["Pod flightops-1"]
                     direction TB
                     app1["<b>Flight Operations API</b>"]
                     pg1[("<b>Flight database</b>")]
-                    pvc1[("<b>Disk</b>")]
+                    mg1[("<b>Read database</b>")]
+                    pvc1[("<b>Disks</b>")]
                 end
                 subgraph POD2["Pod flightops-2"]
                     direction TB
                     app2["<b>Flight Operations API</b>"]
                     pg2[("<b>Flight database</b>")]
-                    pvc2[("<b>Disk</b>")]
+                    mg2[("<b>Read database</b>")]
+                    pvc2[("<b>Disks</b>")]
                 end
             end
 
@@ -48,12 +51,18 @@ flowchart TB
     lbsvc --> app0
     lbsvc --> app1
     lbsvc --> app2
-    app0 -->|"localhost:5432"| pg0
+    app0 -->|"commands, localhost:5432"| pg0
+    app0 -->|"queries, localhost:27017"| mg0
     pg0 --- pvc0
+    mg0 --- pvc0
     app1 --> pg1
+    app1 --> mg1
     pg1 --- pvc1
+    mg1 --- pvc1
     app2 --> pg2
+    app2 --> mg2
     pg2 --- pvc2
+    mg2 --- pvc2
     app0 <-->|"HTTPS /internal/**"| app1
     app1 <-->|"HTTPS /internal/**"| app2
     app0 -.->|"who exists? every 5 s"| headless
@@ -65,7 +74,7 @@ flowchart TB
     classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
     classDef infra fill:#ffffff,stroke:#666666,color:#000000
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
-    class app0,app1,app2,pg0,pg1,pg2 container
+    class app0,app1,app2,pg0,pg1,pg2,mg0,mg1,mg2 container
     class lbsvc,headless,hpa,secrets,ms,pvc0,pvc1,pvc2,browser infra
     class others external
     style NODE fill:#f4f4f4,stroke:#444444

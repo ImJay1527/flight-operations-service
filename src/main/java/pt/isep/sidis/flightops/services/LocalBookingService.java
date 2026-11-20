@@ -1,6 +1,7 @@
 package pt.isep.sidis.flightops.services;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.sidis.flightops.api.dto.FlightView;
@@ -9,6 +10,7 @@ import pt.isep.sidis.flightops.clients.AircraftInfo;
 import pt.isep.sidis.flightops.clients.AirportInfo;
 import pt.isep.sidis.flightops.clients.RouteDirectory;
 import pt.isep.sidis.flightops.clients.RouteInfo;
+import pt.isep.sidis.flightops.events.FlightChanged;
 import pt.isep.sidis.flightops.domain.FlightStatus;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.replication.ReplicationOutbox;
@@ -32,10 +34,14 @@ public class LocalBookingService {
     private final FlightQueryService flightQueryService;
     private final AircraftBookingLocks aircraftBookingLocks;
     private final ReplicationOutbox replicationOutbox;
+    private final ApplicationEventPublisher events;
 
     @Transactional
-    public FlightView book(String routeId, String aircraftRegistration,
-                           LocalDateTime departureTime, LocalDateTime arrivalTime) {
+    public FlightView book(ScheduleFlightCommand command) {
+        String routeId = command.routeId();
+        String aircraftRegistration = command.aircraftRegistration();
+        LocalDateTime departureTime = command.departureTime();
+        LocalDateTime arrivalTime = command.arrivalTime();
 
         if (!arrivalTime.isAfter(departureTime)) {
             throw new IllegalArgumentException("Arrival time must be after departure time.");
@@ -100,9 +106,7 @@ public class LocalBookingService {
                 route.routeId(), aircraft.registrationNumber(), modelName,
                 origin.iataCode(), destination.iataCode(), route.distanceKm(), aircraft.fuelBurnRate(),
                 departureTime, arrivalTime);
-        ScheduledFlight saved = scheduledFlightRepository.save(newFlight);
-        replicationOutbox.flightChanged(saved);
-        return FlightView.of(saved);
+        return changed(scheduledFlightRepository.save(newFlight));
     }
 
     /** Cancels this instance's copy of a flight; null if it is not here. */
@@ -111,10 +115,19 @@ public class LocalBookingService {
         return scheduledFlightRepository.findById(flightNumber)
                 .map(flight -> {
                     flight.cancel();
-                    ScheduledFlight saved = scheduledFlightRepository.save(flight);
-                    replicationOutbox.flightChanged(saved);
-                    return FlightView.of(saved);
+                    return changed(scheduledFlightRepository.save(flight));
                 })
                 .orElse(null);
+    }
+
+    /**
+     * In the change's transaction: queues it for the flight's other copies (outbox) and publishes it for the read
+     * side (projected once the transaction has committed).
+     */
+    private FlightView changed(ScheduledFlight saved) {
+        replicationOutbox.flightChanged(saved);
+        FlightView view = FlightView.of(saved);
+        events.publishEvent(new FlightChanged(view));
+        return view;
     }
 }

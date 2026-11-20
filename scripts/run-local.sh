@@ -2,9 +2,11 @@
 # Starts N flight-operations instances locally (the Java apps run outside Docker). Ctrl+C stops all of them.
 #
 #   ./scripts/run-local.sh            3 instances, plain HTTP  (8083, 8093, 8103), each with its own PostgreSQL container
+#                                     (write database) and MongoDB container (CQRS read database)
 #   ./scripts/run-local.sh --tls      3 instances, HTTPS       (needs ./scripts/generate-dev-certs.sh first)
 #   ./scripts/run-local.sh -n 2       only 2 instances         (8083, 8093)
-#   ./scripts/run-local.sh --h2       in-memory H2 instead of PostgreSQL (no Docker needed; data is lost on stop)
+#   ./scripts/run-local.sh --h2       in-memory H2 instead of PostgreSQL, and no read database (no Docker needed; data
+#                                     is lost on stop; queries take the CQRS fallback path, X-Read-Side: write-side)
 #   ./scripts/run-local.sh --stub     built-in aircraft/route data instead of calling the other two services
 #                                     (needed for the Postman collection in postman/ while those services are stubs)
 #   ./scripts/run-local.sh --no-restart   don't restart an instance that stops on its own
@@ -15,8 +17,9 @@
 # "READY FOR TESTS" is printed once every instance has fully started (scripts/wait-ready.sh), and
 # "flightops-<i> ready" again after an instance was restarted.
 #
-# PostgreSQL: the database containers (flightops-db-<i>, ports 5433/5434/5435) are started with docker compose and
-# left running when you press Ctrl+C, so the data is kept. Stop them: docker compose stop
+# PostgreSQL + MongoDB: the database containers (flightops-db-<i>, ports 5433/5434/5435, and the read databases
+# flightops-read-db-<i>, ports 27018/27019/27020) are started with docker compose and left running when you press
+# Ctrl+C, so the data is kept. Stop them: docker compose stop
 # Delete their data: docker compose down -v
 #
 # Instance i runs with the Spring profile instance<i> on port 8083 + 10 * (i - 1). Logs: logs/flightops-<i>.log
@@ -54,10 +57,10 @@ for i in $(seq 1 "$N"); do
 done
 
 if [[ "$DB" == postgres ]]; then
-  DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i"); done
+  DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i" "flightops-read-db-$i"); done
   echo "Starting databases: ${DBS[*]}"
   docker compose up -d --wait "${DBS[@]}"
-  PROFILE="${PROFILE:+$PROFILE,}postgres"
+  PROFILE="${PROFILE:+$PROFILE,}postgres,cqrs"
 fi
 
 [[ -n "$STUB" ]] && PROFILE="${PROFILE:+$PROFILE,}stub"

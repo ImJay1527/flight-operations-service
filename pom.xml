@@ -16,6 +16,8 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- newer than Spring Boot 3.3's 1.19.8, which Docker Engine 29 refuses (its Docker API version is too old) -->
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -42,6 +44,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- CQRS read side: each instance's read database (MongoDB), separate from the write database -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
         </dependency>
         <dependency>
             <!-- HTTP client for service-to-service calls: pooled connections, PATCH support, TLS via SSL bundles -->
@@ -93,6 +100,17 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- real MongoDB in Docker for the read-side tests (skipped when Docker is not running) -->
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mongodb</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

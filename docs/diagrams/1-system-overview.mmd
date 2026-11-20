@@ -16,9 +16,15 @@ flowchart LR
         db1[("PostgreSQL<br/>flightops-db-1<br/>:5433<br/>encrypted columns")]
         db2[("PostgreSQL<br/>flightops-db-2<br/>:5434<br/>encrypted columns")]
         db3[("PostgreSQL<br/>flightops-db-3<br/>:5435<br/>encrypted columns")]
-        fo1 --- db1
-        fo2 --- db2
-        fo3 --- db3
+        rd1[("MongoDB read model<br/>flightops-read-db-1<br/>:27018")]
+        rd2[("MongoDB read model<br/>flightops-read-db-2<br/>:27019")]
+        rd3[("MongoDB read model<br/>flightops-read-db-3<br/>:27020")]
+        fo1 ---|commands| db1
+        fo2 ---|commands| db2
+        fo3 ---|commands| db3
+        fo1 ---|queries| rd1
+        fo2 ---|queries| rd2
+        fo3 ---|queries| rd3
         fo1 <-->|"peer forwarding /internal/flights/**<br/>bookings go to the aircraft's owner<br/>copies (replication)"| fo2
         fo2 <--> fo3
     end
@@ -49,4 +55,4 @@ flowchart LR
     FO -->|"GET /internal/routes/{id}<br/>GET /internal/airports/{iata}"| AR
 
     classDef db fill:#eef6ff,stroke:#5b8def
-    class db1,db2,db3 db
+    class db1,db2,db3,rd1,rd2,rd3 db

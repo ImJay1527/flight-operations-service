@@ -1,6 +1,6 @@
 # flight-operations-service
 
-AISafe Flight Management System – **Flight Operations** service (SIDIS 2026/27, Assignment 1).
+AISafe Flight Management System – **Flight Operations** service (SIDIS 2026/27, Assignments 1 and 2).
 
 Owns: scheduled flights, assigning aircraft to routes, availability checks, aircraft utilization (US223),
 fuel efficiency (US227), departures board, and **user login** for the whole system.
@@ -134,6 +134,29 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
   reported as a replication conflict instead of being prevented (AP in CAP).
   Details, the known weak spots and how to fix them: [docs/architecture.md#consistency-model](docs/architecture.md#consistency-model).
 
+## CQRS (Assignment 2)
+
+Commands and queries are handled by different code and **different databases** (details, decisions and
+alternatives: [docs/architecture.md](docs/architecture.md#cqrs-assignment-2)):
+
+* **Commands** - `POST /api/scheduled-flights`, `PATCH .../{n}/cancel` - go to the **write side**
+  (`FlightCommandService`, `ScheduleFlightCommand`, `CancelFlightCommand`): each instance's PostgreSQL, sharded by
+  aircraft with two copies, exactly as described above.
+* **Queries** - every `GET` of flights and reports - are answered by the **read side** (`FlightQueries`): each
+  instance's own **MongoDB** (`flightops-read-db-<i>`), the **read model**. It holds **every flight of the cluster**
+  and the reports already computed (collections `flights`, `aircraft_stats`, `route_stats`), so a query never asks
+  another instance.
+* The read model is updated by the write side's `FlightChanged` events right after each commit (so you read your own
+  change back at once), and rebuilt from the write side of every instance at startup, every 30 s and whenever it may
+  have missed something. Applying a change twice or out of order changes nothing (newest revision wins).
+* If the read model can't be used (read database down, still building), queries take the **fallback path**: the
+  write side, asking the instances as in Assignment 1. Send `X-Read-Side: write-side` to ask for that path on purpose.
+* Response headers: `X-Read-Side` (`read-model` / `write-side`), `X-Read-Model` (`READY`, `STALE: reason`, ...),
+  `X-Read-Model-Updated` (time of the last change applied). The dashboard and `GET /api/cluster/health` show each
+  instance's read model.
+* On with the `cqrs` profile (docker-compose, Kubernetes and `run-local.sh` without `--h2`). Without it (`--h2`, the
+  unit tests) there is no read database and every query takes the fallback path.
+
 ## Security
 
 | Requirement | How |
@@ -153,12 +176,18 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 ./mvnw test
 ```
 
+The tests that use MongoDB (`MongoReadModelTest`, `CqrsIntegrationTest`) start it in Docker (Testcontainers) and are
+skipped when Docker is not running; CI runs them.
+
 | Test | What it covers |
 |---|---|
 | `services/*Test`, `resilience/*Test`, `cluster/ClusterTest`, `common/crypto/*Test`, `replication/ReplicaStoreTest`, `replication/ReplicaSyncTest`, `api/*Test` | Unit tests: forwarding/merge logic, scheduling rules, routing a booking to the aircraft's owner (and to its backup when the owner is down), retry/backoff, circuit breaker, rendezvous hashing (agreement, spread, minimal movement, replica sets), DNS discovery (pods joining and leaving), hand-off of flights an instance no longer holds, applying copies (newest wins, any order, conflicts reported), encryption, fuel efficiency and utilization (ported from PSOFT) |
 | `ConcurrentBookingTest`, `EncryptionAtRestTest` | Real database: simultaneous bookings of one aircraft (exactly one succeeds), what is really stored (raw SQL shows only ciphertext) |
 | `SecurityIntegrationTest` | One instance: login, 401/403 rules, service-only `/internal/**` |
 | `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP, replication off (the week-3 behaviour on its own): local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 503 (+ `Retry-After`), partial lists flagged, circuit open; `201` with `Location` |
+| `FlightQueriesTest`, `readmodel/ReadDatabaseDownTest` | CQRS query side: the read model answers while READY and the write side is not asked; a flight not yet in the read model, a read model not ready or a read database failing during a query → the write side answers; a failed projection makes the model STALE without failing the write |
+| `readmodel/MongoReadModelTest` | **Real MongoDB** (Testcontainers): projection read back, fields encrypted at rest, newer revision wins and an old one is ignored, the same change twice counted once, reports recomputed on cancel, utilization by month, departures window, rebuild (removes flights nobody holds, keeps new projections, nothing removed when incomplete) |
+| `CqrsIntegrationTest` | **Two real instances with the `cqrs` profile**, each with its own write database (H2) and read database (MongoDB), replication off so the write side is split: both read models hold every flight, read your own write at once (also a booking forwarded to the owner), a change made on the other instance reaches the read model, a cancel updates the reports on both, the read database paused → the write side answers (`X-Read-Model: STALE`) until it is back |
 | `ReplicationIntegrationTest` | **Three real instances**, 2 copies of each flight: a booking copied to the backup, the owner stopped → its flights still readable and lists complete, bookings go to the backup, a cancel while it is down; the owner restarts with an empty database and catches up; the backup's outbox empties; `/api/cluster/overview` shows the 3 instances and each flight once as owner and once as backup |
 
 ### Postman (PL3 p.17)
@@ -204,11 +233,12 @@ stopped instance itself).
 | 03 Resilience | 03 + P1 p.2 redundancy: instance 2 stopped → its flights still 200 from their copies, lists complete (`X-Unreachable-Peers: 1`, no `X-Partial-Result`), a booking for its aircraft taken by the backup and queued in its outbox; instance 2 restarted → trusted again, has caught up with that booking, outbox empty (PL3 p.14 automatic recovery). With `REPLICATION_FACTOR=1`: 503 (not 404: the flight exists but can't be reached) and `X-Partial-Result` as in PL3 p.16 |
 | 04 Load Distribution | 04: requests alternate between instances, `X-Instance` shows who answered, response times checked |
 | 05 Edge Cases | 05: invalid ids, malformed JSON, missing fields, business rules (409), 401/403 |
-| 06 Monitoring | PL3 p.19 metrics: local vs forwarded times (forwarded slower; skipped when every read is local because of the copies), forwarding success rate, peer health, both instances served requests |
+| 06 Monitoring | PL3 p.19 metrics: lookups counted by source (read model, local, forwarded; the medians are logged), forwarding success rate, peer health, both instances served requests |
 | 07 Three instances | PL3 p.27 "test with 3+ instances": data created on instance 3 reachable from 1 and 2, every instance sees 2 healthy peers. Skipped when only 2 instances run (`-n 2`) |
 | 08 Encryption in transit | HTTPS only: works with a verified certificate, plain HTTP to the same port is refused, peers are called over HTTPS. Only with the HTTPS environment |
 | 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 | 10 Whole system | Week 5 slides p.14 "cross-component tests" (whole system only): the other services are known and healthy; a booking checked with both services → 201; aircraft unknown to Aircraft & Maintenance and route unknown to Airports & Routes → 404; departures of an airport the airports service knows → 200, doesn't know → 404 |
+| 12 CQRS - commands and queries | Assignment 2: the read model is READY; a booking (command) read back at once from the read model (`X-Read-Side: read-model`, `X-Data-Source: read-model`, `X-Read-Model-Updated`); the same query from the write side with `X-Read-Side: write-side`; another instance's read model gets it (eventual consistency, polled every 2 s); a cancel via instance 2 read back there at once; the utilization report and the departures board come from the read model. Skipped without a read database (`--h2`) |
 | 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **503** "could not be reached" with `Retry-After`, list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances) |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
@@ -287,8 +317,25 @@ isolated from the others and **survives restarts**:
 * Look inside a database: `docker compose exec flightops-db-1 psql -U flightops -d flightops`,
   then e.g. `select flight_number, aircraft_registration, status from scheduled_flight;` (the registration is
   encrypted: `enc:v1:...`, see Security)
-* Without Docker: `./scripts/run-local.sh --h2` or the VS Code "H2 in-memory" configuration (data is lost on stop).
+* Without Docker: `./scripts/run-local.sh --h2` or the VS Code "H2 in-memory" configuration (data is lost on stop,
+  and there is no read database: queries take the CQRS fallback path).
   The automated tests always use in-memory H2, so they need no setup.
+
+### Read databases (CQRS)
+
+Each instance also has **its own MongoDB**, the read model of CQRS (see [CQRS](#cqrs-assignment-2)):
+
+| Instance | Read database container | Host port | Stored in (Docker volume) |
+|---|---|---|---|
+| 1 | `flightops-read-db-1` | 27018 | `flightops-read-db-1-data` |
+| 2 | `flightops-read-db-2` | 27019 | `flightops-read-db-2-data` |
+| 3 | `flightops-read-db-3` | 27020 | `flightops-read-db-3-data` |
+
+* Started with the PostgreSQL containers (`docker compose up`, `./scripts/run-local.sh`). It can always be rebuilt
+  from the write side: `docker compose down -v` (or deleting one volume) loses nothing the write databases don't have.
+* Look inside: `docker compose exec flightops-read-db-1 mongosh -u flightops -p flightops --authenticationDatabase admin flightops_read`,
+  then e.g. `db.flights.countDocuments()`, `db.aircraft_stats.findOne()` (registration, model and airports are
+  encrypted, as in PostgreSQL).
 
 ## Kubernetes (auto-scaling)
 
@@ -369,8 +416,15 @@ instance of each other service was running, so their other two instances show `O
   `X-Partial-Result`) until one of them is back. A new booking for that aircraft is still accepted by the instance
   that receives it, with a best-effort overlap check; it reaches the holders when they are back (an overlap is then
   logged as `REPLICATION CONFLICT`). `REPLICATION_FACTOR` can raise the number of copies.
-* **Reports ask every instance** (utilization, fuel efficiency), so they don't get faster with more instances
-  (load test in [docs/architecture.md](docs/architecture.md#horizontal-scaling)).
+* **Read model: lists are eventually consistent on the instances not involved in a change.** The instance that
+  received a change has it in its read model at once; the others learn it at their next sync (up to 30 s) until the
+  events go through the message broker (next step of Assignment 2). A single flight is always found (a miss is
+  looked up on the write side), and `X-Read-Side: write-side` gives a read that sees every change.
+* **Reports without a read model ask every instance** (utilization, fuel efficiency), so on the fallback path they
+  don't get faster with more instances (load test in [docs/architecture.md](docs/architecture.md#horizontal-scaling)).
+  With the read model they are precomputed and local.
+* **Every instance stores every flight in its read database.** Fine for this system's size; a very large system
+  would shard the read model too (and its lists would again ask several instances).
 * **Kubernetes rebalancing.** Removing two pods at once (e.g. `kubectl scale` by hand) could remove both holders of
   some aircraft before their flights are copied; the auto-scaler removes one pod per minute. For ~15 s after a pod
   joins or leaves, instances may disagree on an aircraft's owner (an overlap is then reported as above).

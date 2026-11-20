@@ -1,5 +1,6 @@
 package pt.isep.sidis.flightops.services;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +32,7 @@ class LocalBookingServiceTest {
     @Mock FlightQueryService flightQueryService;
     @Mock AircraftBookingLocks aircraftBookingLocks;
     @Mock ReplicationOutbox replicationOutbox;
+    @Mock ApplicationEventPublisher events;
 
     @InjectMocks LocalBookingService service;
 
@@ -56,7 +58,7 @@ class LocalBookingServiceTest {
         when(flightQueryService.activeOnPeers("CS-TPA")).thenReturn(List.of());
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        FlightView result = service.book("route-opo-lis", "CS-TPA", dep, arr);
+        FlightView result = service.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPA", dep, arr));
 
         assertThat(result.originIata()).isEqualTo("OPO");
         assertThat(result.destinationIata()).isEqualTo("LIS");
@@ -74,7 +76,7 @@ class LocalBookingServiceTest {
         when(flightQueryService.activeOnPeers("CS-TPA")).thenReturn(List.of());
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        FlightView result = service.book("route-opo-lis", "CS-TPA", dep, arr);
+        FlightView result = service.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPA", dep, arr));
 
         verify(replicationOutbox).flightChanged(argThat(f -> f.getFlightNumber().equals(result.flightNumber())));
     }
@@ -106,7 +108,7 @@ class LocalBookingServiceTest {
         when(aircraftClient.getAircraft(any())).thenReturn(
                 new AircraftInfo("CS-TPA", "UNDER_MAINTENANCE", "A320neo", 6300.0, 24000.0, 160));
 
-        assertThatThrownBy(() -> service.book("route-opo-lis", "CS-TPA", dep, arr))
+        assertThatThrownBy(() -> service.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPA", dep, arr)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("UNDER_MAINTENANCE");
         verify(repository, never()).save(any());
@@ -119,7 +121,7 @@ class LocalBookingServiceTest {
                 new RouteInfo("route-opo-lis", "ACTIVE", 277.0, 350.0, 100, route.origin(), lis));
         when(aircraftClient.getAircraft(any())).thenReturn(aircraft);
 
-        assertThatThrownBy(() -> service.book("route-opo-lis", "CS-TPA", dep, arr))
+        assertThatThrownBy(() -> service.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPA", dep, arr)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("destination airport (LIS)");
     }
@@ -133,7 +135,7 @@ class LocalBookingServiceTest {
                 502.0, 3.8, dep.plusMinutes(10), dep.plusMinutes(90), "SCHEDULED");
         when(flightQueryService.activeOnPeers("CS-TPA")).thenReturn(List.of(onPeer));
 
-        assertThatThrownBy(() -> service.book("route-opo-lis", "CS-TPA", dep, arr))
+        assertThatThrownBy(() -> service.book(new ScheduleFlightCommand("route-opo-lis", "CS-TPA", dep, arr)))
                 .isInstanceOf(IllegalStateException.class);
         verify(repository, never()).save(any());
     }

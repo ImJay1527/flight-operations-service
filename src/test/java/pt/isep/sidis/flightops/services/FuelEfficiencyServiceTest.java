@@ -1,8 +1,10 @@
 package pt.isep.sidis.flightops.services;
 
+import org.junit.jupiter.api.BeforeEach;
+import pt.isep.sidis.flightops.readmodel.DisabledReadModel;
+import pt.isep.sidis.flightops.readmodel.ReadModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import pt.isep.sidis.flightops.api.dto.AircraftFuelEfficiencyDTO;
@@ -37,7 +39,15 @@ class FuelEfficiencyServiceTest {
     @Mock AircraftDirectory aircraftClient;
     @Mock RouteDirectory airportsRoutesClient;
 
-    @InjectMocks FuelEfficiencyService service;
+    FuelEfficiencyService service;
+
+    @BeforeEach
+    void setUp() {
+        ReadModel none = new DisabledReadModel();   // fallback path: the flights of all instances
+        service = new FuelEfficiencyService(flightQueryService, none,
+                new FlightQueries(none, flightQueryService, aircraftClient, airportsRoutesClient, null),
+                aircraftClient, airportsRoutesClient);
+    }
 
     // burn rate = fuel capacity / max range: 20000 / 5000 = 4.0 L/km (A), 10000 / 2000 = 5.0 L/km (B)
     private final AircraftInfo aircraftA = new AircraftInfo("CS-TUA", "AVAILABLE", "737-800", 5000.0, 20000.0, 189);
