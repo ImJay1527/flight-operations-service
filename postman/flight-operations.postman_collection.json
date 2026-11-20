@@ -293,7 +293,8 @@
                   "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
                   "pm.test(\"answered by instance1 (X-Instance)\", () => pm.expect(pm.response.headers.get(\"X-Instance\")).to.eql(\"instance1\"));",
                   "pm.environment.set(\"replicas_flight1\", pm.response.headers.get(\"X-Replicas\") || \"\");",
-                  "pm.environment.set(\"flight_on_instance1\", pm.response.json().flightNumber);"
+                  "pm.environment.set(\"flight_on_instance1\", pm.response.json().flightNumber);",
+                      "pm.test(\"201 with Location: the new flight's URL\", () => pm.expect(pm.response.headers.get(\"Location\")).to.match(new RegExp(\"/api/scheduled-flights/\" + pm.response.json().flightNumber + \"$\")));"
                 ]
               }
             }
@@ -2863,10 +2864,10 @@
         },
         {
           "name": "11c Both holders of CS-TPC stopped",
-          "description": "`docker compose stop flightops-2` and the backup (the script does it). Week 5 p.14 \"simulate instance failure (stop container, verify 404)\" and PL3 p.16: with every copy of the data down, a lookup answers 404. Other aircraft are not affected. A booking is still accepted (AP: availability first): it is made on the instance that received it, with a best-effort overlap check, and copied to the holders when they are back (11d).",
+          "description": "`docker compose stop flightops-2` and the backup (the script does it). Week 5 p.14 \"simulate instance failure (stop container, verify 404)\" and PL3 p.16: with every copy of the data down, a lookup answers 503 Service Unavailable (not 404: the flight exists, it just can't be reached; teacher's feedback at the A1 defense). Other aircraft are not affected. A booking is still accepted (AP: availability first): it is made on the instance that received it, with a best-effort overlap check, and copied to the holders when they are back (11d).",
           "item": [
             {
-              "name": "CS-TPC's flight: 404, its holders could not be reached",
+              "name": "CS-TPC's flight: 503, its holders could not be reached",
               "request": {
                 "method": "GET",
                 "header": [],
@@ -2898,7 +2899,8 @@
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                      "pm.test(\"status 503 (it exists, but every copy is on a stopped instance)\", () => pm.response.to.have.status(503));",
+                      "pm.test(\"Retry-After header\", () => pm.expect(pm.response.headers.get(\"Retry-After\")).to.eql(\"10\"));",
                       "pm.test(\"error says the holders could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));"
                     ]
                   }
@@ -3692,8 +3694,8 @@
                   "      pm.test(\"X-Data-Source: \" + expected.join(\" or \"), () => pm.expect(expected).to.include(pm.response.headers.get(\"X-Data-Source\")));",
                   "      pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"flight_on_instance2\")));",
                   "    } else {",
-                  "      // no copy anywhere else (REPLICATION_FACTOR=1): PL3 p.11 404",
-                  "      pm.test(\"status 404 (no other copy)\", () => pm.response.to.have.status(404));",
+                  "      // no copy anywhere else (REPLICATION_FACTOR=1): it exists but can't be reached -> 503, not 404",
+                  "      pm.test(\"status 503 (no other copy)\", () => pm.response.to.have.status(503));",
                   "      pm.test(\"error mentions: could not be reached\", () => pm.expect(pm.response.json().error).to.include(\"could not be reached\"));",
                   "    }",
                   "  }",

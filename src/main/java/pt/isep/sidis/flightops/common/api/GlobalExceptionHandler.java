@@ -1,5 +1,6 @@
 package pt.isep.sidis.flightops.common.api;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -61,9 +62,15 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.UNAUTHORIZED, "Invalid credentials.");
     }
 
+    /**
+     * 503: an instance or service needed to answer could not be reached; it is temporary, unlike a 404 ("does not
+     * exist"). Retry-After: 10 s, the time an open circuit breaker waits before trying the instance again.
+     */
     @ExceptionHandler(ServiceUnavailableException.class)
     public ResponseEntity<Map<String, String>> handleServiceUnavailable(ServiceUnavailableException ex) {
-        return error(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        Map<String, String> body = new HashMap<>();
+        body.put("error", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "10").body(body);
     }
 
     private ResponseEntity<Map<String, String>> error(HttpStatus status, String message) {

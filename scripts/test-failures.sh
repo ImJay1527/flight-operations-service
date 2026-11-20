@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Failure tests on the whole system (docker compose up): runs Postman folder 11 in phases and stops / starts the
 # containers in between, since Postman can't stop a container by itself (Week 5 p.14 "simulate instance failure
-# (stop container, verify 404)", Week 4 p.11, PL3 p.14/p.16).
+# (stop container, verify 404)", Week 4 p.11, PL3 p.14/p.16). We answer 503 there: the data exists but can't be
+# reached (teacher's feedback at the A1 defense).
 #
 #   ./scripts/test-failures.sh                         all phases, HTTPS environment (the compose instances run TLS)
 #   ./scripts/test-failures.sh --skip-other-services   without 11e (aircraft/airports run on other machines)
 #
 #   11a everything up          records who holds CS-TPC (owner instance2) and books flights
 #   11b flightops-2 stopped    data still readable from the copy, lists complete, the backup takes bookings
-#   11c CS-TPC's backup also   404 for its flights, lists flagged partial; a booking is kept where received (AP)
+#   11c CS-TPC's backup also   503 for its flights, lists flagged partial; a booking is kept where received (AP)
 #   11d both started again     caught up, outbox empty, left-over copy handed off (can take up to a minute)
 #   11e aircraft-1, airports-1 stopped: bookings still checked with their other instances
 #

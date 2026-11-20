@@ -144,7 +144,10 @@ public class ScheduledFlightService {
         if (!remote.items().isEmpty()) {
             return remote.items().get(0);
         }
-        throw new ResourceNotFoundException(remote.notFoundMessage("Scheduled flight not found with number: " + flightNumber));
+        if (remote.mayHideIt(cluster.replicationFactor())) {
+            throw new ServiceUnavailableException(remote.unavailableMessage("scheduled flight " + flightNumber));
+        }
+        throw new ResourceNotFoundException("Scheduled flight not found with number: " + flightNumber);
     }
 
     public List<FlightView> getUpcomingDepartures(String originIata, int hoursWindow) {

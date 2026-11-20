@@ -137,6 +137,9 @@ class TwoInstancesIntegrationTest {
         assertThat(created.getStatusCode().value()).isEqualTo(201);
         assertThat(created.getHeaders().getFirst("X-Instance")).isEqualTo("instance1");
         assertThat(created.getHeaders().getFirst("X-Stored-On")).isEqualTo("instance2");
+        // 201 Created says where the new resource is
+        assertThat(created.getHeaders().getLocation()).hasToString(
+                url1 + "/api/scheduled-flights/" + created.getBody().get("flightNumber"));
 
         ResponseEntity<Map> onOwner = get(url2 + "/api/scheduled-flights/" + created.getBody().get("flightNumber"));
         assertThat(onOwner.getHeaders().getFirst("X-Data-Source")).isEqualTo("local");
@@ -179,14 +182,16 @@ class TwoInstancesIntegrationTest {
 
     @Test
     @Order(6)
-    void withInstance2DownLocalDataStillWorksAndRemoteDataIs404() {
-        // PL3 p.16 test 03: stop instance 2
+    void withInstance2DownLocalDataStillWorksAndRemoteDataIs503() {
+        // PL3 p.16 test 03: stop instance 2. Its data can't be reached (no copies here): 503, not 404 - it exists,
+        // we just can't get it now (teacher's feedback at the A1 defense)
         instance2.close();
 
         assertThat(get(url1 + "/api/scheduled-flights/" + flightOn1).getStatusCode().value()).isEqualTo(200);
 
         ResponseEntity<Map> remote = get(url1 + "/api/scheduled-flights/" + flightOn2);
-        assertThat(remote.getStatusCode().value()).isEqualTo(404);
+        assertThat(remote.getStatusCode().value()).isEqualTo(503);
+        assertThat(remote.getHeaders().getFirst("Retry-After")).isEqualTo("10");
         assertThat((String) remote.getBody().get("error")).contains("could not be reached");
 
         // lists still answer (200), but say they are incomplete (P1 p.12 "partial response scenarios")

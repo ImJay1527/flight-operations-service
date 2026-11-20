@@ -12,6 +12,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.cluster.Cluster;
 import pt.isep.sidis.flightops.common.exceptions.ResourceNotFoundException;
+import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
 import pt.isep.sidis.flightops.peers.PeerClient;
 import pt.isep.sidis.flightops.peers.PeerResult;
@@ -116,13 +117,36 @@ class FlightQueryServiceTest {
     }
 
     @Test
-    void findByIdIs404WhenAPeerIsDownAndSaysSo() {
-        // PL3 p.11 / p.16 test 03: stop instance 2, GET remote-only data on instance 1 -> 404
+    void findByIdIs404WhenFewerPeersThanCopiesAreDown() {
+        // 2 copies of every flight, 1 peer down: one of its copies answered "not here", so it really doesn't exist
+        when(cluster.replicationFactor()).thenReturn(2);
         when(repository.findById("F-1")).thenReturn(Optional.empty());
         when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(), 1));
 
         assertThatThrownBy(() -> service.findById("F-1"))
                 .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("1 peer instance(s) could not be reached");
+                .hasMessage("Scheduled flight not found with number: F-1");
+    }
+
+    @Test
+    void findByIdIs503WhenEveryCopyMayBeOnPeersThatAreDown() {
+        // teacher's feedback at the A1 defense: "couldn't ask" is 503, not 404 (2 copies, 2 peers down)
+        when(cluster.replicationFactor()).thenReturn(2);
+        when(repository.findById("F-1")).thenReturn(Optional.empty());
+        when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(), 2));
+
+        assertThatThrownBy(() -> service.findById("F-1"))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining("2 instance(s) could not be reached");
+    }
+
+    @Test
+    void findByIdIs503WithoutCopiesWhenAPeerIsDown() {
+        // PL3 p.16 test 03 (REPLICATION_FACTOR=1): stop instance 2, GET its data on instance 1 -> 503
+        when(cluster.replicationFactor()).thenReturn(1);
+        when(repository.findById("F-1")).thenReturn(Optional.empty());
+        when(peers.getOne(anyString(), eq(FlightView.class), eq("F-1"))).thenReturn(new PeerResult<>(List.of(), 1));
+
+        assertThatThrownBy(() -> service.findById("F-1")).isInstanceOf(ServiceUnavailableException.class);
     }
 }

@@ -17,10 +17,18 @@ public record PeerResult<T>(List<T> items, int unreachable, String answeredBy) {
         return unreachable > 0;
     }
 
-    /** The 404 message, mentioning unreachable peers (the resource might exist there). */
-    public String notFoundMessage(String base) {
-        return isPartial()
-                ? base + " (" + unreachable + " peer instance(s) could not be reached; it may exist there)"
-                : base;
+    /**
+     * True if something not found may still exist on the peers that could not be asked. Every flight is kept on
+     * {@code replicationFactor} instances, this one included: unless at least that many peers did not answer, one of
+     * its copies was asked, so "not found" really means it does not exist (404). Otherwise we can't tell (503).
+     */
+    public boolean mayHideIt(int replicationFactor) {
+        return unreachable > 0 && unreachable >= replicationFactor;
+    }
+
+    /** The 503 message when {@link #mayHideIt} is true; {@code what} e.g. "scheduled flight F-1". */
+    public String unavailableMessage(String what) {
+        return "Nothing found for " + what + " on the instances that answered, but " + unreachable
+                + " instance(s) could not be reached and the data may be stored there. Try again later.";
     }
 }
