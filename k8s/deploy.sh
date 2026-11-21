@@ -32,8 +32,10 @@ kubectl version >/dev/null 2>&1 \
   || { echo "Kubernetes is not running: Docker Desktop -> Kubernetes -> Create cluster (kubeadm)."; exit 1; }
 echo "Kubernetes context: $(kubectl config current-context)"
 
-if ! grep -q "flightops-0.flightops-peers" <(keytool -printcert -file certs/flightops.crt 2>/dev/null); then
-  echo "The certificates have no Kubernetes names yet: run ./scripts/generate-dev-certs.sh first."; exit 1
+if ! grep -q "flightops-0.flightops-peers" <(keytool -printcert -file certs/flightops.crt 2>/dev/null) \
+   || [[ ! -f certs/rabbitmq.key ]]; then
+  echo "The certificates are missing or old (no Kubernetes names or no rabbitmq certificate):"
+  echo "run ./scripts/generate-dev-certs.sh first."; exit 1
 fi
 
 # ---------- images (Kubernetes uses the images of the local Docker engine) ----------
@@ -74,6 +76,8 @@ kubectl -n "$NS" create secret generic flightops-secrets \
   --from-literal=SSL_PASSWORD="${SSL_PASSWORD:-changeit}" \
   --from-literal=DATA_ENCRYPTION_KEY="${DATA_ENCRYPTION_KEY:-9BvH3kXoOq3m1o9mJmPFjB6m4cO1kz3Hqk2iY7G1M8o=}" \
   --dry-run=client -o yaml | apply
+kubectl -n "$NS" create secret generic rabbitmq-certs   --from-file=certs/ca.crt --from-file=certs/rabbitmq.crt --from-file=certs/rabbitmq.key --dry-run=client -o yaml | apply
+kubectl -n "$NS" create configmap rabbitmq-config --from-file=rabbitmq/tls.conf --dry-run=client -o yaml | apply
 kubectl -n "$NS" create secret generic rabbitmq-secrets \
   --from-literal=RABBITMQ_USER="${RABBITMQ_USER:-guest}" \
   --from-literal=RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-guest}" \
@@ -89,7 +93,19 @@ kubectl -n "$NS" create configmap flightops-config \
 
 # ---------- services ----------
 REDEPLOY=""
-kubectl -n "$NS" get statefulset flightops >/dev/null 2>&1 && REDEPLOY=yes
+if kubectl -n "$NS" get statefulset flightops >/dev/null 2>&1; then
+  REDEPLOY=yes
+  # A StatefulSet's disks (volumeClaimTemplates) can't be changed in place, and a running pod can't get a new disk:
+  # an Assignment 1 deployment has only "data", Assignment 2 adds "read-data" (the read database). Delete the
+  # StatefulSet with its pods; the disks stay (persistentVolumeClaimRetentionPolicy: Retain) and the new pods get
+  # them back, plus the new one. Flight Operations is down for a minute, once.
+  if [[ "$(kubectl -n "$NS" get statefulset flightops -o jsonpath='{.spec.volumeClaimTemplates[*].metadata.name}')" \
+        != "data read-data" ]]; then
+    echo "The StatefulSet's disks changed (read database added): recreating it, the data is kept..."
+    kubectl -n "$NS" delete statefulset flightops --wait=true
+    REDEPLOY=""
+  fi
+fi
 kubectl apply -f k8s/rabbitmq.yaml -f k8s/flightops.yaml -f k8s/hpa.yaml
 if [[ -z "$STUB" ]]; then
   sed -e "s/replicas: 3/replicas: $OTHERS/" -e "s/name: INSTANCES, value: \"3\"/name: INSTANCES, value: \"$OTHERS\"/" \

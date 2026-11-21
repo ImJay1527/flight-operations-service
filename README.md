@@ -15,6 +15,28 @@ deployment): [docs/c4-model.md](docs/c4-model.md). Screenshots of the running sy
 Known limitations: [below](#known-limitations). Key benefits, performance measurements, consistency model and scaling
 decisions: [docs/architecture.md](docs/architecture.md).
 
+## Assignment 2: each requirement and its evidence
+
+Requirements from the statement (P2 p.2) and from the RabbitMQ slides (RMQ p.15, best practices). Postman folders:
+[Postman](#postman-pl3-p17). The design and the alternatives: [docs/architecture.md](docs/architecture.md).
+
+| Requirement | What was done | Evidence |
+|---|---|---|
+| **CQRS** for the service's core resources | Commands (book, cancel, complete) on the write side, PostgreSQL. Queries (a flight, lists, reports, departures, unicorns) on the read side: a **MongoDB of its own per instance**, with every flight of the cluster. It is updated after each change and by the events, and rebuilt from the write side. If the read side can't answer, the write side answers instead | Postman **12**; headers `X-Read-Side`, `X-Read-Model`; `CqrsIntegrationTest`, `MongoReadModelTest`, `ReadDatabaseDownTest`; [CQRS](docs/architecture.md#cqrs-assignment-2) |
+| Evidence of **independent read and write models** | Two databases with different engines and shapes: write = normalized rows, read = documents and reports already computed. Each query says which side answered | Postman **12** (`X-Read-Side: read-model`, `X-Data-Source`), `/api/cluster/metrics` → `lookupResponseTimes.readModel`; [Which side answered](docs/architecture.md#which-side-answered-evidence) |
+| **AMQP and a message broker** between services | RabbitMQ (`rabbitmq:3-management`), topic exchange `aisafe.events`. Publishes `flight.scheduled`, `flight.cancelled` and `flight.completed` through a transactional outbox with publisher confirms. Consumes `aircraft.*`, `airport.*` and `route.*` into local copies, so a booking doesn't call the other services | Postman **13**, **15**, **16**; `MessagingIntegrationTest` (real broker), `AircraftEventsTest`, `RouteEventsTest`; RabbitMQ UI http://localhost:15672; [Messaging](docs/architecture.md#messaging-assignment-2) |
+| **Demonstration of asynchronous communication** | A completed flight reaches another service's queue with its flight hours. A change made on one instance reaches the other instances' read models in milliseconds, and with the broker stopped it waits in the outbox | Postman **13** (`flight.completed` on the instance with no copy), **11f / 11g** (`scripts/test-failures.sh`) |
+| External endpoints stay **HTTP REST** | Every client endpoint is REST (`/api/**`); AMQP only between services and instances | Swagger UI `/swagger-ui.html`; every Postman folder |
+| **Database per service instance** | Each instance has its own PostgreSQL (write) and its own MongoDB (read), not shared with anyone. The other services' data is reached by REST or by their events, never by their databases | `docker-compose.yml` (`flightops-db-<i>`, `flightops-read-db-<i>`), `k8s/flightops.yaml` (both databases in each pod); [Database](#database) |
+| **Data isolation across instances** | Flights sharded by aircraft (each on its owner plus one backup); every other instance asks the holders | Postman **09** (sharding), **07** (three instances); `TwoInstancesIntegrationTest`, `ReplicationIntegrationTest` |
+| **At least two instances** of each service | 3 instances (Docker Compose and `run-local.sh`); Kubernetes: 3 to 5 with auto-scaling | Postman **07**; dashboard; [Kubernetes](#kubernetes-auto-scaling) |
+| **Integration tests** in Postman | 142 requests with test scripts, including the failure phases run by `scripts/test-failures.sh` | `postman/`; [Postman](#postman-pl3-p17) |
+| Mock **`/api/v2/unicorns`**, and how it fits CQRS | The airplanes' moods (FLYING, EXCITED, TIRED, BORED, HAPPY): a query computed from the read model, never a write | Postman **14**; `UnicornMoodTest`, `CqrsIntegrationTest`; [The unicorns endpoint: a query](docs/architecture.md#the-unicorns-endpoint-a-query) |
+| Documentation: **design decisions, consistency model, communication patterns, fault tolerance** | Each part has its decisions and alternatives, failure table and consistency section | [Consistency model](docs/architecture.md#consistency-model), [Topology](docs/architecture.md#topology), CQRS and Messaging "Decisions and alternatives" and "Failures", [C4 model](docs/c4-model.md), [contract](docs/service-contracts.md) |
+| RabbitMQ: **ack after processing, dead letters, TTL and queue limits, monitor queue depth** (RMQ p.15) | AUTO ack when the listener returns; 3 attempts, then `flight.events.dlq`; `x-max-length` 100 000, `x-message-ttl` 1 day, `x-expires` 7 days; queue depth, consumers, dead letters and outbox shown per instance | `/api/cluster/health` → `messaging`; dashboard "Broker (AMQP)" chip; `MessagingIntegrationTest` (dead letter) |
+| Security of the new connections | The broker connection is encrypted too: AMQPS, TLS 1.3, the broker's certificate checked against the AISafe CA | Postman **13** (RabbitMQ management API: every instance connection on 5671 with `tlsv1.3`); [Security](#security) |
+| **Source code and deployment instructions** | Docker Compose, `run-local.sh`, Kubernetes, control panel | [Run](#run), [Kubernetes](#kubernetes-auto-scaling) |
+
 ## Control panel (no commands needed)
 
 **Windows:** double-click `Launcher.cmd`. **Mac / Linux:** `python3 launcher.py`. (Needs Python 3; the panel says
@@ -193,7 +215,7 @@ services rely on: [docs/service-contracts.md](docs/service-contracts.md#events-a
 
 | Requirement | How |
 |---|---|
-| Encryption in transit | `tls` profile: HTTPS, **TLS 1.3 only** (a TLS 1.2 client is refused), server and outgoing calls. Outgoing calls to peers and other services trust **only** the AISafe dev CA (`certs/truststore.p12`), and hostname verification stays on. The load balancer also speaks TLS 1.3 on both sides and verifies the instances' certificates. Certificates come from `scripts/generate-dev-certs.sh` (one CA, one certificate per service + the load balancer). |
+| Encryption in transit | `tls` profile: HTTPS, **TLS 1.3 only** (a TLS 1.2 client is refused), server and outgoing calls. Outgoing calls to peers and other services trust **only** the AISafe dev CA (`certs/truststore.p12`), and hostname verification stays on. The load balancer also speaks TLS 1.3 on both sides and verifies the instances' certificates. The connection to the message broker too: **AMQPS** (port 5671, TLS 1.3, the broker's certificate checked against the same CA and hostname). Certificates come from `scripts/generate-dev-certs.sh` (one CA, kept when it is run again; one certificate per service, the load balancer and the broker). |
 | Encryption at rest | The route assignment of each flight (route, aircraft, model, airports) is stored **AES-256 encrypted** (`common.crypto`: deterministic authenticated encryption, SIV construction, so equality queries still work and tampering is detected). Key from `DATA_ENCRYPTION_KEY` (256 bit, base64), values versioned `enc:v1:` for key rotation; existing rows are encrypted at startup. `select aircraft_registration from scheduled_flight` shows only `enc:v1:...` |
 | Inter-service authentication | Every service-to-service call carries a short-lived JWT (5 min, renewed automatically: rotating tokens, P1 p.16) with role `SERVICE` and the calling service as subject. `/internal/**` accepts only that role. |
 | Access control | User roles from the login JWT (`@PreAuthorize`). A service token can't call `/api/**`, and a user token can't call `/internal/**`. |
@@ -230,7 +252,7 @@ start them in Docker (Testcontainers) and are skipped when Docker is not running
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (141 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (142 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -380,10 +402,13 @@ Each instance also has **its own MongoDB**, the read model of CQRS (see [CQRS](#
 
 ### Message broker
 
-One RabbitMQ for the whole system (see [Messaging](#messaging-assignment-2)): container `rabbitmq`, AMQP on 5672,
+One RabbitMQ for the whole system (see [Messaging](#messaging-assignment-2)): container `rabbitmq`, AMQPS (TLS 1.3)
+on 5671 when the dev certificates exist (`rabbitmq/tls.conf`), plain AMQP on 5672 for the services without TLS,
 management UI on http://localhost:15672 (`guest` / `guest`; `RABBITMQ_USER` / `RABBITMQ_PASSWORD` override them),
 data in the Docker volume `rabbitmq-data`. Started with the databases (`docker compose up`, `./scripts/run-local.sh`).
-Each instance's events wait in its table `event_outbox` until the broker confirms them.
+Each instance's events wait in its table `event_outbox` until the broker confirms them. With the `tls` profile the
+instances connect on 5671 (AMQPS); without it (`run-local.sh` without `--tls`) on 5672. RabbitMQ's UI shows it per
+connection (Connections → TLS); Postman folder 13 checks it.
 
 ## Kubernetes (auto-scaling)
 
@@ -413,8 +438,16 @@ then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WS
 
 * **Each instance is a pod** of the StatefulSet `flightops` (`k8s/flightops.yaml`): `flightops-0`, `flightops-1`, ...
   The pod name is the instance name, so an aircraft keeps its owner when a pod restarts. The pod also runs the
-  instance's **own PostgreSQL** (a second container) with its own disk: a pod added by the auto-scaler brings its
-  database along.
+  instance's **own PostgreSQL** (write side) and **own MongoDB** (read side, CQRS), each with its own disk: a pod
+  added by the auto-scaler brings its databases along.
+* **Message broker**: one RabbitMQ pod (`k8s/rabbitmq.yaml`, StatefulSet with its own disk) at `rabbitmq:5671`
+  (AMQPS; its certificate and `rabbitmq/tls.conf` come from a Secret and a ConfigMap made by `deploy.sh`); each
+  instance has its queue `flight.events.flightops-<i>` (`kubectl -n aisafe exec rabbitmq-0 -- rabbitmqctl
+  list_queues name consumers messages`). The pods run with `enableServiceLinks: false`: otherwise Kubernetes would
+  set `RABBITMQ_PORT=tcp://<ip>:5672` for the `rabbitmq` Service and break the port setting.
+* **Upgrading an Assignment 1 deployment**: `deploy.sh` sees that the StatefulSet's disks changed (the read database
+  was added), deletes the StatefulSet and creates it again. The disks are kept, so no data is lost, but Flight
+  Operations is down for about a minute, once.
 * **Service discovery instead of a fixed list** (PL3 p.25): the `k8s` profile replaces `flightops.cluster` by
   `flightops.discovery.url-pattern`. Every 5 s each instance looks up `flightops-{i}.flightops-peers` (the DNS names
   the headless Service gives the pods); the names that exist are the instances (`cluster.DnsDiscovery`).
@@ -471,8 +504,8 @@ instance of each other service was running, so their other two instances show `O
 * **One broker node.** RabbitMQ is a single point of failure for the events (not for bookings or queries): while it
   is down, events wait in the outboxes and the read models rely on the sync. A 3-node cluster with quorum queues
   would remove it.
-* **AMQP is not encrypted.** The instances talk to the broker over plain AMQP (port 5672), unlike every HTTP call
-  (TLS 1.3). The outbox payload is encrypted at rest; AMQPS (5671, the same dev CA) is the next step.
+* **The broker still accepts plain AMQP** (port 5672) for the other two services, which don't use TLS yet. Flight
+  Operations uses AMQPS (5671). Once they move, 5672 can be closed.
 * **Reports without a read model ask every instance** (utilization, fuel efficiency), so on the fallback path they
   don't get faster with more instances (load test in [docs/architecture.md](docs/architecture.md#horizontal-scaling)).
   With the read model they are precomputed and local.
@@ -504,4 +537,4 @@ instance of each other service was running, so their other two instances show `O
 - [x] Assignment 2: consume the aircraft events (local copy instead of a REST call when booking)
 - [x] Assignment 2: consume the route and airport events (airports-routes-service)
 - [x] Assignment 2: `/api/v2/unicorns`
-- [ ] AMQPS (TLS) to the broker
+- [x] AMQPS (TLS) to the broker

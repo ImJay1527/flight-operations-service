@@ -93,7 +93,8 @@ rendezvous-hash ranking; the flight JSON exchanged on these endpoints carries a 
 ## Events (AMQP, Assignment 2)
 
 Between services, changes are announced as events through **one RabbitMQ broker** (`rabbitmq:3-management`, host
-`rabbitmq`, port 5672, dev user `guest` / `guest`, env `RABBITMQ_HOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`). The
+`rabbitmq`, port 5672 (AMQP) and 5671 (AMQPS, TLS 1.3, certificate of the AISafe dev CA), dev user `guest` /
+`guest`, env `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`). The
 external API stays REST.
 
 | What | Name |

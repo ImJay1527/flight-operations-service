@@ -1,6 +1,8 @@
 # The message broker of the whole system (AMQP): one RabbitMQ node with its own disk, so durable queues and
-# persistent messages survive a restart. Reached at rabbitmq:5672 (AMQP) and rabbitmq:15672 (management UI:
-# kubectl -n aisafe port-forward svc/rabbitmq 15672). Deployed by k8s/deploy.sh, which creates rabbitmq-secrets.
+# persistent messages survive a restart. Reached at rabbitmq:5671 (AMQPS, TLS 1.3: what Flight Operations uses),
+# rabbitmq:5672 (plain AMQP, for the services without TLS) and rabbitmq:15672 (management UI:
+# kubectl -n aisafe port-forward svc/rabbitmq 15672). Deployed by k8s/deploy.sh, which creates rabbitmq-secrets,
+# rabbitmq-certs (its certificate, from ./scripts/generate-dev-certs.sh) and rabbitmq-config (rabbitmq/tls.conf).
 # One node is a single point of failure for the events only: bookings and queries keep working while it is down
 # (the outbox keeps the events, the read models are repaired from the write side). A cluster of 3 nodes with quorum
 # queues would remove it; not needed for this assignment.
@@ -14,6 +16,7 @@ spec:
   selector: { app: rabbitmq }
   ports:
     - { name: amqp, port: 5672 }
+    - { name: amqps, port: 5671 }
     - { name: management, port: 15672 }
 ---
 apiVersion: apps/v1
@@ -36,6 +39,7 @@ spec:
           image: rabbitmq:3-management
           ports:
             - { name: amqp, containerPort: 5672 }
+            - { name: amqps, containerPort: 5671 }
             - { name: management, containerPort: 15672 }
           env:
             - name: RABBITMQ_DEFAULT_USER
@@ -51,6 +55,13 @@ spec:
             limits: { memory: 512Mi }
           volumeMounts:
             - { name: data, mountPath: /var/lib/rabbitmq }
+            - { name: certs, mountPath: /certs, readOnly: true }
+            - { name: config, mountPath: /etc/rabbitmq/conf.d/20-tls.conf, subPath: tls.conf, readOnly: true }
+      volumes:
+        - name: certs
+          secret: { secretName: rabbitmq-certs }
+        - name: config
+          configMap: { name: rabbitmq-config }
   volumeClaimTemplates:
     - metadata: { name: data }
       spec:

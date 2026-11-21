@@ -33,6 +33,9 @@ spec:
       labels:
         app: aircraft
     spec:
+      # no Docker-link variables for each Service: the one for the rabbitmq Service would set
+      # RABBITMQ_PORT=tcp://<ip>:5672 and break the port setting
+      enableServiceLinks: false
       containers:
         - name: aircraft
           image: aircraft:dev
@@ -93,6 +96,9 @@ spec:
       labels:
         app: airports
     spec:
+      # no Docker-link variables for each Service: the one for the rabbitmq Service would set
+      # RABBITMQ_PORT=tcp://<ip>:5672 and break the port setting
+      enableServiceLinks: false
       containers:
         - name: airports
           image: airports:dev
