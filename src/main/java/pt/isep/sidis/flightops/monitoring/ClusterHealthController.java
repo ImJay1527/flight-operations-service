@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import pt.isep.sidis.flightops.cluster.Cluster;
+import pt.isep.sidis.flightops.messaging.MessagingStatus;
 import pt.isep.sidis.flightops.readmodel.ReadModel;
 import pt.isep.sidis.flightops.readmodel.ReadModelState;
 import pt.isep.sidis.flightops.replication.ReplicationSender;
@@ -28,27 +29,29 @@ public class ClusterHealthController {
     private final Cluster cluster;
     private final ReplicationSender replication;
     private final ReadModel readModel;
+    private final MessagingStatus messaging;
     private final String self;
 
     public ClusterHealthController(HealthRegistry registry, Cluster cluster, ReplicationSender replication,
-                                   ReadModel readModel,
+                                   ReadModel readModel, MessagingStatus messaging,
                                    @Value("${spring.application.name}") String name,
                                    @Value("${server.port}") String port) {
         this.registry = registry;
         this.cluster = cluster;
         this.replication = replication;
         this.readModel = readModel;
+        this.messaging = messaging;
         this.self = name + ":" + port;
     }
 
     @Operation(summary = "Health of the peers and remote instances, as seen by this instance, and the copies of "
             + "flights still waiting to be sent to each peer (replicationBacklog), and the state of this instance's "
-            + "CQRS read model (readModel)")
+            + "CQRS read model (readModel) and its message broker connection (messaging)")
     @PreAuthorize("hasAnyRole('ADMIN', 'ATCC', 'BACKOFFICE_OPERATOR')")
     @GetMapping("/health")
     public ClusterHealth health() {
         return new ClusterHealth(self, registry.snapshot(), cluster.replicationFactor(), replication.backlog(),
-                readModel.state().snapshot());
+                readModel.state().snapshot(), messaging.snapshot());
     }
 
     @Operation(summary = "Which instances hold an aircraft's flights (sharding by registration, P1 p.15, plus "
@@ -62,7 +65,8 @@ public class ClusterHealthController {
     }
 
     public record ClusterHealth(String instance, List<EndpointHealth.Snapshot> endpoints, int replicationFactor,
-                                Map<String, Long> replicationBacklog, ReadModelState.Snapshot readModel) {
+                                Map<String, Long> replicationBacklog, ReadModelState.Snapshot readModel,
+                                MessagingStatus.Snapshot messaging) {
     }
 
     public record Owner(String registration, String owner, String ownerUrl, List<String> replicas,

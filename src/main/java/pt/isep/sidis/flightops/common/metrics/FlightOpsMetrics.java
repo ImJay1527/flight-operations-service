@@ -19,6 +19,8 @@ import java.util.function.BooleanSupplier;
  *   <li>{@value #REMOTE_CALLS}: every call to another instance, by outcome - peer failure rates;</li>
  *   <li>{@value #REMOTE_HEALTHY}: 1/0 per instance - peer availability;</li>
  *   <li>{@value #REPLICATION}: copies sent to and applied from other instances, and conflicts found;</li>
+ *   <li>{@value #MESSAGES}: events published to and received from the message broker, and the ones that
+ *       failed;</li>
  *   <li>Spring Boot's {@code http.server.requests}: requests served - load distribution.</li>
  * </ul>
  * Summary: GET /api/cluster/metrics.
@@ -30,6 +32,7 @@ public class FlightOpsMetrics {
     public static final String REMOTE_CALLS = "flightops.remote.calls";
     public static final String REMOTE_HEALTHY = "flightops.remote.healthy";
     public static final String REPLICATION = "flightops.replication";
+    public static final String MESSAGES = "flightops.messages";
 
     public static final String READ_MODEL = "read_model";
     public static final String LOCAL = "local";
@@ -73,6 +76,16 @@ public class FlightOpsMetrics {
         Counter.builder(REPLICATION)
                 .description("Copies of flights sent to / applied from other instances, and conflicts found")
                 .tag("event", event)
+                .register(registry)
+                .increment();
+    }
+
+    /** @param event published | received | ignored | failed; {@code routingKey} e.g. flight.scheduled */
+    public void recordMessage(String event, String routingKey) {
+        Counter.builder(MESSAGES)
+                .description("Events published to / received from the message broker (RabbitMQ)")
+                .tag("event", event)
+                .tag("routing_key", routingKey == null ? "unknown" : routingKey)
                 .register(registry)
                 .increment();
     }

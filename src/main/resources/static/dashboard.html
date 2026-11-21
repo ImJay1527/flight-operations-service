@@ -271,6 +271,7 @@
           ${i.flightsToHandOff ? `<dt>Being handed off</dt><dd>${i.flightsToHandOff}</dd>` : ''}
           <dt>Copies waiting</dt><dd>${backlogN}</dd>
           <dt>Read model (CQRS)</dt><dd>${readModelChip(i.readModel, now)}</dd>
+          <dt>Broker (AMQP)</dt><dd>${messagingChip(i.messaging)}</dd>
         </dl>
         <div class="chips">${peers.map(peerChip).join('') || '<span class="muted">no peers</span>'}</div>
       </div>`;
@@ -327,6 +328,20 @@
     const last = rm.lastProjection || rm.lastSync;
     const note = rm.state === 'READY' ? (last ? 'updated ' + since(last, now) + ' ago' : '') : (rm.reason || '');
     return `<span class="chip" title="${esc(note)}"><span class="dot ${cls}"></span>${esc(rm.state)}</span>`;
+  }
+  // up / down, then what waits: in this instance's queue, in the outbox (not yet confirmed by the broker), dead letters
+  function messagingChip(m) {
+    if (!m) return '-';
+    if (!m.enabled) return '<span class="chip" title="no amqp profile"><span class="dot bad"></span>OFF</span>';
+    const up = m.brokerUp === true;
+    const cls = !up ? 'bad' : (m.outbox > 0 || m.deadLetters > 0) ? 'warn' : 'ok';
+    const parts = [];
+    if (m.queueDepth != null) parts.push('queue ' + m.queueDepth);
+    if (m.outbox > 0) parts.push('outbox ' + m.outbox);
+    if (m.deadLetters > 0) parts.push('dead letters ' + m.deadLetters);
+    const note = (m.queue || '') + (m.lastError ? ' - ' + m.lastError : '');
+    return `<span class="chip" title="${esc(note)}"><span class="dot ${cls}"></span>${up ? 'UP' : 'DOWN'}</span>`
+        + (parts.length ? ' <small>' + esc(parts.join(', ')) + '</small>' : '');
   }
   function hostOf(url) { try { return new URL(url).host; } catch { return url; } }
   function since(iso, now) {

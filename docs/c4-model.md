@@ -60,6 +60,7 @@ Sources: `docs/c4/*.mmd` and `docs/diagrams/*.mmd` (Mermaid, kept in git next to
 |---|---|---|
 | Flight Operations API | Java 21, Spring Boot | REST API. **3 instances** (Kubernetes: 3 to 5, auto-scaled). Flights are sharded by aircraft and each is kept on 2 instances (owner + backup); an instance asks the others for what it doesn't hold |
 | Flight database (write side) | PostgreSQL 16 | **one per instance**: that instance's flights, the replication outbox, the users. Route, aircraft and airports of each flight are encrypted (AES-256). Changed by commands only |
+| Message broker | RabbitMQ 3 (AMQP) | **one for the whole system**: exchange `aisafe.events`, one queue per instance of every service (`flight.events.<instance>`), dead letters in `flight.events.dlq`. Carries every change as an event: to the other flight-ops instances' read models and to the other services ([Messaging](architecture.md#messaging-assignment-2)) |
 | Read database (CQRS read model) | MongoDB 7 | **one per instance**: every flight of the cluster and the reports already computed (`flights`, `aircraft_stats`, `route_stats`), the same fields encrypted. Answers the queries; updated after every change and rebuilt from the write side ([CQRS](architecture.md#cqrs-assignment-2)) |
 | Load balancer | nginx (Docker Compose) or a Kubernetes Service | one address for the clients; requests go to healthy instances only |
 | Dashboard | HTML + JavaScript in the browser (served by the API) | live view of all instances, refreshed every 2 s |
@@ -156,10 +157,11 @@ other. Every package may use `common`.
 | Group | Package | Classes | Purpose | Imports (besides `common`) |
 |---|---|---|---|---|
 | Entry points | `api` | 6 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
-| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `messaging`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
 | Entry points | `security` | 5 | sign-in, users | - |
 | Entry points | `bootstrap` | 1 | sample data | `cluster`, `domain`, `repositories`, `security` |
-| Application | `services` | 13 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Application | `services` | 14 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Messaging (AMQP) | `messaging` | 6 | AMQP (RabbitMQ): outbox relay, flight events, consumer | `api.dto`, `domain`, `events`, `readmodel`, `repositories` |
 | Read side (CQRS) | `readmodel` | 13 | CQRS read side: read database (MongoDB), projections, sync | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
 | Distribution | `replication` | 4 | outbox, copies, catch-up | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
 | Distribution | `peers` | 3 | calls to the other instances | `api.dto`, `cluster`, `resilience` |
@@ -167,10 +169,10 @@ other. Every package may use `common`.
 | Integration | `clients` | 8 | calls to the other services | `resilience` |
 | Integration | `stub` | 2 | built-in data (test mode) | `clients` |
 | Integration | `resilience` | 5 | retry, circuit breaker, health | - |
-| Data | `repositories` | 3 | Spring Data JPA | `domain` |
+| Data | `repositories` | 4 | Spring Data JPA | `domain` |
 | Data | `events` | 1 | domain events (write side -> read side) | `api.dto` |
 | Data | `api.dto` | 8 | request / response objects | `domain` |
-| Data | `domain` | 4 | entities | - |
+| Data | `domain` | 5 | entities | - |
 | Shared | `common` | 14 | crypto, exceptions, HTTP client, JWT, metrics, tracing | - |
 
 No package cycles: no two packages import each other.

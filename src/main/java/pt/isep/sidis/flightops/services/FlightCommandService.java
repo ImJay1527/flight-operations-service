@@ -22,6 +22,7 @@ import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.UnknownHostException;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * The write side of CQRS: handles the commands. Reads are not here: they are answered by {@link FlightQueries}.
@@ -121,20 +122,29 @@ public class FlightCommandService {
      * be reached is it cancelled here (the outbox then sends the change to them).
      */
     public FlightView handle(CancelFlightCommand command) {
-        String flightNumber = command.flightNumber();
+        return changeFlight(command.flightNumber(), "cancel", localBookings::cancel);
+    }
+
+    /** Marks the flight as completed (landed), routed the same way as a cancellation. */
+    public FlightView handle(CompleteFlightCommand command) {
+        return changeFlight(command.flightNumber(), "complete", localBookings::complete);
+    }
+
+    private FlightView changeFlight(String flightNumber, String action, Function<String, FlightView> locally) {
+        String internalPath = "/internal/flights/{n}/" + action;
         FlightView copy = flightQueryService.localById(flightNumber);
         if (copy != null && flightQueryService.isLeftover(copy)) {
             PeerResult<FlightView> onHolders = peers.patchOneOn(cluster.replicasOf(copy.aircraftRegistration()),
-                    "/internal/flights/{n}/cancel", FlightView.class, flightNumber);
+                    internalPath, FlightView.class, flightNumber);
             if (!onHolders.items().isEmpty()) {
                 return changedElsewhere(onHolders.items().get(0));
             }
         }
-        FlightView local = localBookings.cancel(flightNumber);
+        FlightView local = locally.apply(flightNumber);
         if (local != null) {
             return local;
         }
-        PeerResult<FlightView> remote = peers.patchOne("/internal/flights/{n}/cancel", FlightView.class, flightNumber);
+        PeerResult<FlightView> remote = peers.patchOne(internalPath, FlightView.class, flightNumber);
         if (!remote.items().isEmpty()) {
             return changedElsewhere(remote.items().get(0));
         }
@@ -146,7 +156,7 @@ public class FlightCommandService {
 
     /** A change a peer made for this request: this instance's read model learns it now (read your own writes). */
     private FlightView changedElsewhere(FlightView flight) {
-        events.publishEvent(new FlightChanged(flight));
+        events.publishEvent(FlightChanged.learnt(flight));
         return flight;
     }
 }

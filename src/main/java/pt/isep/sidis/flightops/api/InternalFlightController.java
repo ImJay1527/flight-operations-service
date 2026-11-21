@@ -75,4 +75,11 @@ public class InternalFlightController {
         FlightView flight = localBookings.cancel(flightNumber);
         return flight == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(flight);
     }
+
+    @Operation(summary = "Complete this instance's copy of a flight (404 if not here); the other copies are updated from here")
+    @PatchMapping("/{flightNumber}/complete")
+    public ResponseEntity<FlightView> complete(@PathVariable String flightNumber) {
+        FlightView flight = localBookings.complete(flightNumber);
+        return flight == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(flight);
+    }
 }

@@ -3,8 +3,8 @@
 #
 # Each instance is one pod of a StatefulSet: flightops-0, flightops-1, ...
 #   - a stable name, which rendezvous hashing needs (an aircraft must keep its owner when a pod restarts);
-#   - its own PostgreSQL in the same pod (a second container) with its own disk, so a pod added by the auto-scaler
-#     comes with its database;
+#   - its own PostgreSQL (write side) and MongoDB (read side) in the same pod, each with its own disk, so a pod added
+#     by the auto-scaler comes with its databases; the events go through the broker of k8s/rabbitmq.yaml;
 #   - a DNS name through the headless Service flightops-peers (flightops-0.flightops-peers), which the instances use
 #     to find each other (service discovery, PL3 p.25) instead of a fixed peer list.
 ---
@@ -122,6 +122,10 @@ spec:
               valueFrom: { secretKeyRef: { name: flightops-secrets, key: READ_DB_PASSWORD } }
             - name: MONGO_URI
               value: "mongodb://flightops:$(READ_DB_PASSWORD)@localhost:27017/flightops_read?authSource=admin"
+            - name: RABBITMQ_USER
+              valueFrom: { secretKeyRef: { name: rabbitmq-secrets, key: RABBITMQ_USER } }
+            - name: RABBITMQ_PASSWORD
+              valueFrom: { secretKeyRef: { name: rabbitmq-secrets, key: RABBITMQ_PASSWORD } }
             - name: JWT_SECRET
               valueFrom: { secretKeyRef: { name: flightops-secrets, key: JWT_SECRET } }
             - name: DATA_ENCRYPTION_KEY

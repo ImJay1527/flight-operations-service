@@ -17,6 +17,7 @@ flowchart TB
         rdb[("<b>Read database (CQRS read model)</b><br/>[Container: MongoDB 7]<br/>one per instance<br/><br/>Every flight of the cluster<br/>and the reports already computed;<br/>same fields encrypted")]
     end
 
+    mq[["<b>Message broker</b><br/>[Container: RabbitMQ 3, AMQP]<br/>one for the whole system<br/><br/>Exchange aisafe.events;<br/>one queue per instance of every service"]]
     am["<b>Aircraft & Maintenance</b><br/>[Software System - another team]"]
     ar["<b>Airports & Routes</b><br/>[Software System - another team]"]
 
@@ -24,8 +25,10 @@ flowchart TB
     users -->|"Opens"| dash
     dash -->|"Status of every instance, every 2 s<br/>[HTTPS, GET /api/cluster/overview]"| lb
     lb -->|"Forwards to a healthy instance<br/>[HTTPS]"| api
-    api -->|"Commands: bookings, cancels<br/>[JDBC]"| db
+    api -->|"Commands: bookings, cancels, completions;<br/>their events (outbox)<br/>[JDBC]"| db
     api -->|"Queries; updated after every change<br/>and rebuilt from the write side<br/>[MongoDB driver]"| rdb
+    api -->|"Publishes flight.* events;<br/>receives the other instances' events<br/>[AMQP]"| mq
+    mq -->|"flight.completed<br/>[AMQP]"| am
     api -->|"Peer forwarding, bookings on the owner,<br/>copies, catch-up, status<br/>[HTTPS /internal/**, service JWT]"| api
     api -->|"GET /internal/aircraft/{reg}<br/>[REST, service JWT]"| am
     api -->|"GET /internal/routes/{id},<br/>/internal/airports/{iata}<br/>[REST, service JWT]"| ar
@@ -36,4 +39,5 @@ flowchart TB
     class users person
     class dash,lb,api,db,rdb container
     class am,ar external
+    class mq container
     style FO fill:none,stroke:#444444,stroke-dasharray:6 4

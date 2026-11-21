@@ -139,16 +139,18 @@ Login: `POST /api/auth/login` with `{"username":"atcc","password":"atcc123"}` (a
 Commands and queries are handled by different code and **different databases** (details, decisions and
 alternatives: [docs/architecture.md](docs/architecture.md#cqrs-assignment-2)):
 
-* **Commands** - `POST /api/scheduled-flights`, `PATCH .../{n}/cancel` - go to the **write side**
-  (`FlightCommandService`, `ScheduleFlightCommand`, `CancelFlightCommand`): each instance's PostgreSQL, sharded by
-  aircraft with two copies, exactly as described above.
+* **Commands** - `POST /api/scheduled-flights`, `PATCH .../{n}/cancel`, `PATCH .../{n}/complete` - go to the
+  **write side** (`FlightCommandService`, `ScheduleFlightCommand`, `CancelFlightCommand`, `CompleteFlightCommand`):
+  each instance's PostgreSQL, sharded by aircraft with two copies, exactly as described above.
 * **Queries** - every `GET` of flights and reports - are answered by the **read side** (`FlightQueries`): each
   instance's own **MongoDB** (`flightops-read-db-<i>`), the **read model**. It holds **every flight of the cluster**
   and the reports already computed (collections `flights`, `aircraft_stats`, `route_stats`), so a query never asks
   another instance.
 * The read model is updated by the write side's `FlightChanged` events right after each commit (so you read your own
-  change back at once), and rebuilt from the write side of every instance at startup, every 30 s and whenever it may
-  have missed something. Applying a change twice or out of order changes nothing (newest revision wins).
+  change back at once), by the other instances' events from the message broker within milliseconds
+  ([Messaging](#messaging-assignment-2)), and rebuilt from the write side of every instance at startup, every 30 s
+  and whenever it may have missed something. Applying a change twice or out of order changes nothing (newest revision
+  wins).
 * If the read model can't be used (read database down, still building), queries take the **fallback path**: the
   write side, asking the instances as in Assignment 1. Send `X-Read-Side: write-side` to ask for that path on purpose.
 * Response headers: `X-Read-Side` (`read-model` / `write-side`), `X-Read-Model` (`READY`, `STALE: reason`, ...),
@@ -156,6 +158,27 @@ alternatives: [docs/architecture.md](docs/architecture.md#cqrs-assignment-2)):
   instance's read model.
 * On with the `cqrs` profile (docker-compose, Kubernetes and `run-local.sh` without `--h2`). Without it (`--h2`, the
   unit tests) there is no read database and every query takes the fallback path.
+
+## Messaging (Assignment 2)
+
+Changes are announced as **events through a RabbitMQ broker** (AMQP); the external API stays REST. Details, failures,
+decisions and alternatives: [docs/architecture.md](docs/architecture.md#messaging-assignment-2); the format other
+services rely on: [docs/service-contracts.md](docs/service-contracts.md#events-amqp-assignment-2).
+
+* Every booking, cancel and completion publishes `flight.scheduled`, `flight.cancelled` or `flight.completed` to the
+  topic exchange `aisafe.events`. The event is stored with the change in the same transaction (**outbox**, table
+  `event_outbox`) and deleted only once the broker has **confirmed** it, so a broker that is down only delays it.
+* **One queue per instance** (`flight.events.<instance>`, publish/subscribe): every instance receives the others'
+  changes and updates its read model within milliseconds. Other services bind their own queues (Aircraft &
+  Maintenance adds the flight hours of `flight.completed`).
+* Acknowledged **after processing**, idempotent (newest revision wins); a message that keeps failing goes to the
+  dead-letter queue `flight.events.dlq` after 3 attempts. Queue limits: 100 000 messages, 1 day per message.
+* `PATCH /api/scheduled-flights/{n}/complete` (ATCC): the flight has landed (only a scheduled flight, not before its
+  departure).
+* `GET /api/cluster/health` -> `messaging` (broker up, queue depth, dead letters, outbox), `GET /api/cluster/metrics`
+  -> `messages`, the dashboard's "Broker (AMQP)" chip, RabbitMQ's UI at http://localhost:15672 (`guest` / `guest`).
+* On with the `amqp` profile (docker-compose, Kubernetes and `run-local.sh` without `--h2`, which also start the
+  broker). Without it (`--h2`, the unit tests) nothing is published and the read models rely on the 30 s sync.
 
 ## Security
 
@@ -176,8 +199,8 @@ alternatives: [docs/architecture.md](docs/architecture.md#cqrs-assignment-2)):
 ./mvnw test
 ```
 
-The tests that use MongoDB (`MongoReadModelTest`, `CqrsIntegrationTest`) start it in Docker (Testcontainers) and are
-skipped when Docker is not running; CI runs them.
+The tests that use MongoDB or RabbitMQ (`MongoReadModelTest`, `CqrsIntegrationTest`, `MessagingIntegrationTest`)
+start them in Docker (Testcontainers) and are skipped when Docker is not running; CI runs them.
 
 | Test | What it covers |
 |---|---|
@@ -188,12 +211,14 @@ skipped when Docker is not running; CI runs them.
 | `FlightQueriesTest`, `readmodel/ReadDatabaseDownTest` | CQRS query side: the read model answers while READY and the write side is not asked; a flight not yet in the read model, a read model not ready or a read database failing during a query → the write side answers; a failed projection makes the model STALE without failing the write |
 | `readmodel/MongoReadModelTest` | **Real MongoDB** (Testcontainers): projection read back, fields encrypted at rest, newer revision wins and an old one is ignored, the same change twice counted once, reports recomputed on cancel, utilization by month, departures window, rebuild (removes flights nobody holds, keeps new projections, nothing removed when incomplete) |
 | `CqrsIntegrationTest` | **Two real instances with the `cqrs` profile**, each with its own write database (H2) and read database (MongoDB), replication off so the write side is split: both read models hold every flight, read your own write at once (also a booking forwarded to the owner), a change made on the other instance reaches the read model, a cancel updates the reports on both, the read database paused → the write side answers (`X-Read-Model: STALE`) until it is back |
+| `messaging/FlightEventTest`, `messaging/EventOutboxTest` | The events as other services see them (the fields Aircraft & Maintenance reads, flight hours only in `flight.completed`, the same change always the same `eventId`); the outbox with the broker down: a booking and a cancel each leave one event, encrypted at rest, a refused booking and a copy from another instance leave none |
+| `MessagingIntegrationTest` | **Real RabbitMQ** and two instances with the `cqrs` and `amqp` profiles, the 30 s sync turned off: one queue per instance with its consumer, a booking reaches the other instance's read model and another service's queue through the broker only, a completed flight announced with its flight hours (and completing it again → 409), the broker paused → bookings still 201 and their events wait in the outbox until it is back, a message that can't be read → dead-letter queue after the retries |
 | `ReplicationIntegrationTest` | **Three real instances**, 2 copies of each flight: a booking copied to the backup, the owner stopped → its flights still readable and lists complete, bookings go to the backup, a cancel while it is down; the owner restarts with an empty database and catches up; the backup's outbox empties; `/api/cluster/overview` shows the 3 instances and each flight once as owner and once as backup |
 
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (79 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (97 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -239,6 +264,7 @@ stopped instance itself).
 | 09 Sharding by aircraft | P1 p.15: owner lookup, a booking sent to instance 1 stored on its owner instance 2 (`X-Stored-On`, `X-Replicas` owner first), simultaneous bookings of the same aircraft via both instances → one 201, one 409 |
 | 10 Whole system | Week 5 slides p.14 "cross-component tests" (whole system only): the other services are known and healthy; a booking checked with both services → 201; aircraft unknown to Aircraft & Maintenance and route unknown to Airports & Routes → 404; departures of an airport the airports service knows → 200, doesn't know → 404 |
 | 12 CQRS - commands and queries | Assignment 2: the read model is READY; a booking (command) read back at once from the read model (`X-Read-Side: read-model`, `X-Data-Source: read-model`, `X-Read-Model-Updated`); the same query from the write side with `X-Read-Side: write-side`; another instance's read model gets it (eventual consistency, polled every 2 s); a cancel via instance 2 read back there at once; the utilization report and the departures board come from the read model. Skipped without a read database (`--h2`) |
+| 13 Messaging - events through RabbitMQ | Assignment 2: instance 1 connected to the broker, its own queue with one consumer, empty outbox; a flight of CS-TPA booked to depart in 3 s, then completed (`flight.completed`), completing it again → 409; the instance holding **no copy** of CS-TPA sees it COMPLETED in its read model a second later (only the broker can have told it) and counts one more `flight.completed` received; RabbitMQ's management API: one durable queue per instance with its consumer, dead-letter exchange and limits, `flight.events.dlq`. Skipped without a broker (`--h2`) |
 | 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **503** "could not be reached" with `Retry-After`, list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances) |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
@@ -337,6 +363,13 @@ Each instance also has **its own MongoDB**, the read model of CQRS (see [CQRS](#
   then e.g. `db.flights.countDocuments()`, `db.aircraft_stats.findOne()` (registration, model and airports are
   encrypted, as in PostgreSQL).
 
+### Message broker
+
+One RabbitMQ for the whole system (see [Messaging](#messaging-assignment-2)): container `rabbitmq`, AMQP on 5672,
+management UI on http://localhost:15672 (`guest` / `guest`; `RABBITMQ_USER` / `RABBITMQ_PASSWORD` override them),
+data in the Docker volume `rabbitmq-data`. Started with the databases (`docker compose up`, `./scripts/run-local.sh`).
+Each instance's events wait in its table `event_outbox` until the broker confirms them.
+
 ## Kubernetes (auto-scaling)
 
 `k8s/` runs the system on the Kubernetes of Docker Desktop (Settings → Kubernetes → Create cluster, **kubeadm**):
@@ -417,9 +450,14 @@ instance of each other service was running, so their other two instances show `O
   that receives it, with a best-effort overlap check; it reaches the holders when they are back (an overlap is then
   logged as `REPLICATION CONFLICT`). `REPLICATION_FACTOR` can raise the number of copies.
 * **Read model: lists are eventually consistent on the instances not involved in a change.** The instance that
-  received a change has it in its read model at once; the others learn it at their next sync (up to 30 s) until the
-  events go through the message broker (next step of Assignment 2). A single flight is always found (a miss is
-  looked up on the write side), and `X-Read-Side: write-side` gives a read that sees every change.
+  received a change has it in its read model at once; the others get it from the broker milliseconds later, or at
+  their next sync (up to 30 s) if the broker is down. A single flight is always found (a miss is looked up on the
+  write side), and `X-Read-Side: write-side` gives a read that sees every change.
+* **One broker node.** RabbitMQ is a single point of failure for the events (not for bookings or queries): while it
+  is down, events wait in the outboxes and the read models rely on the sync. A 3-node cluster with quorum queues
+  would remove it.
+* **AMQP is not encrypted.** The instances talk to the broker over plain AMQP (port 5672), unlike every HTTP call
+  (TLS 1.3). The outbox payload is encrypted at rest; AMQPS (5671, the same dev CA) is the next step.
 * **Reports without a read model ask every instance** (utilization, fuel efficiency), so on the fallback path they
   don't get faster with more instances (load test in [docs/architecture.md](docs/architecture.md#horizontal-scaling)).
   With the read model they are precomputed and local.
@@ -446,3 +484,8 @@ instance of each other service was running, so their other two instances show `O
 - [x] Postman collection (postman/)
 - [x] Architecture diagrams and performance analysis (docs/architecture.md)
 - [x] Consistency model, failure scenarios (docs/architecture.md)
+- [x] Assignment 2: CQRS with a read database (MongoDB) per instance
+- [x] Assignment 2: events through RabbitMQ (outbox, one queue per instance, dead letters)
+- [ ] Assignment 2: consume the aircraft and route events (local copy instead of REST calls when booking)
+- [ ] Assignment 2: `/api/v2/unicorns`
+- [ ] AMQPS (TLS) to the broker

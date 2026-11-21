@@ -297,7 +297,7 @@ resources", "Evidence of independent read and write models (CQRS) and of data is
 
 ### In one sentence
 
-**Commands** (book, cancel) change the **write model** - PostgreSQL, sharded by aircraft with two copies, exactly as
+**Commands** (book, cancel, complete) change the **write model** - PostgreSQL, sharded by aircraft with two copies, exactly as
 in Assignment 1 - and **queries** are answered from a **read model**: a separate **MongoDB** database per instance
 that holds **every flight of the cluster** and the reports already computed, kept up to date by the write side's
 events (eventual consistency).
@@ -306,12 +306,12 @@ events (eventual consistency).
 
 | | Write side (commands) | Read side (queries) |
 |---|---|---|
-| Code | `services.FlightCommandService` handles `ScheduleFlightCommand` / `CancelFlightCommand`; `LocalBookingService` applies them | `services.FlightQueries` (and the report services) read `readmodel.ReadModel` |
-| Endpoints | `POST /api/scheduled-flights`, `PATCH .../{n}/cancel` | every `GET` of flights and reports |
+| Code | `services.FlightCommandService` handles `ScheduleFlightCommand` / `CancelFlightCommand` / `CompleteFlightCommand`; `LocalBookingService` applies them | `services.FlightQueries` (and the report services) read `readmodel.ReadModel` |
+| Endpoints | `POST /api/scheduled-flights`, `PATCH .../{n}/cancel`, `PATCH .../{n}/complete` | every `GET` of flights and reports |
 | Database | PostgreSQL, one per instance (`flightops-db-<i>`) | MongoDB, one per instance (`flightops-read-db-<i>`) |
 | What each instance holds | only its aircraft's flights (owner + backup copies) | every flight of the cluster |
 | Shape | normalised rows, transactions, a lock per aircraft (no double-booking) | one document per answer: `flights`, `aircraft_stats` (utilization by month, fuel), `route_stats` |
-| Consistency | strong per aircraft (its holder serialises bookings) | eventual: at once on the instance that made the change, up to the sync interval elsewhere |
+| Consistency | strong per aircraft (its holder serialises bookings) | eventual: at once on the instance that made the change, milliseconds later elsewhere (broker), at worst the sync interval |
 
 ### How the read model is kept up to date
 
@@ -324,9 +324,9 @@ events (eventual consistency).
 3. `readmodel.ReadModelSync` repairs everything else: at startup (before the instance reports ready), every
    `flightops.read-model.sync-interval-ms` (30 s), every 5 s while the model is not READY and shortly after a peer
    becomes reachable, it rebuilds the read model from the write side of every instance (`GET /internal/flights/all`).
-   This is how an instance learns the changes it was not involved in. *(Next step of Assignment 2: these events go
-   through the message broker, so every instance learns every change within milliseconds; the sync stays as the
-   safety net.)*
+   It is the safety net: normally an instance learns the changes it was not involved in from the **message broker**
+   within milliseconds ([Messaging](#messaging-assignment-2)): the instance that made the change publishes it, and
+   every other instance projects it into its read model.
 
 **Idempotent, in any order.** A flight's document is only replaced by a **newer** state - higher `revision`, or the
 same revision and a later status: the rule the write side already uses for copies. The condition is part of the
@@ -356,7 +356,7 @@ each instance's read model state; `GET /api/cluster/metrics` counts the lookups 
 | Write database down | Commands fail as before; queries keep being answered from the read model |
 | An instance down | The other read models still have its flights (they hold every flight); a sync during the outage stays READY while fewer instances are down than there are copies, otherwise STALE and queries use the write side (which then answers `503` for data it can't reach) |
 | Instance restarted with an empty read database | Rebuilt by the startup sync before the instance reports ready, so it never answers from an empty read model |
-| A change that never reached a read model | Repaired by the next sync |
+| A change that never reached a read model (broker down, event lost) | Repaired by the next sync |
 
 ### Decisions and alternatives
 
@@ -379,6 +379,118 @@ each instance's read model state; `GET /api/cluster/metrics` counts the lookups 
   (AP): the fallback is slower, but its data is fresher, never older.
 * **Encryption at rest on the read side too.** Registration, model, route and airports are stored encrypted with the
   same deterministic scheme as the write database, so the indexes (by aircraft, by airport) still work.
+
+## Messaging (Assignment 2)
+
+*(Assignment 2, P2 p.2: "AMQP and a message broker" for the communication between services; the external API stays
+REST. RabbitMQ as in the classes' tutorial: `rabbitmq:3-management`, tutorials 1-6, best practices.)*
+
+### In one sentence
+
+Every change a flight-ops instance makes is stored together with its **event** (transactional outbox), published to
+the topic exchange **`aisafe.events`** and confirmed by the broker. Every instance, and every other service, has
+**its own queue** bound to it (publish/subscribe), so each one receives every event and reacts to it: the other
+flight-ops instances update their read models, Aircraft & Maintenance adds the flight hours of `flight.completed`.
+
+### Topology
+
+```
+                         aisafe.events (topic, durable)
+flight-ops instance --->   flight.scheduled | flight.cancelled | flight.completed
+  (outbox + relay)            | flight.#               | flight.#                  | flight.#
+                              v                        v                           v
+               flight.events.instance1   flight.events.instance2   aircraft.events.<instance>
+                              |                        |                           |
+                     read model of 1          read model of 2       flight hours (Aircraft & Maintenance)
+
+failed / expired / overflow --> aisafe.dlx --(flight.events.dlq)--> flight.events.dlq
+```
+
+| | |
+|---|---|
+| Broker | one RabbitMQ for the whole system (`rabbitmq` in docker-compose, port 5672, UI 15672; `k8s/rabbitmq.yaml`) |
+| Exchange | `aisafe.events`, topic, durable: every service publishes its events there (`<entity>.<what happened>`) |
+| Queues | `flight.events.<instance>`, durable, one per instance, bound to `flight.#`; at most 100 000 messages, each kept 1 day; the queue is removed after 7 days without a consumer |
+| Dead letters | `aisafe.dlx` -> `flight.events.dlq` (kept 7 days) |
+| Contract | `docs/service-contracts.md` "Events": routing keys, JSON fields, rules for publishers and consumers |
+
+### Publishing: outbox, relay, publisher confirms
+
+1. The write side publishes `FlightChanged` in the change's transaction (as for CQRS). It says whether this instance
+   **made** the change (`madeHere`) or only learnt it (a copy, a peer's answer). Only the instance that made it
+   announces it, so every change is published once.
+2. `messaging.EventOutbox` stores the event as an `OutboxMessage` (table `event_outbox`, payload encrypted at rest)
+   **just before the transaction commits, in it**. Change and event are saved together or not at all: no event for a
+   rolled-back change, no change without its event.
+3. `messaging.EventRelay` (its own thread) sends the waiting events in order right after the commit and every second,
+   as persistent messages, and **waits for the broker's confirmation** (publisher confirms) before deleting them. If
+   the broker is down they wait; nothing is lost.
+
+`eventId` is derived from the change (flight, revision, status), so an event sent twice has the same id.
+
+### Consuming: ack after processing, idempotent, dead letters
+
+`messaging.FlightEventListener` reads this instance's queue and projects each event of **another** instance into the
+read model. Its own events come back too and are skipped (already projected after their commit).
+* **Acknowledged after processing** (Spring AMQP AUTO mode: the ack is sent when the method returns).
+* **Idempotent**: the read model keeps the newest revision, so a duplicate or a late event changes nothing. No table
+  of processed ids is needed.
+* A message that can't be read is tried **3 times** (0.5 s, then 1 s apart), then **rejected without requeue** and
+  goes to `flight.events.dlq`. No message is retried forever (RabbitMQ best practices: "Use dead letter exchanges for
+  failed messages").
+* A read database that is down does not reject the message: the read model turns STALE, queries use the write side,
+  and the sync rebuilds it. The write side is the source of truth.
+
+### Consistency
+
+Eventual, with a much smaller window than before: the instance that made the change sees it at once (projected after
+its commit), the others **milliseconds** later (push), and at worst after the 30 s sync (pull) if an event is lost.
+Order doesn't matter (newest revision wins). Delivery is **at least once**; duplicates are harmless.
+
+### Failures
+
+| Failure | What happens |
+|---|---|
+| Broker down | Bookings, cancels and queries keep working (the broker is not part of `/actuator/health`). Events wait in each instance's outbox (`messaging.outbox` on `/api/cluster/health`) and go out when it is back; meanwhile the 30 s sync keeps the read models up to date |
+| Broker restarted | Durable exchange and queues, persistent messages: the queued events survive. The instances reconnect by themselves and declare the topology again |
+| An instance down | Its queue keeps the events (durable, 1 day each); it reads them when it is back, after its startup sync, so they only change what is not newer |
+| Crash after the broker confirmed, before the outbox row is deleted | The event is sent again with the same `eventId`; consumers ignore it |
+| A message that can't be processed | 3 attempts, then the dead-letter queue (`messaging.deadLetters` on `/api/cluster/health`) |
+| Queue full or message too old | Dead-lettered (limits: 100 000 messages, 1 day); the read model is repaired by the sync |
+| Broker stops answering (paused, network cut) | Calls give up after 5 s (RPC and publisher-confirm timeouts), and heartbeats every 10 s notice the dead connection: nothing hangs for minutes |
+
+### Evidence
+
+* `GET /api/cluster/health` -> `messaging`: broker up, this instance's queue and its depth, its consumers, dead
+  letters, events waiting in the outbox ("monitor queue depth").
+* `GET /api/cluster/metrics` -> `messages`: published, received, ignored (own), failed, per routing key.
+* The dashboard shows a "Broker (AMQP)" chip per instance; RabbitMQ's UI (http://localhost:15672) shows the exchanges,
+  the queues and the message rates.
+* Postman folder 13 and `MessagingIntegrationTest`.
+
+### Decisions and alternatives
+
+* **Publish/subscribe, one queue per instance (chosen) vs. one shared queue (work queues).** A shared queue hands each
+  event to *one* instance (competing consumers, tutorial 2): right for tasks, wrong for state, because the other
+  instances' read models would miss it. Every instance needs every change (tutorial 3, "state synchronization").
+* **Transactional outbox (chosen) vs. publishing in the transaction or after the commit.** Sending inside the
+  transaction announces changes that may still roll back. Sending after the commit loses the event if the instance
+  stops in between, or if the broker is down at that moment. The outbox costs one row per change and a thread.
+* **At least once + idempotent consumers (chosen) vs. exactly once.** Exactly once would need the broker and the
+  database in one distributed transaction (2PC), which RabbitMQ does not offer. Idempotent processing gives the same
+  result.
+* **Replication of the write side stays HTTP (as in A1).** A copy must reach exactly the one or two instances that
+  hold the aircraft, and the A1 outbox already retries per target. The broker carries what every instance and every
+  service needs to know.
+* **RabbitMQ (chosen) vs. Kafka.** RabbitMQ is the broker of the classes, and its queues with acks, dead letters and
+  per-queue limits are what is needed here. Kafka (a log that can be replayed) would fit event sourcing, which is
+  not used.
+* **One broker node.** It is a single point of failure for the events only (see the table above): bookings and
+  queries keep working and nothing is lost. A 3-node cluster with quorum queues would remove it.
+* **JSON without type headers.** Consumers in other services don't need our Java classes (no `__TypeId__`), and
+  unknown fields are ignored, so adding a field breaks no one.
+* **`PATCH .../complete` (new command).** Aircraft & Maintenance consumes `flight.completed` (flight hours), so a
+  flight can now be marked as landed: only a scheduled flight, and not before its departure.
 
 ## Horizontal scaling
 

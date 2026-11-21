@@ -44,7 +44,7 @@ public class ReplicaStore {
             boolean changed = existing.updateFromCopy(status, copy.revision());
             if (changed) {
                 metrics.recordReplication("applied");
-                events.publishEvent(new FlightChanged(FlightView.of(existing)));   // read side, after commit
+                events.publishEvent(FlightChanged.learnt(FlightView.of(existing)));   // read side, after commit
             }
             return changed;
         }
@@ -57,7 +57,7 @@ public class ReplicaStore {
         }
         flights.save(flight);
         metrics.recordReplication("applied");
-        events.publishEvent(new FlightChanged(FlightView.of(flight)));
+        events.publishEvent(FlightChanged.learnt(FlightView.of(flight)));
         return true;
     }
 
