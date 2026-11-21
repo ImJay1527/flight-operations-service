@@ -141,6 +141,34 @@ class CqrsIntegrationTest {
 
     @Test
     @Order(6)
+    @SuppressWarnings("unchecked")
+    void unicornsAreAQueryOfTheReadModel() {
+        ResponseEntity<List> res = http.get().uri(url2 + "/api/v2/unicorns")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token).retrieve().toEntity(List.class);
+
+        assertThat(res.getStatusCode().value()).isEqualTo(200);
+        assertThat(res.getHeaders().getFirst("X-Read-Side")).isEqualTo("read-model");
+        List<Map<String, Object>> moods = res.getBody();
+        // every aircraft with flights, also those whose flights instance 2 doesn't hold (write side split)
+        assertThat(moods).extracting(m -> m.get("registration")).containsExactly("CS-TPA", "CS-TPB", "CS-TPC");
+        // CS-TPB's only flight leaves in 5 days (sample data)
+        assertThat(moods.get(1).get("mood")).isEqualTo("HAPPY");
+
+        // the same query from the write side gives the same moods
+        ResponseEntity<List> writeSide = http.get().uri(url2 + "/api/v2/unicorns")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token).header("X-Read-Side", "write-side")
+                .retrieve().toEntity(List.class);
+        assertThat(writeSide.getHeaders().getFirst("X-Read-Side")).isEqualTo("write-side");
+        assertThat(((List<Map<String, Object>>) writeSide.getBody())).extracting(m -> m.get("mood"))
+                .isEqualTo(moods.stream().map(m -> m.get("mood")).toList());
+
+        // an airplane without flights is BORED; one Aircraft & Maintenance doesn't know is 404
+        assertThat(get(url1 + "/api/v2/unicorns/CS-TPD").getBody().get("mood")).isEqualTo("BORED");
+        assertThat(get(url1 + "/api/v2/unicorns/CS-NOPE").getStatusCode().value()).isEqualTo(404);
+    }
+
+    @Test
+    @Order(7)
     void readDatabaseDownMeansTheWriteSideAnswersUntilItIsBack() {
         MONGO.getDockerClient().pauseContainerCmd(MONGO.getContainerId()).exec();
         try {

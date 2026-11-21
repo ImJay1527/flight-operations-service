@@ -158,6 +158,10 @@ alternatives: [docs/architecture.md](docs/architecture.md#cqrs-assignment-2)):
   instance's read model.
 * On with the `cqrs` profile (docker-compose, Kubernetes and `run-local.sh` without `--h2`). Without it (`--h2`, the
   unit tests) there is no read database and every query takes the fallback path.
+* **`GET /api/v2/unicorns`** (and `/api/v2/unicorns/{registration}`): the mood of each airplane in JSON - `FLYING`,
+  `EXCITED` (leaves within 24 h), `TIRED` (10 h or more in 7 days), `BORED` (nothing scheduled) or `HAPPY`. A query:
+  it only reads the read model. Booking or completing a flight (commands) changes the mood
+  ([details](docs/architecture.md#the-unicorns-endpoint-a-query)).
 
 ## Messaging (Assignment 2)
 
@@ -210,7 +214,8 @@ start them in Docker (Testcontainers) and are skipped when Docker is not running
 | `TwoInstancesIntegrationTest` | **Two real instances** started on free ports, talking over HTTP, replication off (the week-3 behaviour on its own): local access, forwarding (`X-Data-Source`), the same request id in both instances' logs, cancel forwarded to the owner, a booking stored on the aircraft's owner, simultaneous bookings via both instances (one wins), instance 2 stopped → 503 (+ `Retry-After`), partial lists flagged, circuit open; `201` with `Location` |
 | `FlightQueriesTest`, `readmodel/ReadDatabaseDownTest` | CQRS query side: the read model answers while READY and the write side is not asked; a flight not yet in the read model, a read model not ready or a read database failing during a query → the write side answers; a failed projection makes the model STALE without failing the write |
 | `readmodel/MongoReadModelTest` | **Real MongoDB** (Testcontainers): projection read back, fields encrypted at rest, newer revision wins and an old one is ignored, the same change twice counted once, reports recomputed on cancel, utilization by month, departures window, rebuild (removes flights nobody holds, keeps new projections, nothing removed when incomplete) |
-| `CqrsIntegrationTest` | **Two real instances with the `cqrs` profile**, each with its own write database (H2) and read database (MongoDB), replication off so the write side is split: both read models hold every flight, read your own write at once (also a booking forwarded to the owner), a change made on the other instance reaches the read model, a cancel updates the reports on both, the read database paused → the write side answers (`X-Read-Model: STALE`) until it is back |
+| `CqrsIntegrationTest` | **Two real instances with the `cqrs` profile**, each with its own write database (H2) and read database (MongoDB), replication off so the write side is split: both read models hold every flight, read your own write at once (also a booking forwarded to the owner), a change made on the other instance reaches the read model, a cancel updates the reports on both, `/api/v2/unicorns` answered from the read model (the same moods from the write side), the read database paused → the write side answers (`X-Read-Model: STALE`) until it is back |
+| `services/UnicornMoodTest` | The airplane moods: in the air now, leaving within 24 h, 10 h in the last week (only the part inside the week counts), nothing scheduled, a trip planned; cancelled flights ignored |
 | `messaging/FlightEventTest`, `messaging/EventOutboxTest` | The events as other services see them (the fields Aircraft & Maintenance reads, flight hours only in `flight.completed`, the same change always the same `eventId`); the outbox with the broker down: a booking and a cancel each leave one event, encrypted at rest, a refused booking and a copy from another instance leave none |
 | `MessagingIntegrationTest` | **Real RabbitMQ** and two instances with the `cqrs` and `amqp` profiles, the 30 s sync turned off: one queue per instance with its consumer, a booking reaches the other instance's read model and another service's queue through the broker only, a completed flight announced with its flight hours (and completing it again → 409), the broker paused → bookings still 201 and their events wait in the outbox until it is back, a message that can't be read → dead-letter queue after the retries |
 | `ReplicationIntegrationTest` | **Three real instances**, 2 copies of each flight: a booking copied to the backup, the owner stopped → its flights still readable and lists complete, bookings go to the backup, a cancel while it is down; the owner restarts with an empty database and catches up; the backup's outbox empties; `/api/cluster/overview` shows the 3 instances and each flight once as owner and once as backup |
@@ -218,7 +223,7 @@ start them in Docker (Testcontainers) and are skipped when Docker is not running
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (97 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (104 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -265,6 +270,7 @@ stopped instance itself).
 | 10 Whole system | Week 5 slides p.14 "cross-component tests" (whole system only): the other services are known and healthy; a booking checked with both services → 201; aircraft unknown to Aircraft & Maintenance and route unknown to Airports & Routes → 404; departures of an airport the airports service knows → 200, doesn't know → 404 |
 | 12 CQRS - commands and queries | Assignment 2: the read model is READY; a booking (command) read back at once from the read model (`X-Read-Side: read-model`, `X-Data-Source: read-model`, `X-Read-Model-Updated`); the same query from the write side with `X-Read-Side: write-side`; another instance's read model gets it (eventual consistency, polled every 2 s); a cancel via instance 2 read back there at once; the utilization report and the departures board come from the read model. Skipped without a read database (`--h2`) |
 | 13 Messaging - events through RabbitMQ | Assignment 2: instance 1 connected to the broker, its own queue with one consumer, empty outbox; a flight of CS-TPA booked to depart in 3 s, then completed (`flight.completed`), completing it again → 409; the instance holding **no copy** of CS-TPA sees it COMPLETED in its read model a second later (only the broker can have told it) and counts one more `flight.completed` received; RabbitMQ's management API: one durable queue per instance with its consumer, dead-letter exchange and limits, `flight.events.dlq`. Skipped without a broker (`--h2`) |
+| 14 Unicorns | Assignment 2 mock endpoint: `GET /api/v2/unicorns` returns a JSON list, each airplane with a known mood and a message, from the read model (`X-Read-Side`); CS-TPB booked to leave in 3 s is `FLYING`, and after completing the flight it isn't any more; unknown airplane → 404, no token → 401 |
 | 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **503** "could not be reached" with `Retry-After`, list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances) |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
@@ -487,5 +493,5 @@ instance of each other service was running, so their other two instances show `O
 - [x] Assignment 2: CQRS with a read database (MongoDB) per instance
 - [x] Assignment 2: events through RabbitMQ (outbox, one queue per instance, dead letters)
 - [ ] Assignment 2: consume the aircraft and route events (local copy instead of REST calls when booking)
-- [ ] Assignment 2: `/api/v2/unicorns`
+- [x] Assignment 2: `/api/v2/unicorns`
 - [ ] AMQPS (TLS) to the broker
