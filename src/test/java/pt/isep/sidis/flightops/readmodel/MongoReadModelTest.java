@@ -69,6 +69,17 @@ class MongoReadModelTest {
     }
 
     @Test
+    void activeFlightsAreEveryAircraftsFlightsWithoutTheCancelledOnes() {
+        FlightView later = flight("F-2", "CS-TPB", "route-lis-mad", "LIS", dep.plusDays(1), "SCHEDULED", 1);
+        FlightView first = flight("F-1", "CS-TPA", "route-opo-lis", "OPO", dep, "COMPLETED", 2);
+        readModel.project(later);
+        readModel.project(first);
+        readModel.project(flight("F-3", "CS-TPA", "route-opo-lis", "OPO", dep.plusDays(2), "CANCELED", 2));
+
+        assertThat(readModel.activeFlights()).containsExactly(first, later);   // by departure time
+    }
+
+    @Test
     void sensitiveFieldsAreEncryptedAtRest() {
         readModel.project(flight("F-1", "CS-TPA", "route-opo-lis", "OPO", dep, "SCHEDULED", 1));
 

@@ -42,6 +42,11 @@ public class DisabledReadModel implements ReadModel {
     }
 
     @Override
+    public List<FlightView> activeFlights() {
+        throw unavailable();
+    }
+
+    @Override
     public List<FlightView> departures(String originIata, LocalDateTime from, LocalDateTime to) {
         throw unavailable();
     }

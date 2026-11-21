@@ -240,6 +240,13 @@ public class MongoReadModel implements ReadModel {
     }
 
     @Override
+    public List<FlightView> activeFlights() {
+        return read(() -> mongo.find(query(where("status").ne(CANCELED)).with(Sort.by("departure")),
+                        FlightDocument.class, FLIGHTS)
+                .stream().map(this::view).toList());
+    }
+
+    @Override
     public List<FlightView> departures(String originIata, LocalDateTime from, LocalDateTime to) {
         return read(() -> mongo.find(query(where("origin").is(crypto.encrypt(originIata))
                                 .and("departure").gte(from).lte(to)
