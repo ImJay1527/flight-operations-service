@@ -12,6 +12,8 @@
 #   11c CS-TPC's backup also   503 for its flights, lists flagged partial; a booking is kept where received (AP)
 #   11d both started again     caught up, outbox empty, left-over copy handed off (can take up to a minute)
 #   11e aircraft-1, airports-1 stopped: bookings still checked with their other instances
+#   11f rabbitmq stopped       bookings and queries go on, their events wait in the outboxes
+#   11g rabbitmq started again the outboxes empty, the events reach the read models
 #
 # Needs the system running and healthy (docker compose up -d --build) and Node.js (npx downloads newman).
 # Every container it stops is started again at the end, also when a phase fails or on Ctrl+C.
@@ -82,7 +84,7 @@ phase() {
 }
 
 echo "Checking that the whole system is up..."
-for svc in flightops-1 flightops-2 flightops-3 aircraft-1 aircraft-2 aircraft-3 airports-1 airports-2 airports-3; do
+for svc in flightops-1 flightops-2 flightops-3 aircraft-1 aircraft-2 aircraft-3 airports-1 airports-2 airports-3 rabbitmq; do
   [[ "$(health "$svc")" == healthy ]] || { echo "$svc is not healthy: start the system with docker compose up -d --build"; exit 1; }
 done
 
@@ -106,6 +108,11 @@ if [[ "$OTHERS" == yes ]]; then
   phase e "11e Other services: aircraft-1 and airports-1 stopped"
   start aircraft-1 airports-1
 fi
+
+stop rabbitmq
+phase f "11f Broker stopped - bookings go on, events wait"
+start rabbitmq
+phase g "11g Broker started again - the events go out"
 
 echo; echo "=================== summary"
 printf '  %s\n' "${RESULTS[@]}"

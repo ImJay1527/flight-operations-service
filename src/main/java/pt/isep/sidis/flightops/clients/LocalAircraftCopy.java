@@ -27,7 +27,7 @@ import java.util.Optional;
  * events (aircraft.created, aircraft.status.changed), which every instance gets on its own queue.
  *
  * <p>An aircraft not in the copy yet is read from the REST API ({@code remote}) and kept. A copy that hasn't changed
- * for {@code aircraft-copy-max-age-ms} is read again (events can be lost, e.g. a queue removed after a long stop),
+ * for {@code copy-max-age-ms} is read again (events can be lost, e.g. a queue removed after a long stop),
  * and if the REST API doesn't answer the copy is used anyway: a booking doesn't need the other service to be up.
  * The price is eventual consistency: for a few milliseconds after a status change (longer with the broker down) a
  * booking can still see the old status.
@@ -47,7 +47,7 @@ public class LocalAircraftCopy implements AircraftDirectory {
 
     public LocalAircraftCopy(AircraftCopyRepository copies, @Qualifier(AircraftDirectory.REMOTE) AircraftDirectory remote,
                              PlatformTransactionManager transactions, FlightOpsMetrics metrics,
-                             @Value("${flightops.messaging.aircraft-copy-max-age-ms:3600000}") long maxAgeMs) {
+                             @Value("${flightops.messaging.copy-max-age-ms:3600000}") long maxAgeMs) {
         this.copies = copies;
         this.remote = remote;
         this.ownTransaction = new TransactionTemplate(transactions);

@@ -56,7 +56,7 @@ public class MonitoringController {
         return new Metrics(instanceName, requestsServed(),
                 new Lookups(readModel, local, forwarded, notFound),
                 new Forwarding(askedPeers, forwarded.count(), successRate),
-                remoteInstances(), messages(), aircraftLookups());
+                remoteInstances(), messages(), aircraftLookups(), routeLookups());
     }
 
     private TimerStats timerStats(String source) {
@@ -132,6 +132,16 @@ public class MonitoringController {
         return bySource;
     }
 
+    /** Same for routes and airports (flightops.route.lookups), by kind (route | airport) and source. */
+    private Map<String, Map<String, Long>> routeLookups() {
+        Map<String, Map<String, Long>> byKind = new TreeMap<>();
+        for (Counter c : registry.find(FlightOpsMetrics.ROUTE_LOOKUPS).counters()) {
+            byKind.computeIfAbsent(c.getId().getTag("kind"), k -> new TreeMap<>())
+                    .merge(c.getId().getTag("source"), (long) c.count(), Long::sum);
+        }
+        return byKind;
+    }
+
     private static long total(Map<String, Long> byKey) {
         return byKey == null ? 0 : byKey.values().stream().mapToLong(Long::longValue).sum();
     }
@@ -142,7 +152,7 @@ public class MonitoringController {
 
     public record Metrics(String instance, Served requestsServed, Lookups lookupResponseTimes,
                           Forwarding forwarding, List<RemoteInstance> remoteInstances, Messages messages,
-                          Map<String, Long> aircraftLookups) {
+                          Map<String, Long> aircraftLookups, Map<String, Map<String, Long>> routeLookups) {
     }
 
     /**

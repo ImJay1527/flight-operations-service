@@ -170,6 +170,24 @@ the aircraft for bookings, instead of calling `GET /internal/aircraft/{registrat
 Order: an event whose `occurredAt` is older than the copy changes nothing (duplicates, late events). An aircraft not
 in the copy is still read once from the REST API, and again when its copy hasn't changed for an hour.
 
+### Published by Airports & Routes
+
+On `aisafe.events` (the same exchange), each with `eventId`, `eventType`, `occurredAt`:
+
+| Routing key | Fields | |
+|---|---|---|
+| `airport.created` | `iataCode`, `status`, `certifiedModels` | the whole airport |
+| `airport.status.changed` | `iataCode`, `newStatus` | `airport.status` is also accepted |
+| `airport.certification.added` | `iataCode`, `certifiedModels` (the whole list) or `modelName` (the one added) | |
+| `route.created`, `route.updated` | `routeId`, `originIata`, `destinationIata`, `distanceKm`, `minRangeRequired`, `minCapacityRequired`, `status` | the whole route |
+| `route.deactivated` | `routeId` | |
+
+**What Flight Operations uses** (its queues are also bound to `airport.#` and `route.#`): all of the above, for
+its own copy of the airports and routes, instead of calling `GET /internal/routes/{id}` and
+`GET /internal/airports/{iata}` every time. A `route.created` without `minRangeRequired` and `minCapacityRequired`
+is ignored (that route is read from the REST API). A change of an airport or route not in the copy yet is ignored
+too. Same order rule and REST fallback as for the aircraft.
+
 ## Shared bootstrap data
 
 So the sample data lines up across services, use these fixed identifiers:

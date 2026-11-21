@@ -2412,7 +2412,7 @@
     },
     {
       "name": "11 Whole system - failures (scripts/test-failures.sh)",
-      "description": "Week 5 p.14 \"simulate instance failure (stop container, verify 404)\", Week 4 p.11 \"stop one instance mid-test\", PL3 p.14/p.16, P1 p.10 \"redundancy-based fault tolerance\" - on the whole system (`docker compose up`), where Postman can't stop an instance by itself.\n\nRun `./scripts/test-failures.sh`: it runs 11a, stops flightops-2 and runs 11b, stops CS-TPC's backup and runs 11c, starts both and runs 11d, stops aircraft-1 and airports-1 and runs 11e, then starts everything again. Each phase only runs when the script sets `failurePhase`; in a normal run of the collection the whole folder is skipped.\n\nBy hand (e.g. in the Postman app during a demo): run 00 Setup with everything up, set the environment variable `failurePhase` to `a`, run 11a; `docker compose stop flightops-2`, set it to `b`, run 11b; and so on (00 Setup only once: it logs in on instance 2, which is down in 11b-11c).\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
+      "description": "Week 5 p.14 \"simulate instance failure (stop container, verify 404)\", Week 4 p.11 \"stop one instance mid-test\", PL3 p.14/p.16, P1 p.10 \"redundancy-based fault tolerance\" - on the whole system (`docker compose up`), where Postman can't stop an instance by itself.\n\nRun `./scripts/test-failures.sh`: it runs 11a, stops flightops-2 and runs 11b, stops CS-TPC's backup and runs 11c, starts both and runs 11d, stops aircraft-1 and airports-1 and runs 11e, stops the broker (rabbitmq) and runs 11f, starts it and runs 11g, then starts everything again. Each phase only runs when the script sets `failurePhase`; in a normal run of the collection the whole folder is skipped.\n\nBy hand (e.g. in the Postman app during a demo): run 00 Setup with everything up, set the environment variable `failurePhase` to `a`, run 11a; `docker compose stop flightops-2`, set it to `b`, run 11b; and so on (00 Setup only once: it logs in on instance 2, which is down in 11b-11c).\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
         {
           "name": "11a Before - everything up",
@@ -3587,6 +3587,296 @@
               }
             }
           ]
+        },
+        {
+          "name": "11f Broker stopped - bookings go on, events wait",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the broker in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"f\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ],
+          "item": [
+            {
+              "name": "The instances see the broker down, and are still UP",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/cluster/health",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "health"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// the broker is checked every 5 s",
+                      "setTimeout(() => {}, 6000);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200: the instance answers (the broker is not part of its health)\", () => pm.response.to.have.status(200));",
+                      "const m = pm.response.json().messaging;",
+                      "pm.test(\"messaging.brokerUp false\", () => pm.expect(m.brokerUp).to.eql(false));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Book CS-TPA with the broker down: still 201",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{instance1}}/api/scheduled-flights",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{atccToken}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const days = 30 + Math.floor(Math.random() * 3000);",
+                      "const dep = new Date(Date.now() + days * 86400000);",
+                      "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                      "const fmt = d => d.toISOString().substring(0, 19);",
+                      "pm.variables.set('departure', fmt(dep));",
+                      "pm.variables.set('arrival', fmt(new Date(dep.getTime() + 45 * 60000)));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                      "pm.environment.set(\"failFlightBrokerDown\", pm.response.json().flightNumber);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Read it back: queries keep working",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/scheduled-flights/{{failFlightBrokerDown}}",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightBrokerDown}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"SCHEDULED\", () => pm.expect(pm.response.json().status).to.eql(\"SCHEDULED\"));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Its event waits in the outbox (nothing lost)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/cluster/overview",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "overview"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const all = pm.response.json().instances.filter(i => i.reachable && i.messaging);",
+                      "const outbox = all.reduce((s, i) => s + (i.messaging.outbox || 0), 0);",
+                      "console.log(all.map(i => i.instance + \": brokerUp=\" + i.messaging.brokerUp + \" outbox=\" + i.messaging.outbox).join(\"\\n\"));",
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"at least one event waiting in an outbox\", () => pm.expect(outbox).to.be.at.least(1));",
+                      "pm.test(\"every instance sees the broker down\", () => all.forEach(i => pm.expect(i.messaging.brokerUp, i.instance).to.eql(false)));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "11g Broker started again - the events go out",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// only when scripts/test-failures.sh runs this phase (it stops and starts the broker in between)",
+                  "if (pm.environment.get(\"failurePhase\") !== \"g\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ],
+          "item": [
+            {
+              "name": "The outboxes are empty again: the events went out",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/cluster/overview",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "cluster",
+                    "overview"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// the relay retries every second; the broker is checked every 5 s",
+                      "setTimeout(() => {}, 8000);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const all = pm.response.json().instances.filter(i => i.reachable && i.messaging);",
+                      "const outbox = all.reduce((s, i) => s + (i.messaging.outbox || 0), 0);",
+                      "console.log(all.map(i => i.instance + \": brokerUp=\" + i.messaging.brokerUp + \" outbox=\" + i.messaging.outbox).join(\"\\n\"));",
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"every instance sees the broker up\", () => all.forEach(i => pm.expect(i.messaging.brokerUp, i.instance).to.eql(true)));",
+                      "pm.test(\"nothing waiting in any outbox\", () => pm.expect(outbox).to.eql(0));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "The flight booked while it was down is in every read model",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{instance1}}/api/scheduled-flights/{{failFlightBrokerDown}}",
+                  "host": [
+                    "{{instance1}}"
+                  ],
+                  "path": [
+                    "api",
+                    "scheduled-flights",
+                    "{{failFlightBrokerDown}}"
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// this one is about the read model: don't force the write side like the rest of folder 11",
+                      "pm.request.headers.remove('X-Read-Side');"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"X-Data-Source: read-model\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"read-model\"));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         }
       ],
       "event": [
@@ -4374,6 +4664,43 @@
       "description": "Assignment 2 mock endpoint: the mood of every airplane, in JSON. FLYING (in the air now), EXCITED (leaves within 24 h), TIRED (10 h or more in the last 7 days), BORED (nothing scheduled), HAPPY (a trip is planned). In CQRS it is a query: it only reads the read model, which the commands keep up to date through their events. Here a booking makes CS-TPB FLYING, and completing the flight changes its mood again.",
       "item": [
         {
+          "name": "Is there a read model here? (sets cqrsOn, so this folder runs on its own)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const rm = pm.response.json().readModel;",
+                  "pm.environment.set(\"cqrsOn\", !!rm && rm.state !== \"DISABLED\");",
+                  "if (!rm || rm.state === \"DISABLED\") {",
+                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
+                  "} else {",
+                  "  pm.test(\"read model READY\", () => pm.expect(rm.state).to.eql(\"READY\"));",
+                  "  pm.test(\"it has been synced with the write side\", () => pm.expect(rm.lastSync).to.be.a(\"string\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Mood of every airplane",
           "request": {
             "method": "GET",
@@ -4651,6 +4978,45 @@
       "name": "15 Aircraft events - local copy of the aircraft",
       "description": "Assignment 2, AMQP. Aircraft & Maintenance's events (aircraft.created, aircraft.status.changed) keep each instance's own copy of the aircraft, so a booking doesn't call that service. The events are sent here through RabbitMQ's management API, the way that service sends them. An older event changes nothing. Skipped without a broker (run-local.sh --h2).",
       "item": [
+        {
+          "name": "Is this instance connected to the broker? (sets amqpOn, so this folder runs on its own)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().messaging;",
+                  "pm.environment.set(\"amqpOn\", !!m && m.enabled === true);",
+                  "if (!m || !m.enabled) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"broker UP\", () => pm.expect(m.brokerUp).to.eql(true));",
+                  "  pm.test(\"its own queue: flight.events.<instance> (publish/subscribe)\", () => pm.expect(m.queue).to.match(/^flight\\.events\\./));",
+                  "  pm.test(\"one consumer on it: this instance\", () => pm.expect(m.consumers).to.eql(1));",
+                  "  pm.test(\"nothing waiting in its outbox (every event confirmed by the broker)\", () => pm.expect(m.outbox).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Aircraft & Maintenance: aircraft.created (CS-EVP, unknown to the built-in data)",
           "request": {
@@ -5307,6 +5673,16 @@
           },
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// no broker (run-local.sh --h2): nothing to look at, and the owner variable is not set",
+                  "if (pm.environment.get(\"amqpOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -5322,6 +5698,1364 @@
                   "  pm.test(\"aircraft.status.changed received\", () => pm.expect((by.received || {})[\"aircraft.status.changed\"] || 0).to.be.above(0));",
                   "  pm.test(\"the late one was ignored\", () => pm.expect((by.ignored || {})[\"aircraft.status.changed\"] || 0).to.be.above(0));",
                   "  console.log(\"aircraftLookups\", JSON.stringify(m.aircraftLookups), \"messages\", JSON.stringify(m.messages));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "16 Route and airport events - local copies",
+      "description": "Assignment 2, AMQP. Airports & Routes' events (airport.created, airport.status, airport.certification.added, route.created, route.deactivated) keep each instance's own copy of the airports and routes, so a booking doesn't call that service. The events are sent here through RabbitMQ's management API in the JSON that service publishes. A route.created without the route's requirements is ignored (the REST API decides). Skipped without a broker (run-local.sh --h2).",
+      "item": [
+        {
+          "name": "Is this instance connected to the broker? (sets amqpOn, so this folder runs on its own)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().messaging;",
+                  "pm.environment.set(\"amqpOn\", !!m && m.enabled === true);",
+                  "if (!m || !m.enabled) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"broker UP\", () => pm.expect(m.brokerUp).to.eql(true));",
+                  "  pm.test(\"its own queue: flight.events.<instance> (publish/subscribe)\", () => pm.expect(m.queue).to.match(/^flight\\.events\\./));",
+                  "  pm.test(\"one consumer on it: this instance\", () => pm.expect(m.consumers).to.eql(1));",
+                  "  pm.test(\"nothing waiting in its outbox (every event confirmed by the broker)\", () => pm.expect(m.outbox).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: airport.created FNC (certified for A320neo only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.AirportCreatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AIRPORT_CREATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"iataCode\": \"FNC\", \"name\": \"Madeira\", \"city\": \"Funchal\", \"country\": \"Portugal\", \"status\": \"OPERATIONAL\", \"certifiedModels\": [\"A320neo\"]});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"airport.created\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: airport.created PDL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.AirportCreatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AIRPORT_CREATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"iataCode\": \"PDL\", \"name\": \"Ponta Delgada\", \"city\": \"Ponta Delgada\", \"country\": \"Portugal\", \"status\": \"OPERATIONAL\", \"certifiedModels\": [\"A320neo\", \"737 MAX\"]});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"airport.created\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: route.created route-fnc-pdl (with its requirements)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.FlightRouteCreatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"FLIGHT_ROUTE_CREATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"routeId\": \"route-fnc-pdl\", \"originIata\": \"FNC\", \"destinationIata\": \"PDL\", \"distanceKm\": 1000.0, \"estimatedFlightTime\": 120, \"status\": \"ACTIVE\", \"minRangeRequired\": 1200.0, \"minCapacityRequired\": 120});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"route.created\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-TPA on route-fnc-pdl - route and airports come from this service's copy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 201 (the REST API / built-in data doesn't know this route: only the events told us)\", () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-TPB (737 MAX) - FNC isn't certified for it (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl\",\n  \"aircraftRegistration\": \"CS-TPB\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "  pm.test(\"says why\", () => pm.expect(pm.response.json().error).to.match(/not certified/));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: airport.certification.added (FNC: 737 MAX too)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.AirportCertificationAddedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AIRPORT_CERTIFICATION_ADDED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"iataCode\": \"FNC\", \"certifiedModels\": [\"A320neo\", \"737 MAX\"]});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"airport.certification.added\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-TPB again - accepted",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl\",\n  \"aircraftRegistration\": \"CS-TPB\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: airport.status PDL -> CLOSED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.AirportStatusUpdatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AIRPORT_STATUS_UPDATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"iataCode\": \"PDL\", \"newStatus\": \"CLOSED\"});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"airport.status\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book - refused, PDL is closed (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "  pm.test(\"says why\", () => pm.expect(pm.response.json().error).to.match(/operational/));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A late, older event (PDL OPERATIONAL, 1 min old): changes nothing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.AirportStatusUpdatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AIRPORT_STATUS_UPDATED\",",
+                  "  occurredAt: new Date(Date.now() - 60000).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"iataCode\": \"PDL\", \"newStatus\": \"OPERATIONAL\"});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"airport.status\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book - still refused (the newest change wins)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: airport.status PDL -> OPERATIONAL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.AirportStatusUpdatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AIRPORT_STATUS_UPDATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"iataCode\": \"PDL\", \"newStatus\": \"OPERATIONAL\"});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"airport.status\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Airports & Routes: route.deactivated route-fnc-pdl",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.FlightRouteDeactivatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"FLIGHT_ROUTE_DEACTIVATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"routeId\": \"route-fnc-pdl\", \"reason\": \"Deactivated by operator\"});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"route.deactivated\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book - refused, the route is deactivated (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "  pm.test(\"says why\", () => pm.expect(pm.response.json().error).to.match(/deactivated/));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "route.created WITHOUT the requirements (what the service sends today): ignored",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{route_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  \"@type\": \"pt.isep.sidis.airports.events.FlightRouteCreatedEvent\",",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"FLIGHT_ROUTE_CREATED\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  sourceInstance: \"instance1\"",
+                  "}, {\"routeId\": \"route-fnc-pdl-x\", \"originIata\": \"FNC\", \"destinationIata\": \"PDL\", \"distanceKm\": 1000.0, \"estimatedFlightTime\": 120, \"status\": \"ACTIVE\"});",
+                  "pm.variables.set(\"route_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
+                  "  routing_key: \"route.created\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to airport.# / route.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book on route-fnc-pdl-x - not in the copy, the REST API decides (404 here)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-fnc-pdl-x\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 120 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 404 (no copy made without the requirements; the built-in data doesn't know it)\", () => pm.response.to.have.status(404));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Which instance owns CS-TPA (it did the bookings)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/owner/CS-TPA",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "owner",
+                "CS-TPA"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const n = pm.response.json().owner.replace(/\\D/g, \"\");",
+                  "  pm.environment.set(\"route_owner\", pm.environment.get(\"instance\" + n) || pm.environment.get(\"instance1\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Its metrics: routes from the copy, airport and route events received and ignored",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{route_owner}}/api/cluster/metrics",
+              "host": [
+                "{{route_owner}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// no broker (run-local.sh --h2): nothing to look at, and the owner variable is not set",
+                  "if (pm.environment.get(\"amqpOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const m = pm.response.json();",
+                  "  const by = m.messages.byRoutingKey;",
+                  "  pm.test(\"bookings used the route copy (routeLookups.route.copy)\", () => pm.expect((m.routeLookups.route || {}).copy || 0).to.be.above(0));",
+                  "  pm.test(\"airport.created received\", () => pm.expect((by.received || {})[\"airport.created\"] || 0).to.be.above(0));",
+                  "  pm.test(\"route.deactivated received\", () => pm.expect((by.received || {})[\"route.deactivated\"] || 0).to.be.above(0));",
+                  "  pm.test(\"the late airport.status and the route.created without requirements were ignored\", () => {",
+                  "    pm.expect((by.ignored || {})[\"airport.status\"] || 0).to.be.above(0);",
+                  "    pm.expect((by.ignored || {})[\"route.created\"] || 0).to.be.above(0);",
+                  "  });",
+                  "  console.log(\"routeLookups\", JSON.stringify(m.routeLookups), \"messages\", JSON.stringify(m.messages));",
                   "}"
                 ]
               }

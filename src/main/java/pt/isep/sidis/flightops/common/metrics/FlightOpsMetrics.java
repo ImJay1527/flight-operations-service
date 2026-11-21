@@ -23,6 +23,7 @@ import java.util.function.BooleanSupplier;
  *       failed;</li>
  *   <li>{@value #AIRCRAFT_LOOKUPS}: aircraft answered from the local copy or from the Aircraft &amp; Maintenance
  *       service's REST API;</li>
+ *   <li>{@value #ROUTE_LOOKUPS}: the same for routes and airports (Airports &amp; Routes service);</li>
  *   <li>Spring Boot's {@code http.server.requests}: requests served - load distribution.</li>
  * </ul>
  * Summary: GET /api/cluster/metrics.
@@ -36,6 +37,7 @@ public class FlightOpsMetrics {
     public static final String REPLICATION = "flightops.replication";
     public static final String MESSAGES = "flightops.messages";
     public static final String AIRCRAFT_LOOKUPS = "flightops.aircraft.lookups";
+    public static final String ROUTE_LOOKUPS = "flightops.route.lookups";
 
     public static final String READ_MODEL = "read_model";
     public static final String LOCAL = "local";
@@ -97,6 +99,16 @@ public class FlightOpsMetrics {
     public void recordAircraftLookup(String source) {
         Counter.builder(AIRCRAFT_LOOKUPS)
                 .description("Aircraft asked for by bookings and queries, by where the answer came from")
+                .tag("source", source)
+                .register(registry)
+                .increment();
+    }
+
+    /** @param kind route | airport; @param source as in {@link #recordAircraftLookup} */
+    public void recordRouteLookup(String kind, String source) {
+        Counter.builder(ROUTE_LOOKUPS)
+                .description("Routes and airports asked for by bookings and queries, by where the answer came from")
+                .tag("kind", kind)
                 .tag("source", source)
                 .register(registry)
                 .increment();
