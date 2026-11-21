@@ -101,6 +101,7 @@ spec:
           startupProbe:
             exec: { command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"] }
             periodSeconds: 2
+            timeoutSeconds: 10             # mongosh (Node.js) needs more than the default 1 s on a busy machine
             failureThreshold: 60
           resources:
             requests: { cpu: 50m, memory: 128Mi }
