@@ -30,10 +30,11 @@ Requirements from the statement (P2 p.2) and from the RabbitMQ slides (RMQ p.15,
 | **Database per service instance** | Each instance has its own PostgreSQL (write) and its own MongoDB (read), not shared with anyone. The other services' data is reached by REST or by their events, never by their databases | `docker-compose.yml` (`flightops-db-<i>`, `flightops-read-db-<i>`), `k8s/flightops.yaml` (both databases in each pod); [Database](#database) |
 | **Data isolation across instances** | Flights sharded by aircraft (each on its owner plus one backup); every other instance asks the holders | Postman **09** (sharding), **07** (three instances); `TwoInstancesIntegrationTest`, `ReplicationIntegrationTest` |
 | **At least two instances** of each service | 3 instances (Docker Compose and `run-local.sh`); Kubernetes: 3 to 5 with auto-scaling | Postman **07**; dashboard; [Kubernetes](#kubernetes-auto-scaling) |
-| **Integration tests** in Postman | 142 requests with test scripts, including the failure phases run by `scripts/test-failures.sh` | `postman/`; [Postman](#postman-pl3-p17) |
+| **Integration tests** in Postman | 151 requests with test scripts, including the failure phases run by `scripts/test-failures.sh` | `postman/`; [Postman](#postman-pl3-p17) |
 | Mock **`/api/v2/unicorns`**, and how it fits CQRS | The airplanes' moods (FLYING, EXCITED, TIRED, BORED, HAPPY): a query computed from the read model, never a write | Postman **14**; `UnicornMoodTest`, `CqrsIntegrationTest`; [The unicorns endpoint: a query](docs/architecture.md#the-unicorns-endpoint-a-query) |
 | Documentation: **design decisions, consistency model, communication patterns, fault tolerance** | Each part has its decisions and alternatives, failure table and consistency section | [Consistency model](docs/architecture.md#consistency-model), [Topology](docs/architecture.md#topology), CQRS and Messaging "Decisions and alternatives" and "Failures", [C4 model](docs/c4-model.md), [contract](docs/service-contracts.md) |
 | RabbitMQ: **ack after processing, dead letters, TTL and queue limits, monitor queue depth** (RMQ p.15) | AUTO ack when the listener returns; 3 attempts, then `flight.events.dlq`; `x-max-length` 100 000, `x-message-ttl` 1 day, `x-expires` 7 days; queue depth, consumers, dead letters and outbox shown per instance | `/api/cluster/health` → `messaging`; dashboard "Broker (AMQP)" chip; `MessagingIntegrationTest` (dead letter) |
+| CQRS with **separate processes** (optional, beyond the statement) | Query instances: a read database only, not part of the sharding, no commands (405). The broker brings them every change and they rebuild their read model from the command instances when they start. The load balancer sends the GETs to them. Reads scale on their own (Kubernetes: 2 to 4) | Postman **17**; `QueryInstanceIntegrationTest`, `ClusterTest`; `run-local.sh --queries 2`, `docker compose --profile queries up`, `QUERY_INSTANCES=2 k8s/deploy.sh`; [Separate processes](docs/architecture.md#separate-processes-query-instances-optional) |
 | Security of the new connections | The broker connection is encrypted too: AMQPS, TLS 1.3, the broker's certificate checked against the AISafe CA | Postman **13** (RabbitMQ management API: every instance connection on 5671 with `tlsv1.3`); [Security](#security) |
 | **Source code and deployment instructions** | Docker Compose, `run-local.sh`, Kubernetes, control panel | [Run](#run), [Kubernetes](#kubernetes-auto-scaling) |
 
@@ -62,6 +63,9 @@ what is running.
 # Prints "READY FOR TESTS" once every instance has fully started.
 ./scripts/run-local.sh
 
+# CQRS with separate processes: also 2 query instances (8113, 8123), read database only, no commands
+./scripts/run-local.sh --stub --queries 2
+
 # instances started another way (e.g. VS Code): wait until they are ready (-n 2, --tls as above)
 ./scripts/wait-ready.sh
 
@@ -72,6 +76,8 @@ docker compose up --build
 
 # only flight ops: 3 instances + their databases behind the load balancer (https://localhost:8443)
 docker compose up --build flightops-lb
+# the same plus 2 query instances: the load balancer sends the queries (GET /api/**) to them
+docker compose --profile queries up --build flightops-lb flightops-query-1 flightops-query-2
 
 # Kubernetes (Docker Desktop) with auto-scaling between 3 and 5 instances: see "Kubernetes" below
 ./k8s/deploy.sh --stub
@@ -180,6 +186,14 @@ alternatives: [docs/architecture.md](docs/architecture.md#cqrs-assignment-2)):
   instance's read model.
 * On with the `cqrs` profile (docker-compose, Kubernetes and `run-local.sh` without `--h2`). Without it (`--h2`, the
   unit tests) there is no read database and every query takes the fallback path.
+* **Separate processes (optional): query instances.** Started with the `query` profile (`run-local.sh --queries 2`,
+  `docker compose --profile queries`, `QUERY_INSTANCES=2 k8s/deploy.sh`). A query instance has only a read
+  database. It is not in the command instances' cluster: it holds no flights and refuses commands (`405`,
+  `Allow: GET, HEAD`). The broker brings it every change, and it builds its read model from the command instances
+  before it reports ready. Behind the load balancer the GETs of `/api/**` go to the query instances, the rest to the
+  command instances (`lb/nginx.conf`). On Kubernetes they are a Deployment with their own auto-scaler and address,
+  https://localhost:9444. `GET /api/cluster/health` → `role`: `commands and queries` or `queries only`
+  ([details](docs/architecture.md#separate-processes-query-instances-optional)).
 * **`GET /api/v2/unicorns`** (and `/api/v2/unicorns/{registration}`): the mood of each airplane in JSON - `FLYING`,
   `EXCITED` (leaves within 24 h), `TIRED` (10 h or more in 7 days), `BORED` (nothing scheduled) or `HAPPY`. A query:
   it only reads the read model. Booking or completing a flight (commands) changes the mood
@@ -230,7 +244,8 @@ services rely on: [docs/service-contracts.md](docs/service-contracts.md#events-a
 ./mvnw test
 ```
 
-The tests that use MongoDB or RabbitMQ (`MongoReadModelTest`, `CqrsIntegrationTest`, `MessagingIntegrationTest`)
+The tests that use MongoDB or RabbitMQ (`MongoReadModelTest`, `CqrsIntegrationTest`, `MessagingIntegrationTest`,
+`QueryInstanceIntegrationTest`)
 start them in Docker (Testcontainers) and are skipped when Docker is not running; CI runs them.
 
 | Test | What it covers |
@@ -247,12 +262,13 @@ start them in Docker (Testcontainers) and are skipped when Docker is not running
 | `clients/LocalAircraftCopyTest`, `messaging/AircraftEventsTest` | The aircraft copy: an aircraft from an event needs no REST call, one not in the copy is read once and kept, an old copy is read again or used when the REST API is down (503 only for an aircraft never seen); the events with the contract's JSON given to the listener: an aircraft unknown to the built-in data can be booked after its `aircraft.created`, `UNDER_MAINTENANCE` → booking 409 until it is `AVAILABLE` again, a duplicate or older event changes nothing, a broken event is rejected (dead-letter queue) |
 | `clients/LocalRouteCopyTest`, `messaging/RouteEventsTest` | The route and airport copies: a route is read once with its two airports and kept, a route and airports from events need no REST call; with the JSON Airports & Routes publishes (`@type`, `AIRPORT_CREATED`, `airport.status`): a route unknown to the built-in data can be booked after its events, a closed airport → 409 until it is open again (an older event changes nothing), a certification added lets a new model fly there, a deactivated route → 409, a `route.created` without the requirements is left to the REST API, a broken event is rejected |
 | `MessagingIntegrationTest` | **Real RabbitMQ** and two instances with the `cqrs` and `amqp` profiles, the 30 s sync turned off: one queue per instance with its consumer, a booking reaches the other instance's read model and another service's queue through the broker only, a completed flight announced with its flight hours (and completing it again → 409), the broker paused → bookings still 201 and their events wait in the outbox until it is back, a message that can't be read → dead-letter queue after the retries, `aircraft.created` / `aircraft.status.changed` sent the way Aircraft & Maintenance sends them reach both instances' aircraft copies (booking 201, then 409 under maintenance), and the same for `airport.created` / `route.created` / `route.deactivated` |
+| `QueryInstanceIntegrationTest` | **Real RabbitMQ and MongoDB**, two command instances and a **query instance** (profile `query`), the 30 s sync turned off: the query instance is not a member (`role: queries only`) and has its own queue; a booking reaches it through the broker only; asked for the write side, a command instance answers (`X-Data-Source: peer:`); unicorns from its read model; a booking or a cancel sent to it → 405 (401 without a token, login works); commands work with it stopped, and a new query instance starts with the whole read model |
 | `ReplicationIntegrationTest` | **Three real instances**, 2 copies of each flight: a booking copied to the backup, the owner stopped → its flights still readable and lists complete, bookings go to the backup, a cancel while it is down; the owner restarts with an empty database and catches up; the backup's outbox empties; `/api/cluster/overview` shows the 3 instances and each flight once as owner and once as backup |
 
 ### Postman (PL3 p.17)
 
 Files in `postman/`:
-`flight-operations.postman_collection.json` (142 requests with test scripts) and two environments (one URL per
+`flight-operations.postman_collection.json` (151 requests with test scripts) and two environments (one URL per
 instance): `local.postman_environment.json` (HTTP) and `local-https.postman_environment.json` (HTTPS). Import all three.
 
 1. Start 3 instances in **stub** mode (built-in aircraft/route data, so flights can be created without the other
@@ -302,6 +318,7 @@ stopped instance itself).
 | 14 Unicorns | Assignment 2 mock endpoint (runs on its own: its first request checks whether there is a read model): `GET /api/v2/unicorns` returns a JSON list, each airplane with a known mood and a message, from the read model (`X-Read-Side`); CS-TPB booked to leave in 3 s is `FLYING`, and after completing the flight it isn't any more; unknown airplane → 404, no token → 401 |
 | 15 Aircraft events | Assignment 2 (runs on its own, like 14 and 16): `aircraft.created` for CS-EVP (unknown to the built-in data) sent through RabbitMQ's management API → booking 201 from the copy; `aircraft.status.changed` → `UNDER_MAINTENANCE` → booking 409; a late, older `AVAILABLE` changes nothing (still 409); a newer `AVAILABLE` → 201; the owner's metrics: lookups from the copy, aircraft events received and the late one ignored. Skipped without a broker (`--h2`) |
 | 16 Route and airport events | Assignment 2: `airport.created` FNC and PDL and `route.created` route-fnc-pdl (unknown to the built-in data), in the JSON Airports & Routes publishes → booking 201 from the copies; a 737 MAX → 409 (FNC not certified) until `airport.certification.added`; `airport.status` PDL CLOSED → 409, a late older OPERATIONAL changes nothing, a newer one reopens it; `route.deactivated` → 409; a `route.created` without the requirements (what the service sends today) is ignored and the REST API decides (404); the owner's metrics: lookups from the copy, events received and ignored. Skipped without a broker (`--h2`) |
+| 17 CQRS - query instances | Assignment 2, separate processes (runs on its own; skipped without query instances: `run-local.sh --queries 2`, `docker compose --profile queries`, or on Kubernetes set `queryInstance` to https://localhost:9444): instance 1 is a command instance and the query instance is not a member; the query instance answers queries only, its read model READY, its own queue; a booking on instance 1 read on the query instance from its read model (it came through the broker, polled every second); with `X-Read-Side: write-side` a command instance answers (`peer:`); a booking sent to it → 405 `Allow: GET, HEAD`; unicorns from its read model; a cancel on instance 2 seen there as CANCELED |
 | 11 Whole system - failures | Week 5 p.14 "stop container, verify 404", Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **503** "could not be reached" with `Retry-After`, list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances). **11f** the broker (rabbitmq) stopped: the instances stay UP and see it down, a booking still 201 and readable, its event waits in an outbox. **11g** the broker started: every outbox empty again, the flight in the read models |
 
 **Over HTTPS** (evidence of encryption in transit): start the instances with `./scripts/run-local.sh --tls --stub`
@@ -418,6 +435,7 @@ connection (Connections → TLS); Postman folder 13 checks it.
 ./scripts/generate-dev-certs.sh   # once (keeps an existing CA; adds the pod names to the certificates)
 ./k8s/deploy.sh --stub            # only Flight Operations (stub data); without --stub also the other two services
 OTHER_INSTANCES=1 ./k8s/deploy.sh # all 3 services, 1 pod of each of the other two (less memory)
+QUERY_INSTANCES=2 ./k8s/deploy.sh --stub   # plus 2 query pods (CQRS with separate processes), https://localhost:9444
 kubectl -n aisafe get pods,hpa -w # watch the instances and the auto-scaler
 ./k8s/deploy.sh --down            # remove everything
 ```
@@ -463,6 +481,13 @@ then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WS
   logs (`Discovery: ... joined`, `Rebalancing: ...`) show it happening.
 * **Self-healing**: Kubernetes restarts a container whose liveness probe fails and recreates a deleted pod
   (`kubectl -n aisafe delete pod flightops-1`: it comes back with the same name and disk, then catches up).
+* **Query pods** (optional, `QUERY_INSTANCES=2`, `k8s/flightops-query.yaml`): a Deployment, not a StatefulSet. They
+  hold no flights, so they need no stable name and no disk: their MongoDB is an `emptyDir`, rebuilt at every start
+  from the command pods (found by the same DNS discovery) before the pod is ready. Their own auto-scaler (2 to 4) and
+  their own `LoadBalancer` Service on https://localhost:9444 for the queries; commands stay on 9443 (a Kubernetes
+  Service can't route by HTTP method, nginx does that in Docker Compose). Their label is `app: flightops-query`, so
+  the command Services never send them a request. Each pod's queue is removed by the broker a minute after the pod
+  goes (`x-expires`).
 * Secrets (JWT key, database password, encryption key, certificates) are Kubernetes Secrets created by `deploy.sh`,
   never in the manifests.
 
@@ -538,3 +563,4 @@ instance of each other service was running, so their other two instances show `O
 - [x] Assignment 2: consume the route and airport events (airports-routes-service)
 - [x] Assignment 2: `/api/v2/unicorns`
 - [x] AMQPS (TLS) to the broker
+- [x] CQRS with separate processes: query instances (optional)

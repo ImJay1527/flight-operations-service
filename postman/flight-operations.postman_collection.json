@@ -7132,6 +7132,443 @@
       ]
     },
     {
+      "name": "17 CQRS - query instances (separate processes)",
+      "description": "CQRS with separate processes: query instances answer the queries from their own read database and take no commands; they are not in the command instances' cluster. Needs query instances (run-local.sh --queries 2, docker compose --profile queries up, or QUERY_INSTANCES=2 k8s/deploy.sh with queryInstance = https://localhost:9444); skipped otherwise.",
+      "item": [
+        {
+          "name": "Is a query instance running? (sets queryOn, so this folder runs on its own)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the query instances: run-local.sh --queries 2 (8113, 8123), docker compose --profile queries, k8s (9444)",
+                  "const q = pm.environment.get(\"queryInstance\") || pm.environment.get(\"instance1\").replace(/:\\d+$/, \":8113\");",
+                  "pm.environment.set(\"queryInstance\", q);",
+                  "pm.sendRequest({ url: q + \"/api/cluster/health\", method: \"GET\",",
+                  "    header: { Authorization: \"Bearer \" + pm.environment.get(\"atccToken\") } }, (err, res) => {",
+                  "  const ok = !err && res.code === 200 && res.json().role === \"queries only\";",
+                  "  pm.environment.set(\"queryOn\", ok);",
+                  "  pm.environment.set(\"queryName\", ok ? res.json().name : \"\");",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (pm.environment.get(\"queryOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: no query instance at \" + pm.environment.get(\"queryInstance\") + \". Start some: run-local.sh --queries 2, docker compose --profile queries up, or QUERY_INSTANCES=2 k8s/deploy.sh (then queryInstance = https://localhost:9444)\", () => {});",
+                  "} else {",
+                  "  pm.test(\"instance 1 is a command instance (it answers queries too)\", () => pm.expect(body.role).to.eql(\"commands and queries\"));",
+                  "  pm.test(\"the query instance is not one of the members (the instances that hold flights)\", () => pm.expect(body.members).to.not.include(pm.environment.get(\"queryName\")));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query instance: answers queries only, holds no flights, read model READY, its own queue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{queryInstance}}/api/cluster/health",
+              "host": [
+                "{{queryInstance}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = pm.response.json();",
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"role: queries only\", () => pm.expect(h.role).to.eql(\"queries only\"));",
+                  "pm.test(\"not a member: it knows the command instances, holds no aircraft\", () => { pm.expect(h.members.length).to.be.at.least(2); pm.expect(h.members).to.not.include(h.name); });",
+                  "pm.test(\"read model READY (built from the command instances at startup)\", () => pm.expect(h.readModel.state).to.eql(\"READY\"));",
+                  "pm.test(\"its own queue on the broker: flight.events.<its name>\", () => pm.expect(h.messaging.queue).to.eql(\"flight.events.\" + h.name));",
+                  "pm.test(\"one consumer on it\", () => pm.expect(h.messaging.consumers).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book a flight on a command instance (instance 1)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPB\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }",
+                  "// random departure 30..3000 days ahead, so repeated runs don't overlap for the same aircraft",
+                  "const days = 30 + Math.floor(Math.random() * 3000);",
+                  "const dep = new Date(Date.now() + days * 86400000);",
+                  "dep.setUTCHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), 0, 0);",
+                  "const fmt = d => d.toISOString().substring(0, 19);",
+                  "pm.variables.set('departure', fmt(dep));",
+                  "pm.variables.set('arrival', fmt(new Date(dep.getTime() + 45 * 60000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.environment.set(\"query_flight\", pm.response.json().flightNumber);",
+                  "pm.environment.set(\"query_aircraft\", pm.response.json().aircraftRegistration);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query on the query instance: the flight came through the broker (read model)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{queryInstance}}/api/scheduled-flights/{{query_flight}}",
+              "host": [
+                "{{queryInstance}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{query_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }",
+                  "if (Number(pm.variables.get(\"queryTries\") || 0) > 0) { setTimeout(() => {}, 1000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const tries = Number(pm.variables.get(\"queryTries\") || 0);",
+                  "if (pm.response.code !== 200 && tries < 10) {",
+                  "  pm.variables.set(\"queryTries\", tries + 1);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);   // not there yet: ask again in 1 s",
+                  "} else {",
+                  "  pm.variables.set(\"queryTries\", 0);",
+                  "  pm.test(\"status 200 (after \" + tries + \" s of waiting)\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"X-Data-Source: read-model (its write side holds no flights)\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"read-model\"));",
+                  "  pm.test(\"same flight\", () => pm.expect(pm.response.json().flightNumber).to.eql(pm.environment.get(\"query_flight\")));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same query with X-Read-Side: write-side: it asks the command instances",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Read-Side",
+                "value": "write-side"
+              }
+            ],
+            "url": {
+              "raw": "{{queryInstance}}/api/scheduled-flights/{{query_flight}}",
+              "host": [
+                "{{queryInstance}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{query_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"X-Read-Side: write-side\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"write-side\"));",
+                  "pm.test(\"X-Data-Source: peer:... (a command instance answered)\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.match(/^peer:/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command on the query instance: refused (405, Allow: GET, HEAD)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{queryInstance}}/api/scheduled-flights",
+              "host": [
+                "{{queryInstance}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"2031-01-01T10:00:00\",\n  \"arrivalTime\": \"2031-01-01T10:45:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 405\", () => pm.response.to.have.status(405));",
+                  "pm.test(\"Allow: GET, HEAD\", () => pm.expect(pm.response.headers.get(\"Allow\")).to.eql(\"GET, HEAD\"));",
+                  "pm.test(\"says where commands go\", () => pm.expect(pm.response.json().error).to.include(\"query instance\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unicorns on the query instance (a query: read model)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{queryInstance}}/api/v2/unicorns",
+              "host": [
+                "{{queryInstance}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "unicorns"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "pm.test(\"the booked aircraft is there\", () => pm.expect(pm.response.json().map(u => u.registration)).to.include(pm.environment.get(\"query_aircraft\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: cancel it on another command instance (instance 2)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{instance2}}/api/scheduled-flights/{{query_flight}}/cancel",
+              "host": [
+                "{{instance2}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{query_flight}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"CANCELED\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query on the query instance: CANCELED (through the broker)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{queryInstance}}/api/scheduled-flights/{{query_flight}}",
+              "host": [
+                "{{queryInstance}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{query_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"queryOn\") !== true) { pm.execution.skipRequest(); }",
+                  "if (Number(pm.variables.get(\"queryTries\") || 0) > 0) { setTimeout(() => {}, 1000); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const tries = Number(pm.variables.get(\"queryTries\") || 0);",
+                  "if (pm.response.json().status !== \"CANCELED\" && tries < 10) {",
+                  "  pm.variables.set(\"queryTries\", tries + 1);",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.variables.set(\"queryTries\", 0);",
+                  "  pm.test(\"CANCELED (after \" + tries + \" s of waiting)\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELED\"));",
+                  "  pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "03 Resilience - instance 2 is stopped and restarted",
       "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication: each of its flights has a copy on instance 1 or 3). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and the outbox of the instance that took that booking is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2.\n\nOnly in stub mode: it stops instance 2 through `POST /actuator/shutdown`, which the normal (whole-system) configuration does not expose.\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [
