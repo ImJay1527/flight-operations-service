@@ -29,8 +29,9 @@ flowchart TB
     api -->|"Queries; updated after every change<br/>and rebuilt from the write side<br/>[MongoDB driver]"| rdb
     api -->|"Publishes flight.* events;<br/>receives the other instances' events<br/>[AMQP]"| mq
     mq -->|"flight.completed<br/>[AMQP]"| am
+    am -->|"aircraft.* events: each instance<br/>keeps its own copy of the aircraft<br/>[AMQP]"| mq
     api -->|"Peer forwarding, bookings on the owner,<br/>copies, catch-up, status<br/>[HTTPS /internal/**, service JWT]"| api
-    api -->|"GET /internal/aircraft/{reg}<br/>[REST, service JWT]"| am
+    api -->|"GET /internal/aircraft/{reg}<br/>(only what the copy doesn't have)<br/>[REST, service JWT]"| am
     api -->|"GET /internal/routes/{id},<br/>/internal/airports/{iata}<br/>[REST, service JWT]"| ar
 
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff

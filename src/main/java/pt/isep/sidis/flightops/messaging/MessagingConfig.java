@@ -15,12 +15,14 @@ import org.springframework.context.annotation.Configuration;
 /**
  * The broker topology (RabbitMQ, AMQP 0-9-1), declared on first connection and again after every reconnect:
  * <pre>
- *   aisafe.events (topic, durable) --flight.#--> flight.events.&lt;instance&gt;   one queue per instance
+ *   aisafe.events (topic, durable) --flight.#----> flight.events.&lt;instance&gt;   one queue per instance
+ *                                  --aircraft.#--/                            (Aircraft &amp; Maintenance's events)
  *   aisafe.dlx    (topic, durable) --flight.events.dlq--> flight.events.dlq     failed / expired messages
  * </pre>
  * One queue per instance is the publish/subscribe pattern (RabbitMQ tutorial 3, "state synchronization"): every
  * instance gets every event. A queue shared by the instances would be the work-queue pattern (tutorial 2), where
- * each event reaches only one of them. The exchange and the dead-letter exchange are the ones of the system
+ * each event reaches only one of them. Every instance needs every aircraft event too, for its own copy of the
+ * aircraft ({@code LocalAircraftCopy}). The exchange and the dead-letter exchange are the ones of the system
  * contract (docs/service-contracts.md); the other services bind their own queues to them.
  */
 @Configuration
@@ -75,6 +77,11 @@ public class MessagingConfig {
     @Bean
     Binding flightEventsBinding(Queue flightEventsQueue, TopicExchange eventsExchange) {
         return BindingBuilder.bind(flightEventsQueue).to(eventsExchange).with("flight.#");
+    }
+
+    @Bean
+    Binding aircraftEventsBinding(Queue flightEventsQueue, TopicExchange eventsExchange) {
+        return BindingBuilder.bind(flightEventsQueue).to(eventsExchange).with("aircraft.#");
     }
 
     @Bean

@@ -56,7 +56,7 @@ public class MonitoringController {
         return new Metrics(instanceName, requestsServed(),
                 new Lookups(readModel, local, forwarded, notFound),
                 new Forwarding(askedPeers, forwarded.count(), successRate),
-                remoteInstances(), messages());
+                remoteInstances(), messages(), aircraftLookups());
     }
 
     private TimerStats timerStats(String source) {
@@ -123,6 +123,15 @@ public class MonitoringController {
                 total(byEvent.get("ignored")), total(byEvent.get("failed")), byEvent);
     }
 
+    /** Where the aircraft of bookings and queries came from (flightops.aircraft.lookups; "amqp" profile only). */
+    private Map<String, Long> aircraftLookups() {
+        Map<String, Long> bySource = new TreeMap<>();
+        for (Counter c : registry.find(FlightOpsMetrics.AIRCRAFT_LOOKUPS).counters()) {
+            bySource.merge(c.getId().getTag("source"), (long) c.count(), Long::sum);
+        }
+        return bySource;
+    }
+
     private static long total(Map<String, Long> byKey) {
         return byKey == null ? 0 : byKey.values().stream().mapToLong(Long::longValue).sum();
     }
@@ -132,13 +141,16 @@ public class MonitoringController {
     }
 
     public record Metrics(String instance, Served requestsServed, Lookups lookupResponseTimes,
-                          Forwarding forwarding, List<RemoteInstance> remoteInstances, Messages messages) {
+                          Forwarding forwarding, List<RemoteInstance> remoteInstances, Messages messages,
+                          Map<String, Long> aircraftLookups) {
     }
 
     /**
      * @param published events of changes made here, confirmed by the broker
-     * @param received  events of the other instances, projected into the read model
-     * @param ignored   this instance's own events coming back on its queue (already projected)
+     * @param received  events of the other instances (projected into the read model) and of Aircraft &amp;
+     *                  Maintenance (applied to the aircraft copy)
+     * @param ignored   this instance's own events coming back on its queue (already projected), and events that
+     *                  changed nothing (an older aircraft change, one of an aircraft not in the copy, maintenance)
      * @param failed    attempts at messages that could not be read (they end in the dead-letter queue)
      */
     public record Messages(long published, long received, long ignored, long failed,

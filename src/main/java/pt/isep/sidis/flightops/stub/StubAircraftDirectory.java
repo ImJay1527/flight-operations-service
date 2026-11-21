@@ -2,6 +2,7 @@ package pt.isep.sidis.flightops.stub;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import pt.isep.sidis.flightops.clients.AircraftDirectory;
@@ -15,6 +16,7 @@ import java.util.Map;
  * service. The shared bootstrap data plus CS-TPM (under maintenance) for the negative tests.
  */
 @Component
+@Qualifier(AircraftDirectory.REMOTE)
 @Profile("stub")
 public class StubAircraftDirectory implements AircraftDirectory {
 

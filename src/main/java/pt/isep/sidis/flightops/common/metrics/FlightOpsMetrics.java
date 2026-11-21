@@ -21,6 +21,8 @@ import java.util.function.BooleanSupplier;
  *   <li>{@value #REPLICATION}: copies sent to and applied from other instances, and conflicts found;</li>
  *   <li>{@value #MESSAGES}: events published to and received from the message broker, and the ones that
  *       failed;</li>
+ *   <li>{@value #AIRCRAFT_LOOKUPS}: aircraft answered from the local copy or from the Aircraft &amp; Maintenance
+ *       service's REST API;</li>
  *   <li>Spring Boot's {@code http.server.requests}: requests served - load distribution.</li>
  * </ul>
  * Summary: GET /api/cluster/metrics.
@@ -33,6 +35,7 @@ public class FlightOpsMetrics {
     public static final String REMOTE_HEALTHY = "flightops.remote.healthy";
     public static final String REPLICATION = "flightops.replication";
     public static final String MESSAGES = "flightops.messages";
+    public static final String AIRCRAFT_LOOKUPS = "flightops.aircraft.lookups";
 
     public static final String READ_MODEL = "read_model";
     public static final String LOCAL = "local";
@@ -86,6 +89,15 @@ public class FlightOpsMetrics {
                 .description("Events published to / received from the message broker (RabbitMQ)")
                 .tag("event", event)
                 .tag("routing_key", routingKey == null ? "unknown" : routingKey)
+                .register(registry)
+                .increment();
+    }
+
+    /** @param source copy | rest (not in the copy yet) | refreshed (copy too old) | old_copy (REST API down) */
+    public void recordAircraftLookup(String source) {
+        Counter.builder(AIRCRAFT_LOOKUPS)
+                .description("Aircraft asked for by bookings and queries, by where the answer came from")
+                .tag("source", source)
                 .register(registry)
                 .increment();
     }

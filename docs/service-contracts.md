@@ -158,6 +158,18 @@ the same flight, the higher revision is the newer. Header `instance`: the flight
 `aircraft.created`, `aircraft.status.changed`, `aircraft.maintenance.scheduled`, `aircraft.maintenance.completed`:
 fields as in `aircraft-maintenance-service/docs/AMQP_CONTRACT.md` (section 2). It consumes `flight.completed`.
 
+**What Flight Operations uses** (its queues are also bound to `aircraft.#`): each instance keeps its own copy of
+the aircraft for bookings, instead of calling `GET /internal/aircraft/{registration}` every time.
+
+| Routing key | Fields used | |
+|---|---|---|
+| `aircraft.created` | `registration`, `modelCode` (the model's name, as `modelName` of the REST API; `modelName` only if `modelCode` is missing), `maxRange`, `fuelCapacity`, `seatingCapacity`, `status`, `occurredAt` | the whole aircraft |
+| `aircraft.status.changed` | `registration`, `newStatus`, `occurredAt` | ignored for an aircraft not in the copy yet |
+| `aircraft.maintenance.*` | none | each comes with an `aircraft.status.changed` |
+
+Order: an event whose `occurredAt` is older than the copy changes nothing (duplicates, late events). An aircraft not
+in the copy is still read once from the REST API, and again when its copy hasn't changed for an hour.
+
 ## Shared bootstrap data
 
 So the sample data lines up across services, use these fixed identifiers:
