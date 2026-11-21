@@ -107,4 +107,13 @@ class ReplicaSyncTest {
         verify(flights, timeout(2000).times(2)).findAll();   // and the hand-off ran again
         sync.shutdown();
     }
+
+    @Test
+    void aQueryInstanceNeverAsksForCopies() {
+        // asking would even make the others count it as a holder (replicasOf(reg, instance))
+        Cluster query = new Cluster("query1", List.of("instance1=https://a:8083", "instance2=https://b:8083"),
+                List.of(), 2, null, 0, true);
+        new ReplicaSync(query, peers, mock(ReplicaStore.class), flights, healthRegistry, 0, 60_000, 0).run(null);
+        verifyNoInteractions(peers, flights);
+    }
 }

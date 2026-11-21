@@ -50,8 +50,9 @@ public class ClusterHealthController {
     @PreAuthorize("hasAnyRole('ADMIN', 'ATCC', 'BACKOFFICE_OPERATOR')")
     @GetMapping("/health")
     public ClusterHealth health() {
-        return new ClusterHealth(self, registry.snapshot(), cluster.replicationFactor(), replication.backlog(),
-                readModel.state().snapshot(), messaging.snapshot());
+        return new ClusterHealth(self, cluster.self(), cluster.isQueryOnly() ? QUERIES_ONLY : COMMANDS_AND_QUERIES,
+                cluster.members().stream().map(Cluster.Member::name).toList(), registry.snapshot(),
+                cluster.replicationFactor(), replication.backlog(), readModel.state().snapshot(), messaging.snapshot());
     }
 
     @Operation(summary = "Which instances hold an aircraft's flights (sharding by registration, P1 p.15, plus "
@@ -64,7 +65,18 @@ public class ClusterHealthController {
                 cluster.replicasOf(registration), cluster.members().stream().map(Cluster.Member::name).toList());
     }
 
-    public record ClusterHealth(String instance, List<EndpointHealth.Snapshot> endpoints, int replicationFactor,
+    /** What an instance does: a command instance (the usual one) answers queries too; a query instance only queries. */
+    public static final String COMMANDS_AND_QUERIES = "commands and queries";
+    public static final String QUERIES_ONLY = "queries only";
+
+    /**
+     * @param instance        service name and port
+     * @param name            instance name ({@code flightops.instance-name})
+     * @param role            {@link #COMMANDS_AND_QUERIES} or {@link #QUERIES_ONLY} (CQRS with separate processes)
+     * @param members         the instances that hold the flights (a query instance is never one of them)
+     */
+    public record ClusterHealth(String instance, String name, String role, List<String> members,
+                                List<EndpointHealth.Snapshot> endpoints, int replicationFactor,
                                 Map<String, Long> replicationBacklog, ReadModelState.Snapshot readModel,
                                 MessagingStatus.Snapshot messaging) {
     }

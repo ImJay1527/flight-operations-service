@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -41,6 +42,10 @@ import java.util.function.Consumer;
  * The first {@code flightops.replication.factor} instances of the ranking hold the aircraft's flights (its replicas);
  * the first of them is the owner, where bookings go.
  * Without a cluster list (standalone, or the old {@code flightops.peers}) this instance holds everything.
+ *
+ * <p>A <b>query instance</b> ({@code flightops.query-only=true}, CQRS with separate processes) is not a member: the
+ * list (or the discovery) gives the command instances only, so it holds no aircraft and every member is a peer it
+ * can ask. The command instances don't know it.
  */
 @Component
 public class Cluster {
@@ -65,6 +70,7 @@ public class Cluster {
     }
 
     private final String self;
+    private final boolean queryOnly;
     private final int configuredFactor;
     private final DnsDiscovery discovery;   // null = fixed list
     private final List<Consumer<Change>> listeners = new CopyOnWriteArrayList<>();
@@ -74,7 +80,7 @@ public class Cluster {
 
     /** Fixed membership (cluster list or legacy peers). */
     public Cluster(String self, List<String> entries, List<String> legacyPeers, int replicationFactor) {
-        this(self, entries, legacyPeers, replicationFactor, null, 0);
+        this(self, entries, legacyPeers, replicationFactor, null, 0, false);
     }
 
     @Autowired
@@ -84,25 +90,35 @@ public class Cluster {
                    @Value("${flightops.replication.factor:2}") int replicationFactor,
                    @Value("${flightops.discovery.url-pattern:}") String discoveryPattern,
                    @Value("${flightops.discovery.max-instances:10}") int maxInstances,
-                   @Value("${flightops.discovery.interval-ms:5000}") long discoveryIntervalMs) {
+                   @Value("${flightops.discovery.interval-ms:5000}") long discoveryIntervalMs,
+                   @Value("${flightops.query-only:false}") boolean queryOnly) {
         this(self, entries, legacyPeers, replicationFactor,
                 discoveryPattern == null || discoveryPattern.isBlank() ? null
                         : new DnsDiscovery(discoveryPattern, maxInstances, DnsDiscovery::resolves),
-                discoveryIntervalMs);
+                discoveryIntervalMs, queryOnly);
     }
 
-    /** With a discovery: the members are looked up now, then every {@code discoveryIntervalMs} (0 = only now). */
     public Cluster(String self, List<String> entries, List<String> legacyPeers, int replicationFactor,
             DnsDiscovery discovery, long discoveryIntervalMs) {
+        this(self, entries, legacyPeers, replicationFactor, discovery, discoveryIntervalMs, false);
+    }
+
+    /**
+     * With a discovery: the members are looked up now, then every {@code discoveryIntervalMs} (0 = only now).
+     * {@code queryOnly}: this instance is a query instance, not one of the members.
+     */
+    public Cluster(String self, List<String> entries, List<String> legacyPeers, int replicationFactor,
+            DnsDiscovery discovery, long discoveryIntervalMs, boolean queryOnly) {
         if (replicationFactor < 1) {
             throw new IllegalArgumentException("flightops.replication.factor must be at least 1");
         }
         this.self = self;
+        this.queryOnly = queryOnly;
         this.configuredFactor = replicationFactor;
         this.discovery = discovery;
 
         if (discovery != null) {
-            if (discovery.memberNamed(self).isEmpty()) {
+            if (!queryOnly && discovery.memberNamed(self).isEmpty()) {
                 throw new IllegalArgumentException("flightops.discovery.url-pattern does not produce this instance ("
                         + self + ")");
             }
@@ -132,7 +148,12 @@ public class Cluster {
             }
             parsed.add(new Member(entry.substring(0, eq).trim(), entry.substring(eq + 1).trim()));
         }
-        if (!parsed.isEmpty() && parsed.stream().noneMatch(m -> m.name().equals(self))) {
+        if (queryOnly) {
+            if (parsed.isEmpty() || parsed.stream().anyMatch(m -> m.name().equals(self))) {
+                throw new IllegalArgumentException("a query instance needs flightops.cluster = the command instances "
+                        + "only, without itself (" + self + ")");
+            }
+        } else if (!parsed.isEmpty() && parsed.stream().noneMatch(m -> m.name().equals(self))) {
             throw new IllegalArgumentException("flightops.cluster does not contain this instance (" + self + ")");
         }
         List<Member> legacy = legacyPeers.stream().filter(u -> !u.isBlank()).map(u -> new Member(u, u)).toList();
@@ -171,10 +192,12 @@ public class Cluster {
         }
     }
 
-    /** This instance is always a member, even before its own DNS name can be looked up. */
+    /** This instance is always a member, even before its own DNS name can be looked up (a query instance never). */
     private List<Member> discoverWithSelf() {
         List<Member> found = new ArrayList<>(discovery.discover());
-        if (found.stream().noneMatch(m -> m.name().equals(self))) {
+        if (queryOnly) {
+            found.removeIf(m -> m.name().equals(self));
+        } else if (found.stream().noneMatch(m -> m.name().equals(self))) {
             found.add(discovery.memberNamed(self).orElseThrow());
         }
         return found;
@@ -200,6 +223,11 @@ public class Cluster {
 
     public String self() {
         return self;
+    }
+
+    /** True on a query instance: it answers queries only, holds no flights and takes no commands. */
+    public boolean isQueryOnly() {
+        return queryOnly;
     }
 
     /** True if aircraft are sharded over a set of instances (fixed list or discovery). */
@@ -241,7 +269,10 @@ public class Cluster {
     /** The instances that hold the flights of this aircraft, best-ranked first; the first one is the owner. */
     public List<String> replicasOf(String registration) {
         List<String> names = view.members().stream().map(Member::name).toList();
-        return names.isEmpty() ? List.of(self) : rank(names, registration);
+        if (names.isEmpty()) {
+            return queryOnly ? List.of() : List.of(self);   // a query instance never holds flights
+        }
+        return rank(names, registration);
     }
 
     /**
@@ -269,11 +300,15 @@ public class Cluster {
 
     /** The instance where bookings of this aircraft are made. */
     public String ownerOf(String registration) {
-        return replicasOf(registration).get(0);
+        List<String> replicas = replicasOf(registration);
+        if (replicas.isEmpty()) {
+            throw new ServiceUnavailableException("No command instance found yet (this is a query instance)");
+        }
+        return replicas.get(0);
     }
 
     public boolean ownsLocally(String registration) {
-        return self.equals(ownerOf(registration));
+        return !queryOnly && self.equals(ownerOf(registration));
     }
 
     /** True if this instance keeps a copy of this aircraft's flights (as owner or as backup). */
