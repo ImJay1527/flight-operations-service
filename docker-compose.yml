@@ -212,11 +212,17 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     hostname: rabbitmq                 # RabbitMQ keeps its data per node name: keep it fixed
-    ports: ["5672:5672", "15672:15672"]
+    # AMQP on 5672; AMQPS (TLS) on 5671 when the dev certificates exist (./scripts/generate-dev-certs.sh), which the
+    # flightops instances use (profile tls). The management UI stays on 15672.
+    ports: ["5672:5672", "5671:5671", "15672:15672"]
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
-    volumes: ["rabbitmq-data:/var/lib/rabbitmq"]
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./certs:/certs:ro
+      - ./rabbitmq/tls.conf:/etc/rabbitmq/tls.conf:ro
+    command: ["sh", "-c", "if [ -f /certs/rabbitmq.key ]; then cp /etc/rabbitmq/tls.conf /etc/rabbitmq/conf.d/20-tls.conf; fi; exec docker-entrypoint.sh rabbitmq-server"]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s

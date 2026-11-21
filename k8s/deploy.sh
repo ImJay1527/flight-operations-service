@@ -32,8 +32,10 @@ kubectl version >/dev/null 2>&1 \
   || { echo "Kubernetes is not running: Docker Desktop -> Kubernetes -> Create cluster (kubeadm)."; exit 1; }
 echo "Kubernetes context: $(kubectl config current-context)"
 
-if ! grep -q "flightops-0.flightops-peers" <(keytool -printcert -file certs/flightops.crt 2>/dev/null); then
-  echo "The certificates have no Kubernetes names yet: run ./scripts/generate-dev-certs.sh first."; exit 1
+if ! grep -q "flightops-0.flightops-peers" <(keytool -printcert -file certs/flightops.crt 2>/dev/null) \
+   || [[ ! -f certs/rabbitmq.key ]]; then
+  echo "The certificates are missing or old (no Kubernetes names or no rabbitmq certificate):"
+  echo "run ./scripts/generate-dev-certs.sh first."; exit 1
 fi
 
 # ---------- images (Kubernetes uses the images of the local Docker engine) ----------
@@ -74,6 +76,8 @@ kubectl -n "$NS" create secret generic flightops-secrets \
   --from-literal=SSL_PASSWORD="${SSL_PASSWORD:-changeit}" \
   --from-literal=DATA_ENCRYPTION_KEY="${DATA_ENCRYPTION_KEY:-9BvH3kXoOq3m1o9mJmPFjB6m4cO1kz3Hqk2iY7G1M8o=}" \
   --dry-run=client -o yaml | apply
+kubectl -n "$NS" create secret generic rabbitmq-certs   --from-file=certs/ca.crt --from-file=certs/rabbitmq.crt --from-file=certs/rabbitmq.key --dry-run=client -o yaml | apply
+kubectl -n "$NS" create configmap rabbitmq-config --from-file=rabbitmq/tls.conf --dry-run=client -o yaml | apply
 kubectl -n "$NS" create secret generic rabbitmq-secrets \
   --from-literal=RABBITMQ_USER="${RABBITMQ_USER:-guest}" \
   --from-literal=RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-guest}" \

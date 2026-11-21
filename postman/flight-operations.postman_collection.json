@@ -4656,6 +4656,73 @@
               }
             }
           ]
+        },
+        {
+          "name": "AMQPS: the instances' connections to the broker are encrypted (HTTPS environment)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/connections",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "connections"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (!String(pm.environment.get(\"instance1\")).startsWith(\"https\")) {",
+                  "    pm.test.skip(\"SKIPPED: HTTP environment (run-local.sh without --tls): the broker connection is plain AMQP too\", () => {});",
+                  "  } else if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    // the instances connect on 5671 (AMQPS); other services may still use plain AMQP on 5672",
+                  "    const amqps = pm.response.json().filter(c => c.port === 5671);",
+                  "    console.log(pm.response.json().map(c => c.name + \" port \" + c.port + \" ssl \" + c.ssl + \" \" + (c.ssl_protocol || \"\")).join(\"\\n\"));",
+                  "    pm.test(\"connections on the AMQPS port (5671)\", () => pm.expect(amqps.length).to.be.at.least(1));",
+                  "    pm.test(\"all of them TLS 1.3\", () => amqps.forEach(x => { pm.expect(x.ssl, x.name).to.eql(true); pm.expect(x.ssl_protocol, x.name).to.eql(\"tlsv1.3\"); }));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

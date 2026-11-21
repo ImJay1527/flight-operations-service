@@ -27,7 +27,7 @@ flowchart TB
     lb -->|"Forwards to a healthy instance<br/>[HTTPS]"| api
     api -->|"Commands: bookings, cancels, completions;<br/>their events (outbox)<br/>[JDBC]"| db
     api -->|"Queries; updated after every change<br/>and rebuilt from the write side<br/>[MongoDB driver]"| rdb
-    api -->|"Publishes flight.* events;<br/>receives the other instances' events<br/>[AMQP]"| mq
+    api -->|"Publishes flight.* events;<br/>receives the other instances' events<br/>[AMQPS, TLS 1.3]"| mq
     mq -->|"flight.completed<br/>[AMQP]"| am
     am -->|"aircraft.* events: each instance<br/>keeps its own copy of the aircraft<br/>[AMQP]"| mq
     api -->|"Peer forwarding, bookings on the owner,<br/>copies, catch-up, status<br/>[HTTPS /internal/**, service JWT]"| api

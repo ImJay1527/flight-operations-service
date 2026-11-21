@@ -438,7 +438,8 @@ failed / expired / overflow --> aisafe.dlx --(flight.events.dlq)--> flight.event
 
 | | |
 |---|---|
-| Broker | one RabbitMQ for the whole system (`rabbitmq` in docker-compose, port 5672, UI 15672; `k8s/rabbitmq.yaml`) |
+| Broker | one RabbitMQ for the whole system (`rabbitmq` in docker-compose, AMQPS 5671 / AMQP 5672, UI 15672; `k8s/rabbitmq.yaml`) |
+| Encryption | AMQPS: TLS 1.3 on 5671, the broker's certificate signed by the AISafe dev CA and checked (hostname too), as for the HTTPS calls. Plain 5672 stays open for the services that don't use TLS yet |
 | Exchange | `aisafe.events`, topic, durable: every service publishes its events there (`<entity>.<what happened>`) |
 | Queues | `flight.events.<instance>`, durable, one per instance, bound to `flight.#`, `aircraft.#`, `airport.#` and `route.#`; at most 100 000 messages, each kept 1 day; the queue is removed after 7 days without a consumer |
 | Dead letters | `aisafe.dlx` -> `flight.events.dlq` (kept 7 days) |
