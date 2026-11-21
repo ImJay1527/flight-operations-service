@@ -22,12 +22,14 @@ DESCRIPTION = {
     'replication': 'outbox, copies, catch-up', 'resilience': 'retry, circuit breaker, health',
     'monitoring': 'monitoring API, dashboard', 'repositories': 'Spring Data JPA', 'domain': 'entities', 'events': 'domain events (write side -> read side)',
     'readmodel': 'CQRS read side: read database (MongoDB), projections, sync',
+    'messaging': 'AMQP (RabbitMQ): outbox relay, flight events, consumer',
     'clients': 'calls to the other services', 'stub': 'built-in data (test mode)',
     'common': 'crypto, exceptions, HTTP client, JWT, metrics, tracing',
 }
 GROUPS = [   # layers, top to bottom: a package only uses packages of its own layer or of layers below
     ('Entry points', ['api', 'monitoring', 'security', 'bootstrap']),
     ('Application', ['services']),
+    ('Messaging (AMQP)', ['messaging']),
     ('Read side (CQRS)', ['readmodel']),
     ('Distribution', ['replication', 'peers', 'cluster']),
     ('Integration', ['clients', 'stub', 'resilience']),

@@ -2,10 +2,11 @@
 | Group | Package | Classes | Purpose | Imports (besides `common`) |
 |---|---|---|---|---|
 | Entry points | `api` | 6 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
-| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `messaging`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
 | Entry points | `security` | 5 | sign-in, users | - |
 | Entry points | `bootstrap` | 1 | sample data | `cluster`, `domain`, `repositories`, `security` |
-| Application | `services` | 13 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Application | `services` | 14 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Messaging (AMQP) | `messaging` | 6 | AMQP (RabbitMQ): outbox relay, flight events, consumer | `api.dto`, `domain`, `events`, `readmodel`, `repositories` |
 | Read side (CQRS) | `readmodel` | 13 | CQRS read side: read database (MongoDB), projections, sync | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
 | Distribution | `replication` | 4 | outbox, copies, catch-up | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
 | Distribution | `peers` | 3 | calls to the other instances | `api.dto`, `cluster`, `resilience` |
@@ -13,10 +14,10 @@
 | Integration | `clients` | 8 | calls to the other services | `resilience` |
 | Integration | `stub` | 2 | built-in data (test mode) | `clients` |
 | Integration | `resilience` | 5 | retry, circuit breaker, health | - |
-| Data | `repositories` | 3 | Spring Data JPA | `domain` |
+| Data | `repositories` | 4 | Spring Data JPA | `domain` |
 | Data | `events` | 1 | domain events (write side -> read side) | `api.dto` |
 | Data | `api.dto` | 8 | request / response objects | `domain` |
-| Data | `domain` | 4 | entities | - |
+| Data | `domain` | 5 | entities | - |
 | Shared | `common` | 14 | crypto, exceptions, HTTP client, JWT, metrics, tracing | - |
 
 No package cycles: no two packages import each other.

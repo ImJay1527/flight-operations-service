@@ -10,6 +10,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.clients.*;
 import pt.isep.sidis.flightops.domain.ScheduledFlight;
+import pt.isep.sidis.flightops.events.FlightChanged;
 import pt.isep.sidis.flightops.replication.ReplicationOutbox;
 import pt.isep.sidis.flightops.repositories.ScheduledFlightRepository;
 
@@ -92,6 +93,48 @@ class LocalBookingServiceTest {
         assertThat(result.status()).isEqualTo("CANCELED");
         assertThat(result.revision()).isEqualTo(2);
         verify(replicationOutbox).flightChanged(f);
+    }
+
+    @Test
+    void completeAfterArrivalRaisesTheRevisionAndIsAnnouncedAsMadeHere() {
+        LocalDateTime departed = LocalDateTime.now().minusHours(3);
+        ScheduledFlight f = new ScheduledFlight("r", "CS-TPA", "A320neo", "OPO", "LIS", 277.0, 3.8,
+                departed, departed.plusMinutes(90));
+        when(repository.findById(f.getFlightNumber())).thenReturn(Optional.of(f));
+        when(repository.save(f)).thenReturn(f);
+
+        FlightView result = service.complete(f.getFlightNumber());
+
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(result.revision()).isEqualTo(2);
+        verify(replicationOutbox).flightChanged(f);
+        verify(events).publishEvent(FlightChanged.madeHere(result));   // goes to the broker (messaging)
+    }
+
+    @Test
+    void completeBeforeDepartureIsRefused() {
+        ScheduledFlight f = new ScheduledFlight("r", "CS-TPA", "A320neo", "OPO", "LIS", 277.0, 3.8, dep, arr);
+        when(repository.findById(f.getFlightNumber())).thenReturn(Optional.of(f));
+
+        assertThatThrownBy(() -> service.complete(f.getFlightNumber()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("before its scheduled departure");
+    }
+
+    @Test
+    void completedOrCanceledFlightCannotBeCompletedOrCanceledAgain() {
+        LocalDateTime departed = LocalDateTime.now().minusHours(3);
+        ScheduledFlight completed = new ScheduledFlight("r", "CS-TPA", "A320neo", "OPO", "LIS", 277.0, 3.8,
+                departed, departed.plusMinutes(90));
+        completed.complete(LocalDateTime.now());
+        ScheduledFlight canceled = new ScheduledFlight("r", "CS-TPA", "A320neo", "OPO", "LIS", 277.0, 3.8,
+                departed, departed.plusMinutes(90));
+        canceled.cancel();
+
+        assertThatThrownBy(() -> completed.complete(LocalDateTime.now())).hasMessageContaining("already completed");
+        assertThatThrownBy(completed::cancel).hasMessageContaining("Cannot cancel a completed flight");
+        assertThatThrownBy(() -> canceled.complete(LocalDateTime.now())).hasMessageContaining("canceled flight");
+        assertThat(completed.durationHours()).isEqualTo(1.5);
     }
 
     @Test

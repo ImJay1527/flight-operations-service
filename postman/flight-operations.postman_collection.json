@@ -3974,6 +3974,402 @@
       ]
     },
     {
+      "name": "13 Messaging - events through RabbitMQ",
+      "description": "Assignment 2, AMQP. Every change (booking, cancel, completion) is saved with its event in the same transaction (outbox), then published to the exchange aisafe.events and confirmed by the broker. Each instance has its own queue flight.events.<instance> (publish/subscribe): the other instances' changes reach its read model within milliseconds. Other services (Aircraft & Maintenance) bind their own queues: flight.completed carries the flight hours. Messages that cannot be processed end in flight.events.dlq. Skipped without a broker (run-local.sh --h2).",
+      "item": [
+        {
+          "name": "Instance 1 is connected to the broker",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/health",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().messaging;",
+                  "pm.environment.set(\"amqpOn\", !!m && m.enabled === true);",
+                  "if (!m || !m.enabled) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"broker UP\", () => pm.expect(m.brokerUp).to.eql(true));",
+                  "  pm.test(\"its own queue: flight.events.<instance> (publish/subscribe)\", () => pm.expect(m.queue).to.match(/^flight\\.events\\./));",
+                  "  pm.test(\"one consumer on it: this instance\", () => pm.expect(m.consumers).to.eql(1));",
+                  "  pm.test(\"nothing waiting in its outbox (every event confirmed by the broker)\", () => pm.expect(m.outbox).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Which instance does NOT hold CS-TPA (it can only learn by events)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/owner/CS-TPA",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "owner",
+                "CS-TPA"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const o = pm.response.json();",
+                  "const outsider = o.instances.find(n => !o.replicas.includes(n));",
+                  "// with 2 copies and 3 instances one instance has no copy of CS-TPA: its read model gets the flight only",
+                  "// from the broker (or the 30 s repair)",
+                  "const n = outsider ? outsider.replace(/\\D/g, \"\") : \"1\";",
+                  "pm.environment.set(\"amqp_outsider\", pm.environment.get(\"instance\" + n) || pm.environment.get(\"instance1\"));",
+                  "pm.environment.set(\"amqp_outsider_name\", outsider || \"instance1\");",
+                  "pm.test(\"found (needs 3 instances and 2 copies)\", () => pm.expect(o.replicas.length).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Events it has received so far (before)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{amqp_outsider}}/api/cluster/metrics",
+              "host": [
+                "{{amqp_outsider}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().messages || {};",
+                  "const got = (m.byRoutingKey && m.byRoutingKey.received) || {};",
+                  "pm.environment.set(\"amqp_completed_before\", got[\"flight.completed\"] || 0);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-TPA, departing in 3 s",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the server compares with its local time: send local time (no zone), like a booking form would",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + 3000;",
+                  "pm.variables.set(\"departure_ms\", String(dep));",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 45 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.environment.set(\"amqp_flight\", pm.response.json().flightNumber);",
+                  "pm.environment.set(\"amqp_departure_ms\", Number(pm.variables.get(\"departure_ms\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: it has landed - complete it (publishes flight.completed)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/{{amqp_flight}}/complete",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{amqp_flight}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// wait until it has departed (a flight cannot land before it leaves)",
+                  "const wait = Math.max(0, Number(pm.environment.get(\"amqp_departure_ms\")) + 1000 - Date.now());",
+                  "setTimeout(() => {}, wait);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"COMPLETED\", () => pm.expect(pm.response.json().status).to.eql(\"COMPLETED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Completing it again is refused (409)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights/{{amqp_flight}}/complete",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{amqp_flight}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"says why\", () => pm.expect(pm.response.json().error).to.match(/already completed/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query: the instance without a copy sees it COMPLETED in its read model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{amqp_outsider}}/api/scheduled-flights/{{amqp_flight}}",
+              "host": [
+                "{{amqp_outsider}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{amqp_flight}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the event is pushed within milliseconds; 1 s is plenty (the pull would take up to 30 s)",
+                  "setTimeout(() => {}, 1000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  pm.test(\"COMPLETED\", () => pm.expect(pm.response.json().status).to.eql(\"COMPLETED\"));",
+                  "  pm.test(\"X-Data-Source: read-model (it came by the broker, no copy here)\", () => pm.expect(pm.response.headers.get(\"X-Data-Source\")).to.eql(\"read-model\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Events it has received (after): one more flight.completed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{amqp_outsider}}/api/cluster/metrics",
+              "host": [
+                "{{amqp_outsider}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const got = pm.response.json().messages.byRoutingKey.received || {};",
+                  "  pm.test(\"flight.completed received from the broker\", () => pm.expect(got[\"flight.completed\"] || 0).to.be.above(Number(pm.environment.get(\"amqp_completed_before\"))));",
+                  "  console.log(\"messages on \" + pm.environment.get(\"amqp_outsider_name\"), JSON.stringify(pm.response.json().messages));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Broker: one queue per instance, each with its consumer (RabbitMQ management API)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/queues",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "queues"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    const q = pm.response.json().filter(x => /^flight\\.events\\.instance\\d+$/.test(x.name));",
+                  "    pm.test(\"one queue per running instance\", () => pm.expect(q.length).to.be.at.least(2));",
+                  "    pm.test(\"each has one consumer (its instance)\", () => q.forEach(x => pm.expect(x.consumers, x.name).to.eql(1)));",
+                  "    pm.test(\"durable, with a dead-letter exchange and limits\", () => q.forEach(x => {",
+                  "      pm.expect(x.durable).to.eql(true);",
+                  "      pm.expect(x.arguments[\"x-dead-letter-exchange\"]).to.eql(\"aisafe.dlx\");",
+                  "      pm.expect(x.arguments[\"x-max-length\"]).to.be.a(\"number\");",
+                  "    }));",
+                  "    pm.test(\"dead-letter queue flight.events.dlq exists\", () => pm.expect(pm.response.json().some(x => x.name === \"flight.events.dlq\")).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "03 Resilience - instance 2 is stopped and restarted",
       "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication: each of its flights has a copy on instance 1 or 3). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and the outbox of the instance that took that booking is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2.\n\nOnly in stub mode: it stops instance 2 through `POST /actuator/shutdown`, which the normal (whole-system) configuration does not expose.\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [

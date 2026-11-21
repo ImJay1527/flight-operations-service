@@ -18,6 +18,7 @@ import pt.isep.sidis.flightops.api.dto.FlightView;
 import pt.isep.sidis.flightops.services.Booking;
 import pt.isep.sidis.flightops.services.FlightLookup;
 import pt.isep.sidis.flightops.services.CancelFlightCommand;
+import pt.isep.sidis.flightops.services.CompleteFlightCommand;
 import pt.isep.sidis.flightops.services.FlightCommandService;
 import pt.isep.sidis.flightops.services.FlightQueries;
 import pt.isep.sidis.flightops.services.ScheduleFlightCommand;
@@ -131,6 +132,25 @@ public class ScheduledFlightController {
         FlightView canceledFlight = commands.handle(new CancelFlightCommand(flightNumber));
         
         return ResponseEntity.ok(assembler.toModel(canceledFlight));
+    }
+
+    @Operation(summary = "Mark a flight as completed (landed)",
+               description = "Command: the flight has landed. Only a scheduled flight, and not before its scheduled "
+                       + "departure. Publishes flight.completed on the message broker (Aircraft & Maintenance adds the "
+                       + "flight hours). Requires ATCC role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Flight completed"),
+        @ApiResponse(responseCode = "401", description = "Missing or invalid JWT token"),
+        @ApiResponse(responseCode = "403", description = "Insufficient role — ATCC required"),
+        @ApiResponse(responseCode = "404", description = "Scheduled flight not found"),
+        @ApiResponse(responseCode = "503", description = "Not found on the instances that answered, and every copy of it may be on instances that did not (Retry-After: 10)"),
+        @ApiResponse(responseCode = "409", description = "Flight is canceled, already completed, or has not departed yet")
+    })
+    @PreAuthorize("hasRole('ATCC')")
+    @PatchMapping("/{flightNumber}/complete")
+    public ResponseEntity<ScheduledFlightResponseDTO> completeFlight(@PathVariable String flightNumber) {
+        FlightView completed = commands.handle(new CompleteFlightCommand(flightNumber));
+        return ResponseEntity.ok(assembler.toModel(completed));
     }
 
 

@@ -309,8 +309,9 @@ public class PeerClient {
             } catch (HttpClientErrorException.NotFound e) {
                 log.debug("Peer {} does not have {} - asking the next one", peer.health().url(), path);
             } catch (HttpClientErrorException.Conflict e) {
-                // the owner replied: the operation is not allowed in the flight's current state
-                throw new IllegalStateException("The flight cannot be changed in its current state.");
+                // the owner replied: the operation is not allowed in the flight's current state (its reason)
+                throw new IllegalStateException(errorMessage(e.getResponseBodyAsString(),
+                        "The flight cannot be changed in its current state."));
             } catch (CircuitOpenException e) {
                 unreachable++;
                 log.debug("Peer {} skipped for {} {}: circuit open", peer.health().url(), method, path);
@@ -320,6 +321,17 @@ public class PeerClient {
             }
         }
         return new PeerResult<>(List.of(), unreachable);
+    }
+
+    /** The "error" field of an error answer (GlobalExceptionHandler's format), or the fallback. */
+    private static String errorMessage(String body, String fallback) {
+        int i = body == null ? -1 : body.indexOf("\"error\":\"");
+        if (i < 0) {
+            return fallback;
+        }
+        int start = i + "\"error\":\"".length();
+        int end = body.indexOf('"', start);
+        return end < 0 ? fallback : body.substring(start, end);
     }
 
     private List<Peer> rotated() {

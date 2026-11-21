@@ -51,6 +51,11 @@
             <artifactId>spring-boot-starter-data-mongodb</artifactId>
         </dependency>
         <dependency>
+            <!-- AMQP: events between services and instances through the message broker (RabbitMQ) -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+        <dependency>
             <!-- HTTP client for service-to-service calls: pooled connections, PATCH support, TLS via SSL bundles -->
             <groupId>org.apache.httpcomponents.client5</groupId>
             <artifactId>httpclient5</artifactId>
@@ -103,7 +108,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <!-- real MongoDB in Docker for the read-side tests (skipped when Docker is not running) -->
+            <!-- real MongoDB / RabbitMQ in Docker for the read-side and messaging tests (skipped when Docker is not running) -->
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
@@ -111,6 +116,11 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>mongodb</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>rabbitmq</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

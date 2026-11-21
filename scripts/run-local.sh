@@ -17,9 +17,10 @@
 # "READY FOR TESTS" is printed once every instance has fully started (scripts/wait-ready.sh), and
 # "flightops-<i> ready" again after an instance was restarted.
 #
-# PostgreSQL + MongoDB: the database containers (flightops-db-<i>, ports 5433/5434/5435, and the read databases
-# flightops-read-db-<i>, ports 27018/27019/27020) are started with docker compose and left running when you press
-# Ctrl+C, so the data is kept. Stop them: docker compose stop
+# PostgreSQL + MongoDB + RabbitMQ: the database containers (flightops-db-<i>, ports 5433/5434/5435, and the read
+# databases flightops-read-db-<i>, ports 27018/27019/27020) and the message broker (rabbitmq, port 5672, management
+# UI http://localhost:15672) are started with docker compose and left running when you press Ctrl+C, so the data is
+# kept. Stop them: docker compose stop
 # Delete their data: docker compose down -v
 #
 # Instance i runs with the Spring profile instance<i> on port 8083 + 10 * (i - 1). Logs: logs/flightops-<i>.log
@@ -58,9 +59,9 @@ done
 
 if [[ "$DB" == postgres ]]; then
   DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i" "flightops-read-db-$i"); done
-  echo "Starting databases: ${DBS[*]}"
-  docker compose up -d --wait "${DBS[@]}"
-  PROFILE="${PROFILE:+$PROFILE,}postgres,cqrs"
+  echo "Starting databases and the broker: ${DBS[*]} rabbitmq"
+  docker compose up -d --wait "${DBS[@]}" rabbitmq
+  PROFILE="${PROFILE:+$PROFILE,}postgres,cqrs,amqp"
 fi
 
 [[ -n "$STUB" ]] && PROFILE="${PROFILE:+$PROFILE,}stub"

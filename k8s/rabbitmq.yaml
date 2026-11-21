@@ -1,0 +1,58 @@
+# The message broker of the whole system (AMQP): one RabbitMQ node with its own disk, so durable queues and
+# persistent messages survive a restart. Reached at rabbitmq:5672 (AMQP) and rabbitmq:15672 (management UI:
+# kubectl -n aisafe port-forward svc/rabbitmq 15672). Deployed by k8s/deploy.sh, which creates rabbitmq-secrets.
+# One node is a single point of failure for the events only: bookings and queries keep working while it is down
+# (the outbox keeps the events, the read models are repaired from the write side). A cluster of 3 nodes with quorum
+# queues would remove it; not needed for this assignment.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: aisafe
+spec:
+  selector: { app: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672 }
+    - { name: management, port: 15672 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: aisafe
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: { app: rabbitmq }
+  template:
+    metadata:
+      labels: { app: rabbitmq }
+    spec:
+      hostname: rabbitmq                 # RabbitMQ keeps its data per node name: keep it fixed
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management
+          ports:
+            - { name: amqp, containerPort: 5672 }
+            - { name: management, containerPort: 15672 }
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: { secretKeyRef: { name: rabbitmq-secrets, key: RABBITMQ_USER } }
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: { secretKeyRef: { name: rabbitmq-secrets, key: RABBITMQ_PASSWORD } }
+          readinessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "ping"] }
+            periodSeconds: 5
+            timeoutSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/rabbitmq }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 1Gi } }

@@ -1,5 +1,6 @@
 package pt.isep.sidis.flightops.monitoring;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.distribution.ValueAtPercentile;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 
@@ -54,7 +56,7 @@ public class MonitoringController {
         return new Metrics(instanceName, requestsServed(),
                 new Lookups(readModel, local, forwarded, notFound),
                 new Forwarding(askedPeers, forwarded.count(), successRate),
-                remoteInstances());
+                remoteInstances(), messages());
     }
 
     private TimerStats timerStats(String source) {
@@ -110,12 +112,37 @@ public class MonitoringController {
         return result;
     }
 
+    /** Events through the broker since start, per outcome and routing key (flightops.messages). */
+    private Messages messages() {
+        Map<String, Map<String, Long>> byEvent = new TreeMap<>();
+        for (Counter c : registry.find(FlightOpsMetrics.MESSAGES).counters()) {
+            byEvent.computeIfAbsent(c.getId().getTag("event"), e -> new TreeMap<>())
+                    .merge(c.getId().getTag("routing_key"), (long) c.count(), Long::sum);
+        }
+        return new Messages(total(byEvent.get("published")), total(byEvent.get("received")),
+                total(byEvent.get("ignored")), total(byEvent.get("failed")), byEvent);
+    }
+
+    private static long total(Map<String, Long> byKey) {
+        return byKey == null ? 0 : byKey.values().stream().mapToLong(Long::longValue).sum();
+    }
+
     private static Double round(double v) {
         return Math.round(v * 100.0) / 100.0;
     }
 
     public record Metrics(String instance, Served requestsServed, Lookups lookupResponseTimes,
-                          Forwarding forwarding, List<RemoteInstance> remoteInstances) {
+                          Forwarding forwarding, List<RemoteInstance> remoteInstances, Messages messages) {
+    }
+
+    /**
+     * @param published events of changes made here, confirmed by the broker
+     * @param received  events of the other instances, projected into the read model
+     * @param ignored   this instance's own events coming back on its queue (already projected)
+     * @param failed    attempts at messages that could not be read (they end in the dead-letter queue)
+     */
+    public record Messages(long published, long received, long ignored, long failed,
+                           Map<String, Map<String, Long>> byRoutingKey) {
     }
 
     public record Served(long total, Map<String, Long> byStatus) {

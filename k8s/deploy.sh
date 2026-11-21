@@ -74,10 +74,15 @@ kubectl -n "$NS" create secret generic flightops-secrets \
   --from-literal=SSL_PASSWORD="${SSL_PASSWORD:-changeit}" \
   --from-literal=DATA_ENCRYPTION_KEY="${DATA_ENCRYPTION_KEY:-9BvH3kXoOq3m1o9mJmPFjB6m4cO1kz3Hqk2iY7G1M8o=}" \
   --dry-run=client -o yaml | apply
+kubectl -n "$NS" create secret generic rabbitmq-secrets \
+  --from-literal=RABBITMQ_USER="${RABBITMQ_USER:-guest}" \
+  --from-literal=RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-guest}" \
+  --dry-run=client -o yaml | apply
 
 peer_urls() { local u=""; for ((i = 0; i < OTHERS; i++)); do u+="${u:+,}http://$1-$i.$1-peers:$2"; done; echo "$u"; }
 kubectl -n "$NS" create configmap flightops-config \
-  --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,cqrs,k8s${STUB:+,stub}" \
+  --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,cqrs,amqp,k8s${STUB:+,stub}" \
+  --from-literal=RABBITMQ_HOST=rabbitmq \
   --from-literal=AIRCRAFT_SERVICE_URLS="$(peer_urls aircraft 8081)" \
   --from-literal=AIRPORTS_ROUTES_SERVICE_URLS="$(peer_urls airports 8082)" \
   --dry-run=client -o yaml | apply
@@ -85,7 +90,7 @@ kubectl -n "$NS" create configmap flightops-config \
 # ---------- services ----------
 REDEPLOY=""
 kubectl -n "$NS" get statefulset flightops >/dev/null 2>&1 && REDEPLOY=yes
-kubectl apply -f k8s/flightops.yaml -f k8s/hpa.yaml
+kubectl apply -f k8s/rabbitmq.yaml -f k8s/flightops.yaml -f k8s/hpa.yaml
 if [[ -z "$STUB" ]]; then
   sed -e "s/replicas: 3/replicas: $OTHERS/" -e "s/name: INSTANCES, value: \"3\"/name: INSTANCES, value: \"$OTHERS\"/" \
     k8s/other-services.yaml | kubectl apply -f -

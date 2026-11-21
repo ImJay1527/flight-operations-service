@@ -120,6 +120,17 @@ public class LocalBookingService {
                 .orElse(null);
     }
 
+    /** Marks this instance's copy of a flight as completed (landed); null if it is not here. */
+    @Transactional
+    public FlightView complete(String flightNumber) {
+        return scheduledFlightRepository.findById(flightNumber)
+                .map(flight -> {
+                    flight.complete(LocalDateTime.now());
+                    return changed(scheduledFlightRepository.save(flight));
+                })
+                .orElse(null);
+    }
+
     /**
      * In the change's transaction: queues it for the flight's other copies (outbox) and publishes it for the read
      * side (projected once the transaction has committed).
@@ -127,7 +138,7 @@ public class LocalBookingService {
     private FlightView changed(ScheduledFlight saved) {
         replicationOutbox.flightChanged(saved);
         FlightView view = FlightView.of(saved);
-        events.publishEvent(new FlightChanged(view));
+        events.publishEvent(FlightChanged.madeHere(view));
         return view;
     }
 }

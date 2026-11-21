@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import pt.isep.sidis.flightops.common.crypto.EncryptedString;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -112,6 +113,30 @@ public class ScheduledFlight {
         }
         this.status = FlightStatus.CANCELED;
         this.revision++;
+    }
+
+    /**
+     * The flight has landed: only a scheduled flight that has departed (it may land before its scheduled arrival,
+     * but not before it has left).
+     */
+    public void complete(LocalDateTime now) {
+        if (this.status == FlightStatus.CANCELED) {
+            throw new IllegalStateException("Cannot complete a canceled flight.");
+        }
+        if (this.status == FlightStatus.COMPLETED) {
+            throw new IllegalStateException("This flight is already completed.");
+        }
+        if (now.isBefore(this.scheduledDeparture)) {
+            throw new IllegalStateException("Cannot complete a flight before its scheduled departure ("
+                    + this.scheduledDeparture + ").");
+        }
+        this.status = FlightStatus.COMPLETED;
+        this.revision++;
+    }
+
+    /** Scheduled flight time in hours (departure to arrival). */
+    public double durationHours() {
+        return Duration.between(scheduledDeparture, scheduledArrival).toMinutes() / 60.0;
     }
 
     /** Sets the state of a copy received from another instance, before it is first saved here. */

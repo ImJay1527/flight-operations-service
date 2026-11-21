@@ -29,6 +29,8 @@ flowchart LR
         fo2 <--> fo3
     end
 
+    mq[["RabbitMQ<br/>rabbitmq :5672<br/>exchange aisafe.events<br/>flight.events.instance1..3"]]
+
     subgraph AM["aircraft-maintenance-service"]
         direction TB
         am1["instance1<br/>:8081"]
@@ -53,6 +55,10 @@ flowchart LR
     lb --> fo3
     FO -->|"GET /internal/aircraft/{reg}<br/>round-robin + failover"| AM
     FO -->|"GET /internal/routes/{id}<br/>GET /internal/airports/{iata}"| AR
+    FO <-->|"AMQP: flight.* events<br/>(one queue per instance)"| mq
+    mq -->|"flight.completed"| AM
 
     classDef db fill:#eef6ff,stroke:#5b8def
     class db1,db2,db3,rd1,rd2,rd3 db
+    classDef broker fill:#fff4e5,stroke:#e8a33d
+    class mq broker

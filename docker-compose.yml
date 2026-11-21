@@ -1,6 +1,7 @@
 # Whole AISafe system: 3 services x 3 instances. Every instance of every service has its own PostgreSQL container
 # (database per instance), whose data survives restarts in a named volume. Each flight-ops instance also has its own
-# MongoDB, the read database of CQRS (flightops-read-db-<i>).
+# MongoDB, the read database of CQRS (flightops-read-db-<i>). One RabbitMQ broker (rabbitmq) carries the events between
+# services and instances (exchange aisafe.events, management UI http://localhost:15672, guest / guest).
 # Expects the three repos cloned side by side:
 #   IdeaProjects/
 #     aircraft-maintenance-service/
@@ -10,12 +11,14 @@
 # Clients use the load balancer: https://localhost:8443 (nginx, lb/nginx.conf). The instances stay reachable directly
 # on 8083 / 8093 / 8103 for tests that need a specific instance.
 # Only flight ops:  docker compose up --build flightops-lb   (starts the 3 instances it needs)
-# Only the databases (for running the instances from VS Code / scripts/run-local.sh):
-#   docker compose up -d --wait flightops-db-1 flightops-db-2 flightops-db-3 #     flightops-read-db-1 flightops-read-db-2 flightops-read-db-3
+# Only the databases and the broker (for running the instances from VS Code / scripts/run-local.sh):
+#   docker compose up -d --wait flightops-db-1 flightops-db-2 flightops-db-3
+#   docker compose up -d --wait flightops-read-db-1 flightops-read-db-2 flightops-read-db-3 rabbitmq
 # On Kubernetes, with auto-scaling: k8s/deploy.sh
 # Delete all stored data:  docker compose down -v
 
 x-common-env: &common-env
+  RABBITMQ_HOST: rabbitmq
   JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
 
 # One PostgreSQL server per flight-ops instance. Dev credentials; override with DB_PASSWORD.
@@ -138,11 +141,12 @@ services:
     depends_on:
       flightops-db-1: { condition: service_healthy }
       flightops-read-db-1: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
     ports: ["8083:8083"]
     environment:
       <<: [*common-env, *tls-env]
-      SPRING_PROFILES_ACTIVE: instance1,tls,postgres,cqrs
+      SPRING_PROFILES_ACTIVE: instance1,tls,postgres,cqrs,amqp
       PORT: 8083                       # inside the container; host port above is unique per instance
       DB_URL: jdbc:postgresql://flightops-db-1:5432/flightops
       MONGO_URI: mongodb://flightops:${READ_DB_PASSWORD:-flightops}@flightops-read-db-1:27017/flightops_read?authSource=admin
@@ -158,11 +162,12 @@ services:
     depends_on:
       flightops-db-2: { condition: service_healthy }
       flightops-read-db-2: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
     ports: ["8093:8083"]
     environment:
       <<: [*common-env, *tls-env]
-      SPRING_PROFILES_ACTIVE: instance2,tls,postgres,cqrs
+      SPRING_PROFILES_ACTIVE: instance2,tls,postgres,cqrs,amqp
       PORT: 8083                       # inside the container; host port above is unique per instance
       DB_URL: jdbc:postgresql://flightops-db-2:5432/flightops
       MONGO_URI: mongodb://flightops:${READ_DB_PASSWORD:-flightops}@flightops-read-db-2:27017/flightops_read?authSource=admin
@@ -178,11 +183,12 @@ services:
     depends_on:
       flightops-db-3: { condition: service_healthy }
       flightops-read-db-3: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
     volumes: ["./certs:/certs:ro"]
     ports: ["8103:8083"]
     environment:
       <<: [*common-env, *tls-env]
-      SPRING_PROFILES_ACTIVE: instance3,tls,postgres,cqrs
+      SPRING_PROFILES_ACTIVE: instance3,tls,postgres,cqrs,amqp
       PORT: 8083
       DB_URL: jdbc:postgresql://flightops-db-3:5432/flightops
       MONGO_URI: mongodb://flightops:${READ_DB_PASSWORD:-flightops}@flightops-read-db-3:27017/flightops_read?authSource=admin
@@ -199,6 +205,23 @@ services:
       - ./lb/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/certs:ro
     depends_on: [flightops-1, flightops-2, flightops-3]
+    restart: unless-stopped
+
+  # Message broker of the whole system (AMQP), as in the RabbitMQ tutorial of the classes. Its data (durable queues,
+  # persistent messages) survives restarts in a named volume.
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq                 # RabbitMQ keeps its data per node name: keep it fixed
+    ports: ["5672:5672", "15672:15672"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes: ["rabbitmq-data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
     restart: unless-stopped
 
   flightops-db-1:
@@ -336,6 +359,7 @@ services:
     volumes: ["airports-db-3-data:/var/lib/postgresql/data"]
 
 volumes:
+  rabbitmq-data:
   flightops-db-1-data:
   flightops-db-2-data:
   flightops-db-3-data:

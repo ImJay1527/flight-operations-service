@@ -83,7 +83,7 @@ class FlightCommandServiceTest {
         assertThat(booking.flight()).isEqualTo(booked);
         verifyNoInteractions(localBookings);
         // the peer made the change: this instance's read model learns it now (read your own writes)
-        verify(events).publishEvent(new FlightChanged(booked));
+        verify(events).publishEvent(FlightChanged.learnt(booked));
     }
 
     @Test
@@ -155,6 +155,18 @@ class FlightCommandServiceTest {
                 .thenReturn(new PeerResult<>(List.of(cancelled), 0));
 
         assertThat(service.handle(new CancelFlightCommand("F-9")).status()).isEqualTo("CANCELED");
+    }
+
+    @Test
+    void completeIsRoutedLikeACancel() {
+        when(localBookings.complete("F-9")).thenReturn(null);
+        FlightView completed = new FlightView("F-9", "r", "CS-TPA", "A320neo", "OPO", "LIS",
+                277.0, 3.8, dep, arr, "COMPLETED", 2);
+        when(peers.patchOne(eq("/internal/flights/{n}/complete"), eq(FlightView.class), eq("F-9")))
+                .thenReturn(new PeerResult<>(List.of(completed), 0));
+
+        assertThat(service.handle(new CompleteFlightCommand("F-9")).status()).isEqualTo("COMPLETED");
+        verify(events).publishEvent(FlightChanged.learnt(completed));   // the peer announces it, not this instance
     }
 
     @Test
