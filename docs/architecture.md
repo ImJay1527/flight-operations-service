@@ -398,6 +398,60 @@ each instance's read model state; `GET /api/cluster/metrics` counts the lookups 
 * **Encryption at rest on the read side too.** Registration, model, route and airports are stored encrypted with the
   same deterministic scheme as the write database, so the indexes (by aircraft, by airport) still work.
 
+### Separate processes: query instances (optional)
+
+Above, every instance does both: it takes commands for its aircraft and answers every query from its read model.
+CQRS also allows the two sides to run as **different processes**, so that reads and writes scale and fail on their
+own. That is optional here (`query` profile); without it nothing changes.
+
+| | Command instance (as before) | Query instance (`query` profile) |
+|---|---|---|
+| Commands (book, cancel, complete) | yes, for its aircraft (others forwarded to the owner) | refused: `405 Method Not Allowed`, `Allow: GET, HEAD` |
+| Queries | from its read model | from its read model |
+| Write database (PostgreSQL) | yes, its shard + copies | none (an in-memory H2 inside the process for the login users and the copies of the other services' data; never a flight) |
+| Read database (MongoDB) | yes | yes: its only database |
+| Member of the cluster (sharding, replication) | yes | no: `CLUSTER` (or the discovery) lists the command instances only, which don't know it |
+| How its read model learns a change | its own changes at once; the others through the broker | everything through the broker (`flight.*`, its own queue) |
+| At startup | catch-up of its copies, then the read model sync | only the read model sync, from every command instance, before it reports ready |
+| Docker Compose | `flightops-1..3` | `flightops-query-1..2` (`--profile queries`), read database in memory (`tmpfs`) |
+| Kubernetes | StatefulSet (stable names, disks) | Deployment (any name, `emptyDir`), own auto-scaler 2 to 4, own address :9444 |
+
+**Routing.** In Docker Compose the load balancer splits by HTTP method (`lb/nginx.conf`): `GET` / `HEAD` of `/api/**`
+go to the query instances, everything else (commands, login, `/api/cluster/**`, the dashboard) to the command
+instances. The command instances are also the query side's `backup` servers, so the queries still work with no query
+instance running (or without the profile: nginx looks the query names up while running, `resolve`, and skips them
+when they don't exist). A Kubernetes `Service` can't route by method, so there the queries have their own address.
+
+**Consistency.** A query instance never holds the change it just made (it makes none), so "read your own write" is
+not immediate there: a client that books through the load balancer and reads right away may get its answer from a
+query instance a few milliseconds before the event arrives. Such a client sends `X-Read-Side: write-side` (the query
+instance then asks the command instances, as in Assignment 1) or reads from a command instance. The same eventual
+consistency as between two command instances, nothing new.
+
+**Failures.**
+
+| Failure | What happens |
+|---|---|
+| A query instance down | The load balancer sends its queries to the other query instance, or to the command instances. Commands are not affected at all: the command instances don't know it |
+| All query instances down | Queries answered by the command instances (nginx `backup`) |
+| Broker down | Its read model stops getting changes; the 30-s sync with the command instances repairs it |
+| Command instances unreachable during its sync | Read model `STALE` (same rule as before); its queries take the write side, which then answers `503` for what it can't reach |
+| A query instance restarted or added | Empty read database, new queue: the startup sync gives it every flight before it is ready. Its old queue is deleted by the broker a minute after it went (`x-expires`, `flightops.messaging.queue-expires-ms`) |
+
+**Decisions and alternatives.**
+
+* **Optional, next to the combined instances (chosen) vs. only separate processes.** With few instances the combined
+  ones are simpler and read your own write at once; the split pays off when reads are much more frequent than writes,
+  which only the deployment knows. The same image and code do both; the profile decides.
+* **Not a member (chosen) vs. a member that holds no aircraft.** A member would change the rendezvous ranking of
+  every aircraft (it ranks names), and the others would send it copies and count it in their sync. Outside the
+  cluster, adding or removing query instances moves nothing.
+* **Refuse commands (405, chosen) vs. forward them to the owner.** Forwarding would work (the A1 code does it) but would
+  blur the split: the load balancer already sends the commands to the right place, and a 405 shows a client that
+  calls the wrong process.
+* **Fed by the broker, rebuilt from the command instances (chosen) vs. its own copy of the write side.** It needs only
+  what the command side already publishes; with no write database it has nothing to keep consistent.
+
 ## Messaging (Assignment 2)
 
 *(Assignment 2, P2 p.2: "AMQP and a message broker" for the communication between services; the external API stays

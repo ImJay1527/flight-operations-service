@@ -156,7 +156,7 @@ other. Every package may use `common`.
 <!-- development-view:start -->
 | Group | Package | Classes | Purpose | Imports (besides `common`) |
 |---|---|---|---|---|
-| Entry points | `api` | 7 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
+| Entry points | `api` | 8 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
 | Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `messaging`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
 | Entry points | `security` | 5 | sign-in, users | - |
 | Entry points | `bootstrap` | 1 | sample data | `cluster`, `domain`, `repositories`, `security` |

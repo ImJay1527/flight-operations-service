@@ -43,7 +43,18 @@ flowchart TB
             end
 
             others["<b>StatefulSets aircraft, airports</b><br/>[other teams' services, 1 or 3 pods each]"]
-            mq[["<b>Message broker</b><br/>[StatefulSet rabbitmq, 1 pod: RabbitMQ 3]<br/>Service rabbitmq:5672, own disk (1 GiB)"]]
+            mq[["<b>Message broker</b><br/>[StatefulSet rabbitmq, 1 pod: RabbitMQ 3]<br/>Service rabbitmq:5671 (AMQPS), own disk (1 GiB)"]]
+
+            qsvc["<b>Service flightops-query</b><br/>[type LoadBalancer, https://localhost:9444]<br/>optional: QUERY_INSTANCES=2"]
+            qhpa["<b>HorizontalPodAutoscaler</b><br/>[2 to 4 query pods]"]
+            subgraph QDEP["Deployment flightops-query [optional; any pod name]"]
+                direction TB
+                subgraph QPOD["Pod flightops-query-..."]
+                    direction TB
+                    qapp["<b>Flight Operations, query instance</b><br/>[Container: same image, profile query]<br/>queries only, not a member,<br/>no write database"]
+                    qmg[("<b>Read database</b><br/>[Container: MongoDB 7, sidecar]<br/>emptyDir: rebuilt at every start")]
+                end
+            end
         end
         ms["<b>metrics-server</b><br/>[kube-system]<br/><br/>CPU of every container"]
     end
@@ -71,16 +82,22 @@ flowchart TB
     hpa -->|"reads CPU"| ms
     secrets -.-> STS
     app2 -->|"REST, service JWT"| others
-    app0 <-->|"AMQP events"| mq
+    app0 <-->|"AMQPS events"| mq
     app1 <--> mq
     app2 <--> mq
     mq --> others
+    browser -->|"queries"| qsvc
+    qsvc --> qapp
+    qapp -->|"localhost:27017"| qmg
+    mq -->|"flight.* events"| qapp
+    qapp -.->|"startup sync, write-side fallback<br/>HTTPS /internal/**"| app1
+    qhpa -->|"scales"| QDEP
 
     classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
     classDef infra fill:#ffffff,stroke:#666666,color:#000000
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
-    class app0,app1,app2,pg0,pg1,pg2,mg0,mg1,mg2,mq container
-    class lbsvc,headless,hpa,secrets,ms,pvc0,pvc1,pvc2,browser infra
+    class app0,app1,app2,pg0,pg1,pg2,mg0,mg1,mg2,mq,qapp,qmg container
+    class lbsvc,headless,hpa,secrets,ms,pvc0,pvc1,pvc2,browser,qsvc,qhpa infra
     class others external
     style NODE fill:#f4f4f4,stroke:#444444
     style NS fill:#fbfbfb,stroke:#888888,stroke-dasharray:6 4
@@ -88,3 +105,5 @@ flowchart TB
     style POD0 fill:#ffffff,stroke:#5d82a8
     style POD1 fill:#ffffff,stroke:#5d82a8
     style POD2 fill:#ffffff,stroke:#5d82a8
+    style QDEP fill:#eef4fb,stroke:#5d82a8,stroke-dasharray:6 4
+    style QPOD fill:#ffffff,stroke:#5d82a8

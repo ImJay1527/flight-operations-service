@@ -6,7 +6,9 @@
 #   ./scripts/wait-ready.sh              instances 1..3, plain HTTP (8083, 8093, 8103)
 #   ./scripts/wait-ready.sh -n 2         instances 1 and 2
 #   ./scripts/wait-ready.sh --tls        HTTPS (verified against certs/ca.crt)
-#   ./scripts/wait-ready.sh --instance 2 only instance 2, no banner (run-local.sh uses this after a restart)
+#   ./scripts/wait-ready.sh --queries 2  also the query instances 1 and 2 (8113, 8123; run-local.sh --queries)
+#   ./scripts/wait-ready.sh --instance 2 only instance 2, no banner (run-local.sh uses this after a restart;
+#                                        4 and 5 = query instances 1 and 2)
 #   ./scripts/wait-ready.sh --timeout 300
 #
 # Exit code 0 when all are ready, 1 when one is not ready within the timeout (default 180 s each).
@@ -15,12 +17,14 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 N=3
+QUERIES=0
 SCHEME=http
 ONLY=""
 TIMEOUT=180
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n) N="$2"; shift 2 ;;
+    --queries) QUERIES="$2"; shift 2 ;;
     --tls) SCHEME=https; shift ;;
     --instance) ONLY="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
@@ -28,7 +32,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# instances 1..3 on 8083 / 8093 / 8103; 4 and 5 are the query instances 1 and 2 (8113, 8123)
 port() { echo $((8083 + 10 * ($1 - 1))); }
+name() { if (( $1 > 3 )); then echo "flightops-query-$(($1 - 3))"; else echo "flightops-$1"; fi; }
 CURL=(curl -sS -o /dev/null -w '%{http_code}' --max-time 2)
 # --ssl-no-revoke: curl on Windows (Schannel) otherwise rejects the dev certificates, which have no revocation list.
 # The certificate itself is still verified against the dev CA.
@@ -47,23 +53,23 @@ wait_for() {   # $1 = instance number
     # Keep waiting while nothing listens yet (7), the answer is slow (28) or the instance is still starting (503).
     # Anything else, e.g. a TLS error, won't go away by waiting.
     if (( rc != 0 && rc != 7 && rc != 28 )); then
-      echo "flightops-$1: $(head -1 "$ERRF")"
+      echo "$(name "$1"): $(head -1 "$ERRF")"
       return 1
     elif (( rc == 0 )) && [[ "$code" != 503 ]]; then
       case "$code" in
-        400) echo "flightops-$1: HTTP 400 - the instance runs HTTPS, add --tls" ;;
-        404) echo "flightops-$1: HTTP 404 - built before /actuator/health/readiness existed, restart it" ;;
-        *)   echo "flightops-$1: HTTP $code from /actuator/health/readiness" ;;
+        400) echo "$(name "$1"): HTTP 400 - the instance runs HTTPS, add --tls" ;;
+        404) echo "$(name "$1"): HTTP 404 - built before /actuator/health/readiness existed, restart it" ;;
+        *)   echo "$(name "$1"): HTTP $code from /actuator/health/readiness" ;;
       esac
       return 1
     fi
     if (( SECONDS - start >= TIMEOUT )); then
-      echo "flightops-$1 is NOT ready after ${TIMEOUT}s - see logs/flightops-$1.log"
+      echo "$(name "$1") is NOT ready after ${TIMEOUT}s - see logs/$(name "$1").log"
       return 1
     fi
     sleep 1
   done
-  echo "flightops-$1 ready  $SCHEME://localhost:$(port "$1")  ($((SECONDS - start))s)"
+  echo "$(name "$1") ready  $SCHEME://localhost:$(port "$1")  ($((SECONDS - start))s)"
 }
 
 if [[ -n "$ONLY" ]]; then
@@ -71,9 +77,9 @@ if [[ -n "$ONLY" ]]; then
   exit
 fi
 
-echo "Waiting for $N instance(s) to be ready..."
+echo "Waiting for $N instance(s)$( ((QUERIES)) && echo " and $QUERIES query instance(s)") to be ready..."
 failed=0
-for i in $(seq 1 "$N"); do
+for i in $(seq 1 "$N") $(seq 4 $((3 + QUERIES))); do
   wait_for "$i" || failed=1
 done
 (( failed )) && exit 1

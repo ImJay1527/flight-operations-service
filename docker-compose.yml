@@ -11,6 +11,8 @@
 # Clients use the load balancer: https://localhost:8443 (nginx, lb/nginx.conf). The instances stay reachable directly
 # on 8083 / 8093 / 8103 for tests that need a specific instance.
 # Only flight ops:  docker compose up --build flightops-lb   (starts the 3 instances it needs)
+# CQRS with separate processes: docker compose --profile queries up --build   adds 2 query instances (8113, 8123),
+#   read database only; the load balancer then sends the queries (GET /api/**) to them and the commands to the others.
 # Only the databases and the broker (for running the instances from VS Code / scripts/run-local.sh):
 #   docker compose up -d --wait flightops-db-1 flightops-db-2 flightops-db-3
 #   docker compose up -d --wait flightops-read-db-1 flightops-read-db-2 flightops-read-db-3 rabbitmq
@@ -260,6 +262,61 @@ services:
     <<: *flightops-read-db
     ports: ["27020:27017"]
     volumes: ["flightops-read-db-3-data:/data/db"]
+
+  # ---------------- query instances (CQRS with separate processes; only with --profile queries) ----------------
+  # They answer the queries (GET) from their own read database and take no commands (405). They are not in the
+  # command instances' CLUSTER: no flights, no copies, no write database (profile "query"). The broker brings them
+  # every change; at startup they build their read model from the command instances. The load balancer sends them
+  # the GETs of /api/** and falls back to the command instances when none answers.
+  flightops-query-1: &flightops-query
+    <<: *flightops-instance
+    build: .
+    profiles: [queries]
+    depends_on:
+      flightops-query-read-db-1: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      flightops-1: { condition: service_started }
+      flightops-2: { condition: service_started }
+      flightops-3: { condition: service_started }
+    volumes: ["./certs:/certs:ro"]
+    ports: ["8113:8083"]
+    environment: &flightops-query-env
+      <<: [*common-env, *tls-env]
+      SPRING_PROFILES_ACTIVE: tls,cqrs,amqp,query
+      PORT: 8083
+      INSTANCE_NAME: query1
+      MONGO_URI: mongodb://flightops:${READ_DB_PASSWORD:-flightops}@flightops-query-read-db-1:27017/flightops_read?authSource=admin
+      SSL_KEYSTORE: file:/certs/flightops.p12
+      CLUSTER: instance1=https://flightops-1:8083,instance2=https://flightops-2:8083,instance3=https://flightops-3:8083   # the command instances only
+      AIRCRAFT_SERVICE_URLS: https://aircraft-1:8081,https://aircraft-2:8081,https://aircraft-3:8081
+      AIRPORTS_ROUTES_SERVICE_URLS: https://airports-1:8082,https://airports-2:8082,https://airports-3:8082
+
+  flightops-query-2:
+    <<: *flightops-query
+    depends_on:
+      flightops-query-read-db-2: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      flightops-1: { condition: service_started }
+      flightops-2: { condition: service_started }
+      flightops-3: { condition: service_started }
+    ports: ["8123:8083"]
+    environment:
+      <<: *flightops-query-env
+      INSTANCE_NAME: query2
+      MONGO_URI: mongodb://flightops:${READ_DB_PASSWORD:-flightops}@flightops-query-read-db-2:27017/flightops_read?authSource=admin
+
+  # their read databases: nothing to keep (rebuilt at every start), so in memory (tmpfs)
+  flightops-query-read-db-1:
+    <<: *flightops-read-db
+    profiles: [queries]
+    ports: ["27021:27017"]
+    tmpfs: [/data/db]
+
+  flightops-query-read-db-2:
+    <<: *flightops-read-db
+    profiles: [queries]
+    ports: ["27022:27017"]
+    tmpfs: [/data/db]
 
   # Both services serve HTTPS (their "tls" profile, TLS 1.3 only, certs/aircraft.p12 / certs/airports.p12 from the
   # same dev CA as flight ops), also between their own instances.
