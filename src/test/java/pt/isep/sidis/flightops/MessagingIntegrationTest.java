@@ -45,9 +45,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Messaging end to end: a real RabbitMQ broker and two instances with the "cqrs" and "amqp" profiles, each with its
  * own write database (H2), read database (MongoDB) and queue. The read models' pull (repair) is set to once an hour,
  * so a change can only reach the other instance's read model through the broker. A test queue bound like another
- * service's (Aircraft & Maintenance binds flight.#) checks what the other services receive, and the aircraft events
- * are sent the way that service sends them. Needs Docker
- * (Testcontainers); skipped when it is not running. The tests run in order.
+ * service's (Aircraft & Maintenance binds flight.#) checks what the other services receive, and the aircraft,
+ * airport and route events are sent the way those services send them. Needs Docker (Testcontainers); skipped when
+ * it is not running. The tests run in order.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -224,7 +224,7 @@ class MessagingIntegrationTest {
     @Order(6)
     void aircraftEventsOfTheOtherServiceReachEveryInstancesCopy() {
         // sent the way Aircraft & Maintenance sends them (its outbox: JSON body, eventId/eventType headers)
-        sendAircraftEvent("aircraft.created", "AircraftCreatedEvent", """
+        sendEvent("aircraft.created", "AircraftCreatedEvent", """
                 {"registration":"CS-EVX","modelCode":"A320neo","modelName":"Airbus","maxRange":6300.0,
                  "fuelCapacity":24000.0,"seatingCapacity":180,"status":"AVAILABLE","occurredAt":"%s"}""");
 
@@ -235,15 +235,39 @@ class MessagingIntegrationTest {
             await(() -> received(url, "aircraft.created") == 1);
         }
 
-        sendAircraftEvent("aircraft.status.changed", "AircraftStatusChangedEvent", """
+        sendEvent("aircraft.status.changed", "AircraftStatusChangedEvent", """
                 {"registration":"CS-EVX","previousStatus":"AVAILABLE","newStatus":"UNDER_MAINTENANCE",
                  "occurredAt":"%s"}""");
         await(() -> tryBook(url2, "CS-EVX", departure.plusDays(1)) == 409);
     }
 
+    @Test
+    @Order(7)
+    void routeAndAirportEventsReachEveryInstancesCopy() {
+        // the JSON Airports & Routes publishes, sent to the contract's exchange
+        sendEvent("airport.created", "AIRPORT_CREATED", """
+                {"iataCode":"FNC","status":"OPERATIONAL","certifiedModels":["A320neo"],"occurredAt":"%s"}""");
+        sendEvent("airport.created", "AIRPORT_CREATED", """
+                {"iataCode":"PDL","status":"OPERATIONAL","certifiedModels":["A320neo"],"occurredAt":"%s"}""");
+        sendEvent("route.created", "FLIGHT_ROUTE_CREATED", """
+                {"routeId":"route-fnc-pdl","originIata":"FNC","destinationIata":"PDL","distanceKm":1000.0,
+                 "minRangeRequired":1200.0,"minCapacityRequired":120,"status":"ACTIVE","occurredAt":"%s"}""");
+
+        // the built-in route data doesn't know route-fnc-pdl: only the events can have told the instances
+        LocalDateTime departure = LocalDateTime.now().plusDays(70).withNano(0);
+        await(() -> tryBook(url1, "route-fnc-pdl", "CS-TPA", departure) == 201);
+
+        sendEvent("route.deactivated", "FLIGHT_ROUTE_DEACTIVATED", """
+                {"routeId":"route-fnc-pdl","reason":"test","occurredAt":"%s"}""");
+        await(() -> tryBook(url2, "route-fnc-pdl", "CS-TPC", departure.plusDays(1)) == 409);
+        for (String url : new String[] {url1, url2}) {
+            await(() -> received(url, "route.deactivated") == 1);
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
-    private static void sendAircraftEvent(String routingKey, String eventType, String body) {
+    private static void sendEvent(String routingKey, String eventType, String body) {
         String eventId = UUID.randomUUID().toString();
         Message m = MessageBuilder.withBody(body.formatted(Instant.now()).getBytes(StandardCharsets.UTF_8))
                 .setContentType("application/json").setHeader("eventId", eventId).setHeader("eventType", eventType)
@@ -261,10 +285,14 @@ class MessagingIntegrationTest {
     }
 
     private static int tryBook(String baseUrl, String registration, LocalDateTime departure) {
+        return tryBook(baseUrl, "route-opo-lis", registration, departure);
+    }
+
+    private static int tryBook(String baseUrl, String routeId, String registration, LocalDateTime departure) {
         return http.post().uri(baseUrl + "/api/scheduled-flights")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("routeId", "route-opo-lis", "aircraftRegistration", registration,
+                .body(Map.of("routeId", routeId, "aircraftRegistration", registration,
                         "departureTime", departure.toString(), "arrivalTime", departure.plusMinutes(45).toString()))
                 .retrieve().toBodilessEntity().getStatusCode().value();
     }

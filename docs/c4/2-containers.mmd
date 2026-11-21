@@ -13,7 +13,7 @@ flowchart TB
         dash["<b>Dashboard</b><br/>[Container: HTML + JavaScript,<br/>runs in the browser]<br/><br/>Live view of the instances,<br/>where each aircraft is stored,<br/>instances joining and leaving"]
         lb["<b>Load balancer</b><br/>[Container: nginx (Docker Compose)<br/>or Kubernetes Service]<br/><br/>One address for all instances;<br/>only healthy instances get requests"]
         api["<b>Flight Operations API</b><br/>[Container: Java 21, Spring Boot]<br/>3 instances (Kubernetes: 3 to 5)<br/><br/>REST API. Flights sharded by aircraft,<br/>each kept on 2 instances; asks the<br/>other instances for what it doesn't hold"]
-        db[("<b>Flight database (write side)</b><br/>[Container: PostgreSQL 16]<br/>one per instance<br/><br/>That instance's flights (owned<br/>and copies), outbox, users;<br/>route, aircraft and airports<br/>of each flight AES-256 encrypted")]
+        db[("<b>Flight database (write side)</b><br/>[Container: PostgreSQL 16]<br/>one per instance<br/><br/>That instance's flights (owned<br/>and copies), outbox, users;<br/>route, aircraft and airports<br/>of each flight AES-256 encrypted;<br/>copies of the other services'<br/>aircraft, routes, airports")]
         rdb[("<b>Read database (CQRS read model)</b><br/>[Container: MongoDB 7]<br/>one per instance<br/><br/>Every flight of the cluster<br/>and the reports already computed;<br/>same fields encrypted")]
     end
 
@@ -32,7 +32,8 @@ flowchart TB
     am -->|"aircraft.* events: each instance<br/>keeps its own copy of the aircraft<br/>[AMQP]"| mq
     api -->|"Peer forwarding, bookings on the owner,<br/>copies, catch-up, status<br/>[HTTPS /internal/**, service JWT]"| api
     api -->|"GET /internal/aircraft/{reg}<br/>(only what the copy doesn't have)<br/>[REST, service JWT]"| am
-    api -->|"GET /internal/routes/{id},<br/>/internal/airports/{iata}<br/>[REST, service JWT]"| ar
+    api -->|"GET /internal/routes/{id},<br/>/internal/airports/{iata}<br/>(only what the copy doesn't have)<br/>[REST, service JWT]"| ar
+    ar -->|"airport.* and route.* events:<br/>each instance keeps its own copy<br/>[AMQP]"| mq
 
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff
     classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff

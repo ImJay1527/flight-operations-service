@@ -17,13 +17,16 @@ import org.springframework.context.annotation.Configuration;
  * <pre>
  *   aisafe.events (topic, durable) --flight.#----> flight.events.&lt;instance&gt;   one queue per instance
  *                                  --aircraft.#--/                            (Aircraft &amp; Maintenance's events)
+ *                                  --airport.#---/                            (Airports &amp; Routes' events)
+ *                                  --route.#-----/
  *   aisafe.dlx    (topic, durable) --flight.events.dlq--> flight.events.dlq     failed / expired messages
  * </pre>
  * One queue per instance is the publish/subscribe pattern (RabbitMQ tutorial 3, "state synchronization"): every
  * instance gets every event. A queue shared by the instances would be the work-queue pattern (tutorial 2), where
- * each event reaches only one of them. Every instance needs every aircraft event too, for its own copy of the
- * aircraft ({@code LocalAircraftCopy}). The exchange and the dead-letter exchange are the ones of the system
- * contract (docs/service-contracts.md); the other services bind their own queues to them.
+ * each event reaches only one of them. Every instance needs every event of the other services too, for its own
+ * copy of the aircraft, airports and routes ({@code LocalAircraftCopy}, {@code LocalRouteCopy}). The exchange and
+ * the dead-letter exchange are the ones of the system contract (docs/service-contracts.md); the other services bind
+ * their own queues to them.
  */
 @Configuration
 @ConditionalOnProperty(name = "flightops.messaging.enabled", havingValue = "true")
@@ -82,6 +85,16 @@ public class MessagingConfig {
     @Bean
     Binding aircraftEventsBinding(Queue flightEventsQueue, TopicExchange eventsExchange) {
         return BindingBuilder.bind(flightEventsQueue).to(eventsExchange).with("aircraft.#");
+    }
+
+    @Bean
+    Binding airportEventsBinding(Queue flightEventsQueue, TopicExchange eventsExchange) {
+        return BindingBuilder.bind(flightEventsQueue).to(eventsExchange).with("airport.#");
+    }
+
+    @Bean
+    Binding routeEventsBinding(Queue flightEventsQueue, TopicExchange eventsExchange) {
+        return BindingBuilder.bind(flightEventsQueue).to(eventsExchange).with("route.#");
     }
 
     @Bean

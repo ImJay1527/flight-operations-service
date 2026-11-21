@@ -10,10 +10,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import pt.isep.sidis.flightops.clients.LocalAircraftCopy;
+import pt.isep.sidis.flightops.clients.LocalRouteCopy;
 import pt.isep.sidis.flightops.common.metrics.FlightOpsMetrics;
 import pt.isep.sidis.flightops.readmodel.ReadModel;
 
 import java.io.IOException;
+import java.util.function.Predicate;
 
 /**
  * Consumes this instance's queue, by routing key:
@@ -23,10 +25,14 @@ import java.io.IOException;
  *   <li>{@code aircraft.*}: the Aircraft &amp; Maintenance service's events. aircraft.created and
  *       aircraft.status.changed update this instance's copy of the aircraft ({@link LocalAircraftCopy}), which the
  *       bookings use. The maintenance events are only counted: that service sends an aircraft.status.changed with
- *       each of them.</li>
+ *       each of them;</li>
+ *   <li>{@code airport.*}, {@code route.*}: the Airports &amp; Routes service's events update this instance's copy
+ *       of the airports and routes ({@link LocalRouteCopy}). A route.created without the route's requirements
+ *       (minimum range and seats) is only counted: the route is read from the REST API when needed.</li>
  * </ul>
- * A message is acknowledged after it has been processed (Spring AMQP's AUTO mode: when this method returns). Processing is idempotent - the newest revision wins in the
- * read model, the newest change in the aircraft copy - so a duplicate or an event that arrives late changes nothing.
+ * A message is acknowledged after it has been processed (Spring AMQP's AUTO mode: when this method returns).
+ * Processing is idempotent - the newest revision wins in the read model, the newest change in the copies - so a
+ * duplicate or an event that arrives late changes nothing.
  *
  * <p>Failures: a message that cannot be read is rejected and goes to the dead-letter queue (after the retries,
  * {@code spring.rabbitmq.listener.simple.retry.*}). A read database that is down doesn't reject the message: the
@@ -40,14 +46,17 @@ public class FlightEventListener {
 
     private final ReadModel readModel;
     private final LocalAircraftCopy aircraft;
+    private final LocalRouteCopy routes;
     private final ObjectMapper json;
     private final FlightOpsMetrics metrics;
     private final String instanceName;
 
-    public FlightEventListener(ReadModel readModel, LocalAircraftCopy aircraft, ObjectMapper json,
-                               FlightOpsMetrics metrics, @Value("${flightops.instance-name}") String instanceName) {
+    public FlightEventListener(ReadModel readModel, LocalAircraftCopy aircraft, LocalRouteCopy routes,
+                               ObjectMapper json, FlightOpsMetrics metrics,
+                               @Value("${flightops.instance-name}") String instanceName) {
         this.readModel = readModel;
         this.aircraft = aircraft;
+        this.routes = routes;
         this.json = json;
         this.metrics = metrics;
         this.instanceName = instanceName;
@@ -58,6 +67,10 @@ public class FlightEventListener {
         String routingKey = message.getMessageProperties().getReceivedRoutingKey();
         if (routingKey != null && routingKey.startsWith("aircraft.")) {
             onAircraftEvent(message, routingKey);
+            return;
+        }
+        if (routingKey != null && (routingKey.startsWith("airport.") || routingKey.startsWith("route."))) {
+            onAirportsRoutesEvent(message, routingKey);
             return;
         }
         if (instanceName.equals(message.getMessageProperties().getHeader(EventRelay.INSTANCE_HEADER))) {
@@ -93,6 +106,47 @@ public class FlightEventListener {
         metrics.recordMessage(changed ? "received" : "ignored", routingKey);
         log.debug("Event {} ({}): {}", message.getMessageProperties().getHeader("eventId"), routingKey,
                 changed ? "aircraft copy updated" : "nothing to change");
+    }
+
+    private void onAirportsRoutesEvent(Message message, String routingKey) {
+        boolean changed;
+        if (AirportsRoutesEvent.AIRPORT_CREATED.equals(routingKey)) {
+            AirportsRoutesEvent e = readAirportsRoutes(message, routingKey, AirportsRoutesEvent::isCompleteAirport);
+            changed = routes.airportCreated(e.airport(), e.at());
+        } else if (AirportsRoutesEvent.AIRPORT_STATUS.contains(routingKey)) {
+            AirportsRoutesEvent e = readAirportsRoutes(message, routingKey,
+                    AirportsRoutesEvent::isCompleteStatusChange);
+            changed = routes.airportStatusChanged(e.iataCode(), e.newStatus(), e.at());
+        } else if (AirportsRoutesEvent.AIRPORT_CERTIFIED.equals(routingKey)) {
+            AirportsRoutesEvent e = readAirportsRoutes(message, routingKey,
+                    AirportsRoutesEvent::isCompleteCertification);
+            changed = routes.airportCertified(e.iataCode(), e.certifiedModels(), e.modelName(), e.at());
+        } else if (AirportsRoutesEvent.ROUTE_CREATED.contains(routingKey)) {
+            AirportsRoutesEvent e = readAirportsRoutes(message, routingKey, AirportsRoutesEvent::hasRoute);
+            changed = e.hasRouteRequirements() && routes.routeCreated(e.route(), e.at());
+        } else if (AirportsRoutesEvent.ROUTE_DEACTIVATED.equals(routingKey)) {
+            AirportsRoutesEvent e = readAirportsRoutes(message, routingKey, AirportsRoutesEvent::hasRoute);
+            changed = routes.routeDeactivated(e.routeId(), e.at());
+        } else {
+            changed = false;
+        }
+        metrics.recordMessage(changed ? "received" : "ignored", routingKey);
+        log.debug("Event {} ({}): {}", message.getMessageProperties().getHeader("eventId"), routingKey,
+                changed ? "route/airport copy updated" : "nothing to change");
+    }
+
+    private AirportsRoutesEvent readAirportsRoutes(Message message, String routingKey,
+                                                   Predicate<AirportsRoutesEvent> complete) {
+        AirportsRoutesEvent event;
+        try {
+            event = json.readValue(message.getBody(), AirportsRoutesEvent.class);
+        } catch (IOException e) {
+            throw rejected(message, routingKey, "Not an airport/route event: " + e.getMessage());
+        }
+        if (!complete.test(event)) {
+            throw rejected(message, routingKey, routingKey + " without the fields this service needs");
+        }
+        return event;
     }
 
     private AircraftEvent readAircraft(Message message, String routingKey) {
