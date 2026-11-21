@@ -62,6 +62,9 @@ spec:
       labels:
         app: flightops
     spec:
+      # no Docker-link variables for each Service: the one for the rabbitmq Service would set
+      # RABBITMQ_PORT=tcp://<ip>:5672 and break the port setting
+      enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       initContainers:
         # The instance's own database. A "sidecar" (init container that keeps running): it starts before the

@@ -89,7 +89,19 @@ kubectl -n "$NS" create configmap flightops-config \
 
 # ---------- services ----------
 REDEPLOY=""
-kubectl -n "$NS" get statefulset flightops >/dev/null 2>&1 && REDEPLOY=yes
+if kubectl -n "$NS" get statefulset flightops >/dev/null 2>&1; then
+  REDEPLOY=yes
+  # A StatefulSet's disks (volumeClaimTemplates) can't be changed in place, and a running pod can't get a new disk:
+  # an Assignment 1 deployment has only "data", Assignment 2 adds "read-data" (the read database). Delete the
+  # StatefulSet with its pods; the disks stay (persistentVolumeClaimRetentionPolicy: Retain) and the new pods get
+  # them back, plus the new one. Flight Operations is down for a minute, once.
+  if [[ "$(kubectl -n "$NS" get statefulset flightops -o jsonpath='{.spec.volumeClaimTemplates[*].metadata.name}')" \
+        != "data read-data" ]]; then
+    echo "The StatefulSet's disks changed (read database added): recreating it, the data is kept..."
+    kubectl -n "$NS" delete statefulset flightops --wait=true
+    REDEPLOY=""
+  fi
+fi
 kubectl apply -f k8s/rabbitmq.yaml -f k8s/flightops.yaml -f k8s/hpa.yaml
 if [[ -z "$STUB" ]]; then
   sed -e "s/replicas: 3/replicas: $OTHERS/" -e "s/name: INSTANCES, value: \"3\"/name: INSTANCES, value: \"$OTHERS\"/" \

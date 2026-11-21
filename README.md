@@ -434,8 +434,15 @@ then quit Docker Desktop, run `wsl --shutdown`, and start it again (or update WS
 
 * **Each instance is a pod** of the StatefulSet `flightops` (`k8s/flightops.yaml`): `flightops-0`, `flightops-1`, ...
   The pod name is the instance name, so an aircraft keeps its owner when a pod restarts. The pod also runs the
-  instance's **own PostgreSQL** (a second container) with its own disk: a pod added by the auto-scaler brings its
-  database along.
+  instance's **own PostgreSQL** (write side) and **own MongoDB** (read side, CQRS), each with its own disk: a pod
+  added by the auto-scaler brings its databases along.
+* **Message broker**: one RabbitMQ pod (`k8s/rabbitmq.yaml`, StatefulSet with its own disk) at `rabbitmq:5672`; each
+  instance has its queue `flight.events.flightops-<i>` (`kubectl -n aisafe exec rabbitmq-0 -- rabbitmqctl
+  list_queues name consumers messages`). The pods run with `enableServiceLinks: false`: otherwise Kubernetes would
+  set `RABBITMQ_PORT=tcp://<ip>:5672` for the `rabbitmq` Service and break the port setting.
+* **Upgrading an Assignment 1 deployment**: `deploy.sh` sees that the StatefulSet's disks changed (the read database
+  was added), deletes the StatefulSet and creates it again. The disks are kept, so no data is lost, but Flight
+  Operations is down for about a minute, once.
 * **Service discovery instead of a fixed list** (PL3 p.25): the `k8s` profile replaces `flightops.cluster` by
   `flightops.discovery.url-pattern`. Every 5 s each instance looks up `flightops-{i}.flightops-peers` (the DNS names
   the headless Service gives the pods); the names that exist are the instances (`cluster.DnsDiscovery`).
