@@ -5,8 +5,11 @@
 #   ./k8s/deploy.sh --stub    only Flight Operations, with built-in aircraft/route data (no other services needed)
 #   ./k8s/deploy.sh --down    removes everything (namespace aisafe, including the databases)
 #   OTHER_INSTANCES=1 ./k8s/deploy.sh   only 1 pod of each of the other two services (less memory; default 3)
+#   QUERY_INSTANCES=2 ./k8s/deploy.sh   also query pods of Flight Operations (CQRS with separate processes,
+#                                       k8s/flightops-query.yaml; 2 to 4 by their own auto-scaler; default 0 = none)
 #
-# Clients: https://localhost:9443 (Kubernetes load balancer in front of the Flight Operations pods).
+# Clients: https://localhost:9443 (Kubernetes load balancer in front of the Flight Operations pods); with query pods,
+# queries can go to https://localhost:9444.
 # Watch:   kubectl -n aisafe get pods,hpa -w
 # Logs:    kubectl -n aisafe logs flightops-0 -c flightops -f
 #
@@ -21,6 +24,8 @@ METRICS_SERVER=https://github.com/kubernetes-sigs/metrics-server/releases/downlo
 STUB=""
 OTHERS="${OTHER_INSTANCES:-3}"
 [[ "$OTHERS" =~ ^[1-9]$ ]] || { echo "OTHER_INSTANCES must be 1..9"; exit 1; }
+QUERIES="${QUERY_INSTANCES:-0}"
+[[ "$QUERIES" =~ ^[0-4]$ ]] || { echo "QUERY_INSTANCES must be 0..4"; exit 1; }
 case "${1:-}" in
   "") ;;
   --stub) STUB=yes ;;
@@ -85,7 +90,7 @@ kubectl -n "$NS" create secret generic rabbitmq-secrets \
 
 peer_urls() { local u=""; for ((i = 0; i < OTHERS; i++)); do u+="${u:+,}http://$1-$i.$1-peers:$2"; done; echo "$u"; }
 kubectl -n "$NS" create configmap flightops-config \
-  --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,cqrs,amqp,k8s${STUB:+,stub}" \
+  --from-literal=SPRING_PROFILES_ACTIVE="tls,postgres,cqrs,amqp,k8s${STUB:+,stub}"   --from-literal=QUERY_PROFILES="tls,cqrs,amqp,k8s${STUB:+,stub},query" \
   --from-literal=RABBITMQ_HOST=rabbitmq \
   --from-literal=AIRCRAFT_SERVICE_URLS="$(peer_urls aircraft 8081)" \
   --from-literal=AIRPORTS_ROUTES_SERVICE_URLS="$(peer_urls airports 8082)" \
@@ -113,6 +118,13 @@ if [[ -z "$STUB" ]]; then
 else
   kubectl -n "$NS" delete -f k8s/other-services.yaml --ignore-not-found >/dev/null
 fi
+if (( QUERIES > 0 )); then
+  QUERY_EXISTED=$(kubectl -n "$NS" get deployment flightops-query -o name 2>/dev/null || true)
+  sed -e "s/replicas: 2/replicas: $QUERIES/" -e "s/minReplicas: 2/minReplicas: $QUERIES/"     -e "s/maxReplicas: 4/maxReplicas: $(( QUERIES > 4 ? QUERIES : 4 ))/" k8s/flightops-query.yaml | kubectl apply -f -
+  [[ -n "$QUERY_EXISTED" ]] && kubectl -n "$NS" rollout restart deployment/flightops-query >/dev/null
+else
+  kubectl delete -f k8s/flightops-query.yaml --ignore-not-found >/dev/null
+fi
 if [[ -n "$REDEPLOY" ]]; then
   # new image or configuration: restart the pods one at a time (each catches up before the next goes)
   kubectl -n "$NS" rollout restart statefulset/flightops >/dev/null
@@ -123,7 +135,11 @@ fi
 
 echo "Waiting for Flight Operations (first start: a few minutes)..."
 kubectl -n "$NS" rollout status statefulset/flightops --timeout=10m
+if (( QUERIES > 0 )); then
+  echo "Waiting for the query pods..."
+  kubectl -n "$NS" rollout status deployment/flightops-query --timeout=10m
+fi
 echo
 kubectl -n "$NS" get pods,hpa
 echo
-echo "READY: https://localhost:9443  (watch: kubectl -n $NS get pods,hpa -w)"
+echo "READY: https://localhost:9443$( ((QUERIES)) && echo ", queries also on https://localhost:9444")  (watch: kubectl -n $NS get pods,hpa -w)"

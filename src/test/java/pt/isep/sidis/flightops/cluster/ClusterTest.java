@@ -187,4 +187,47 @@ class ClusterTest {
         assertThatThrownBy(() -> new DnsDiscovery("https://flightops.peers:8083", 3, h -> true))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ---------------- query instances (CQRS with separate processes) ----------------
+
+    @Test
+    void aQueryInstanceIsNotAMemberAndHoldsNothing() {
+        Cluster query = new Cluster("query1", THREE, List.of(), 2, null, 0, true);
+        Cluster seenBy1 = new Cluster("instance1", THREE, List.of(), 2);
+        assertThat(query.isQueryOnly()).isTrue();
+        assertThat(seenBy1.isQueryOnly()).isFalse();
+        assertThat(query.members()).extracting(Cluster.Member::name).containsExactly("instance1", "instance2", "instance3");
+        assertThat(query.peers()).hasSize(3);   // it can ask all of them
+        for (int i = 0; i < 100; i++) {
+            String reg = "CS-" + i;
+            assertThat(query.holdsLocally(reg)).isFalse();
+            assertThat(query.ownsLocally(reg)).isFalse();
+            assertThat(query.replicasOf(reg)).isEqualTo(seenBy1.replicasOf(reg));   // knows where each aircraft is
+        }
+    }
+
+    @Test
+    void aQueryInstanceNeedsTheCommandInstancesWithoutItself() {
+        assertThatThrownBy(() -> new Cluster("query1", List.of(), List.of(), 2, null, 0, true))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Cluster("instance1", THREE, List.of(), 2, null, 0, true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aDiscoveringQueryInstanceIsNeverAMember() {
+        Set<String> running = new HashSet<>();
+        DnsDiscovery dns = new DnsDiscovery(PATTERN, 10, host -> running.contains(host.substring(0, host.indexOf('.'))));
+        Cluster query = new Cluster("flightops-query-abc12", List.of(), List.of(), 2, dns, 0, true);
+        assertThat(query.members()).isEmpty();   // no command pod yet
+        assertThat(query.replicasOf("CS-TPA")).isEmpty();
+        assertThat(query.holdsLocally("CS-TPA")).isFalse();
+        assertThatThrownBy(() -> query.ownerOf("CS-TPA"))
+                .isInstanceOf(pt.isep.sidis.flightops.common.exceptions.ServiceUnavailableException.class);
+
+        running.addAll(Set.of("flightops-0", "flightops-1"));
+        query.refresh();
+        assertThat(query.members()).extracting(Cluster.Member::name).containsExactly("flightops-0", "flightops-1");
+        assertThat(query.holdsLocally("CS-TPA")).isFalse();
+    }
 }

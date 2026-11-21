@@ -9,6 +9,9 @@
 #                                     is lost on stop; queries take the CQRS fallback path, X-Read-Side: write-side)
 #   ./scripts/run-local.sh --stub     built-in aircraft/route data instead of calling the other two services
 #                                     (needed for the Postman collection in postman/ while those services are stubs)
+#   ./scripts/run-local.sh --queries 2    also 2 QUERY INSTANCES (CQRS with separate processes): 8113, 8123, each
+#                                     with only its read database (flightops-query-read-db-<q>, 27021 / 27022); they
+#                                     answer queries only (commands: 405) and are not in the instances' CLUSTER
 #   ./scripts/run-local.sh --no-restart   don't restart an instance that stops on its own
 #
 # An instance that stops on its own (crash, or POST /actuator/shutdown in stub mode - the Postman resilience test does
@@ -28,6 +31,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 N=3
+QUERIES=0
 SCHEME=http
 PROFILE=""
 DB=postgres
@@ -38,6 +42,7 @@ TLS_FLAG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -n) N="$2"; [[ "$N" =~ ^[123]$ ]] || { echo "-n must be 1, 2 or 3 (one instance profile each)"; exit 1; }; shift 2 ;;
+    --queries) QUERIES="$2"; [[ "$QUERIES" =~ ^[012]$ ]] || { echo "--queries must be 0, 1 or 2"; exit 1; }; shift 2 ;;
     --tls) SCHEME=https; PROFILE=tls; TLS_FLAG=--tls; shift ;;
     --h2) DB=h2; shift ;;
     --stub) STUB=stub; shift ;;
@@ -46,11 +51,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ "$QUERIES" == 0 || "$DB" == postgres ]] || { echo "--queries needs the read databases and the broker (not with --h2)"; exit 1; }
+
+# instances 1..3 on 8083 / 8093 / 8103; 4 and 5 are the query instances 1 and 2 (8113, 8123)
 port() { echo $((8083 + 10 * ($1 - 1))); }
+ALL=$(seq 1 "$N"; seq 4 $((3 + QUERIES)))
 
 # Refuse to start if an instance port is taken (e.g. instances still running from VS Code or an earlier run):
 # they would keep the old code running and lock the jar, so the build below would fail.
-for i in $(seq 1 "$N"); do
+for i in $ALL; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$(port "$i")") 2>/dev/null; then
     echo "Port $(port "$i") is already in use - stop the running instance(s) first (Ctrl+C in their terminal, or stop them in VS Code)."
     exit 1
@@ -59,6 +68,7 @@ done
 
 if [[ "$DB" == postgres ]]; then
   DBS=(); for i in $(seq 1 "$N"); do DBS+=("flightops-db-$i" "flightops-read-db-$i"); done
+  for q in $(seq 1 "$QUERIES"); do DBS+=("flightops-query-read-db-$q"); done
   echo "Starting databases and the broker: ${DBS[*]} rabbitmq"
   docker compose up -d --wait "${DBS[@]}" rabbitmq
   PROFILE="${PROFILE:+$PROFILE,}postgres,cqrs,amqp"
@@ -86,7 +96,7 @@ cleanup() {
   trap '' INT TERM; trap - EXIT   # ignore further Ctrl+C while stopping (a second one would kill the cleanup)
   echo; echo "Stopping instances..."
   for pid in "${SUPERVISORS[@]}"; do kill "$pid" 2>/dev/null || true; done   # first the supervisors: no restarts
-  for i in $(seq 1 "$N"); do stop_port "$(port "$i")"; done
+  for i in $ALL; do stop_port "$(port "$i")"; done
   wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
@@ -102,7 +112,19 @@ supervise() {   # $1 = instance number
   done
 }
 
-# all instances by name, the same list for every instance
+supervise_query() {   # $1 = query instance number (1, 2): no write database, not in CLUSTER (profile "query" last)
+  local log="logs/flightops-query-$1.log"
+  while true; do
+    CLUSTER="$CLUSTER" INSTANCE_NAME="query$1" PORT="$(port $((3 + $1)))"       AIRCRAFT_SERVICE_URLS=http://localhost:8081,http://localhost:8091,http://localhost:8101       AIRPORTS_ROUTES_SERVICE_URLS=http://localhost:8082,http://localhost:8092,http://localhost:8102       java -jar "$JAR" --spring.profiles.active="$PROFILE,query" --flightops.read-db.port=$((27020 + $1)) >> "$log" 2>&1
+    [[ "$RESTART" == yes ]] || break
+    echo "flightops-query-$1 stopped - starting it again in ${RESTART_DELAY}s"
+    sleep "$RESTART_DELAY"
+    echo "flightops-query-$1 restarting"
+    ./scripts/wait-ready.sh --instance $((3 + $1)) $TLS_FLAG &
+  done
+}
+
+# all instances by name, the same list for every instance (the command instances; never the query instances)
 members=()
 for j in $(seq 1 "$N"); do members+=("instance$j=$SCHEME://localhost:$(port "$j")"); done
 CLUSTER=$(IFS=,; echo "${members[*]}")
@@ -116,7 +138,14 @@ for i in $(seq 1 "$N"); do
   echo "flightops-$i  $SCHEME://localhost:$(port "$i")  (logs/flightops-$i.log)"
 done
 
+for q in $(seq 1 "$QUERIES"); do
+  : > "logs/flightops-query-$q.log"
+  supervise_query "$q" &
+  SUPERVISORS+=($!)
+  echo "flightops-query-$q  $SCHEME://localhost:$(port $((3 + q)))  (query instance, logs/flightops-query-$q.log)"
+done
+
 echo "cluster: $CLUSTER"
-echo "All $N instances starting. Ctrl+C to stop."
-./scripts/wait-ready.sh -n "$N" $TLS_FLAG || echo "Not all instances are ready - check the logs above. Still running; Ctrl+C to stop."
+echo "All $N instances starting$( ((QUERIES)) && echo ", plus $QUERIES query instance(s)"). Ctrl+C to stop."
+./scripts/wait-ready.sh -n "$N" --queries "$QUERIES" $TLS_FLAG || echo "Not all instances are ready - check the logs above. Still running; Ctrl+C to stop."
 wait

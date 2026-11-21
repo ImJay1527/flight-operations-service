@@ -15,6 +15,8 @@ flowchart TB
         api["<b>Flight Operations API</b><br/>[Container: Java 21, Spring Boot]<br/>3 instances (Kubernetes: 3 to 5)<br/><br/>REST API. Flights sharded by aircraft,<br/>each kept on 2 instances; asks the<br/>other instances for what it doesn't hold"]
         db[("<b>Flight database (write side)</b><br/>[Container: PostgreSQL 16]<br/>one per instance<br/><br/>That instance's flights (owned<br/>and copies), outbox, users;<br/>route, aircraft and airports<br/>of each flight AES-256 encrypted;<br/>copies of the other services'<br/>aircraft, routes, airports")]
         rdb[("<b>Read database (CQRS read model)</b><br/>[Container: MongoDB 7]<br/>one per instance<br/><br/>Every flight of the cluster<br/>and the reports already computed;<br/>same fields encrypted")]
+        qapi["<b>Flight Operations query instances</b><br/>[Container: same image, profile query]<br/>optional: 2 (Kubernetes: 2 to 4)<br/><br/>Queries only (commands: 405);<br/>not in the sharding, no write database"]
+        qrdb[("<b>Read database of a query instance</b><br/>[Container: MongoDB 7]<br/>one per query instance<br/><br/>Every flight; rebuilt at every start")]
     end
 
     mq[["<b>Message broker</b><br/>[Container: RabbitMQ 3, AMQP]<br/>one for the whole system<br/><br/>Exchange aisafe.events;<br/>one queue per instance of every service"]]
@@ -24,7 +26,11 @@ flowchart TB
     users -->|"Uses<br/>[HTTPS, TLS 1.3, user JWT]"| lb
     users -->|"Opens"| dash
     dash -->|"Status of every instance, every 2 s<br/>[HTTPS, GET /api/cluster/overview]"| lb
-    lb -->|"Forwards to a healthy instance<br/>[HTTPS]"| api
+    lb -->|"Commands; queries too without<br/>query instances [HTTPS]"| api
+    lb -->|"Queries: GET /api/**<br/>[HTTPS]"| qapi
+    qapi -->|"Queries<br/>[MongoDB driver]"| qrdb
+    mq -->|"flight.* events<br/>[AMQPS]"| qapi
+    qapi -->|"Startup sync, write-side fallback<br/>[HTTPS /internal/**, service JWT]"| api
     api -->|"Commands: bookings, cancels, completions;<br/>their events (outbox)<br/>[JDBC]"| db
     api -->|"Queries; updated after every change<br/>and rebuilt from the write side<br/>[MongoDB driver]"| rdb
     api -->|"Publishes flight.* events;<br/>receives the other instances' events<br/>[AMQPS, TLS 1.3]"| mq
@@ -39,7 +45,7 @@ flowchart TB
     classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
     class users person
-    class dash,lb,api,db,rdb container
+    class dash,lb,api,db,rdb,qapi,qrdb container
     class am,ar external
     class mq container
     style FO fill:none,stroke:#444444,stroke-dasharray:6 4

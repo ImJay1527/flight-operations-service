@@ -1,0 +1,150 @@
+# CQRS with separate processes: QUERY INSTANCES of Flight Operations (only with QUERY_INSTANCES=2 k8s/deploy.sh).
+#
+# They answer the queries (every GET) from their own read database and take no commands (405). They are not members
+# of the cluster: they find the command pods (flightops-0, flightops-1, ...) through the same DNS discovery, but hold
+# no flights and no copies, and have no write database (profile "query"). The broker brings them every change; at
+# startup they build their read model from the command pods before they report ready.
+#
+# So they are interchangeable: a Deployment (random pod names, no stable identity) with a read database that is thrown
+# away with the pod (emptyDir), scaled on their own by their auto-scaler: reads scale without touching the writes.
+# Clients send queries to https://localhost:9444 and commands to https://localhost:9443. (Docker Compose does the
+# split in one address with nginx; a plain Kubernetes Service can't route by HTTP method.)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flightops-query
+  namespace: aisafe
+spec:
+  type: LoadBalancer
+  selector:
+    app: flightops-query                 # not "flightops": the command Services must not pick these pods
+  ports:
+    - name: https
+      port: 9444
+      targetPort: 8083
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flightops-query
+  namespace: aisafe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flightops-query
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # a new pod is ready (read model built) before an old one goes
+  template:
+    metadata:
+      labels:
+        app: flightops-query
+    spec:
+      enableServiceLinks: false          # see flightops.yaml (RABBITMQ_PORT)
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # its read database (MongoDB), a sidecar as in flightops.yaml; no disk of its own: rebuilt at every start
+        - name: mongo
+          image: mongo:7.0
+          restartPolicy: Always
+          args: ["--wiredTigerCacheSizeGB", "0.25"]
+          env:
+            - { name: MONGO_INITDB_ROOT_USERNAME, value: flightops }
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: READ_DB_PASSWORD } }
+          volumeMounts:
+            - { name: read-data, mountPath: /data/db }
+          startupProbe:
+            exec: { command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"] }
+            periodSeconds: 2
+            timeoutSeconds: 10             # mongosh (Node.js) needs more than the default 1 s on a busy machine
+            failureThreshold: 60
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      containers:
+        - name: flightops
+          image: flightops:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: https, containerPort: 8083 }
+          envFrom:
+            - configMapRef: { name: flightops-config }    # URLs of the other services
+          env:
+            # "query" last: no write database, not a member, commands refused
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom: { configMapKeyRef: { name: flightops-config, key: QUERY_PROFILES } }
+            - { name: PORT, value: "8083" }
+            - { name: SSL_KEYSTORE, value: "file:/certs/flightops.p12" }
+            - { name: SSL_TRUSTSTORE, value: "file:/certs/truststore.p12" }
+            - name: SSL_PASSWORD
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: SSL_PASSWORD } }
+            - name: READ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: READ_DB_PASSWORD } }
+            - name: MONGO_URI
+              value: "mongodb://flightops:$(READ_DB_PASSWORD)@localhost:27017/flightops_read?authSource=admin"
+            - name: RABBITMQ_USER
+              valueFrom: { secretKeyRef: { name: rabbitmq-secrets, key: RABBITMQ_USER } }
+            - name: RABBITMQ_PASSWORD
+              valueFrom: { secretKeyRef: { name: rabbitmq-secrets, key: RABBITMQ_PASSWORD } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: JWT_SECRET } }
+            - name: DATA_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: flightops-secrets, key: DATA_ENCRYPTION_KEY } }
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75 -Dsun.net.inetaddr.ttl=5 -Dsun.net.inetaddr.negative.ttl=1"
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+          # ready only after the startup sync (readmodel.ReadModelSync): it never answers from an empty read model
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: https, scheme: HTTPS }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: https, scheme: HTTPS }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: https, scheme: HTTPS }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 768Mi }
+      volumes:
+        - name: certs
+          secret: { secretName: flightops-certs }
+        - name: read-data
+          emptyDir: {}
+---
+# Reads scale on their own: 2 to 4 query pods, by CPU as for the command pods (hpa.yaml).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flightops-query
+  namespace: aisafe
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flightops-query
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: flightops
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 60 }
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 60 }

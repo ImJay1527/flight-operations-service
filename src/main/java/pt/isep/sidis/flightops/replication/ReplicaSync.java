@@ -72,8 +72,9 @@ public class ReplicaSync implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // with discovery the instance may start alone (factor 1 for now) and get peers later
-        if (!cluster.isClustered() || cluster.configuredReplicationFactor() < 2) {
+        // with discovery the instance may start alone (factor 1 for now) and get peers later. A query instance holds
+        // no flights: asking for its copies would even make the others count it as a holder.
+        if (!cluster.isClustered() || cluster.configuredReplicationFactor() < 2 || cluster.isQueryOnly()) {
             return;
         }
         syncOnce();
