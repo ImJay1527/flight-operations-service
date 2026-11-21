@@ -33,8 +33,10 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +45,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Messaging end to end: a real RabbitMQ broker and two instances with the "cqrs" and "amqp" profiles, each with its
  * own write database (H2), read database (MongoDB) and queue. The read models' pull (repair) is set to once an hour,
  * so a change can only reach the other instance's read model through the broker. A test queue bound like another
- * service's (Aircraft & Maintenance binds flight.#) checks what the other services receive. Needs Docker
+ * service's (Aircraft & Maintenance binds flight.#) checks what the other services receive, and the aircraft events
+ * are sent the way that service sends them. Needs Docker
  * (Testcontainers); skipped when it is not running. The tests run in order.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -217,7 +220,54 @@ class MessagingIntegrationTest {
         assertThat(broker.getQueueInfo("flight.events.instance1").getMessageCount()).isZero();
     }
 
+    @Test
+    @Order(6)
+    void aircraftEventsOfTheOtherServiceReachEveryInstancesCopy() {
+        // sent the way Aircraft & Maintenance sends them (its outbox: JSON body, eventId/eventType headers)
+        sendAircraftEvent("aircraft.created", "AircraftCreatedEvent", """
+                {"registration":"CS-EVX","modelCode":"A320neo","modelName":"Airbus","maxRange":6300.0,
+                 "fuelCapacity":24000.0,"seatingCapacity":180,"status":"AVAILABLE","occurredAt":"%s"}""");
+
+        // the built-in aircraft data doesn't know CS-EVX: only the event can have told the instances about it
+        LocalDateTime departure = LocalDateTime.now().plusDays(60).withNano(0);
+        await(() -> tryBook(url1, "CS-EVX", departure) == 201);
+        for (String url : new String[] {url1, url2}) {   // each instance got it on its own queue
+            await(() -> received(url, "aircraft.created") == 1);
+        }
+
+        sendAircraftEvent("aircraft.status.changed", "AircraftStatusChangedEvent", """
+                {"registration":"CS-EVX","previousStatus":"AVAILABLE","newStatus":"UNDER_MAINTENANCE",
+                 "occurredAt":"%s"}""");
+        await(() -> tryBook(url2, "CS-EVX", departure.plusDays(1)) == 409);
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    private static void sendAircraftEvent(String routingKey, String eventType, String body) {
+        String eventId = UUID.randomUUID().toString();
+        Message m = MessageBuilder.withBody(body.formatted(Instant.now()).getBytes(StandardCharsets.UTF_8))
+                .setContentType("application/json").setHeader("eventId", eventId).setHeader("eventType", eventType)
+                .build();
+        otherService.send("aisafe.events", routingKey, m);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static long received(String baseUrl, String routingKey) {
+        Map<String, Object> messages = (Map<String, Object>) get(baseUrl + "/api/cluster/metrics").getBody()
+                .get("messages");
+        Map<String, Map<String, Number>> byKey = (Map<String, Map<String, Number>>) messages.get("byRoutingKey");
+        Number n = byKey.getOrDefault("received", Map.of()).get(routingKey);
+        return n == null ? 0 : n.longValue();
+    }
+
+    private static int tryBook(String baseUrl, String registration, LocalDateTime departure) {
+        return http.post().uri(baseUrl + "/api/scheduled-flights")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("routeId", "route-opo-lis", "aircraftRegistration", registration,
+                        "departureTime", departure.toString(), "arrivalTime", departure.plusMinutes(45).toString()))
+                .retrieve().toBodilessEntity().getStatusCode().value();
+    }
 
     private static long deadLetters() {
         QueueInformation info = broker.getQueueInfo("flight.events.dlq");

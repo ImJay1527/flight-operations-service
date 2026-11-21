@@ -4648,6 +4648,689 @@
       ]
     },
     {
+      "name": "15 Aircraft events - local copy of the aircraft",
+      "description": "Assignment 2, AMQP. Aircraft & Maintenance's events (aircraft.created, aircraft.status.changed) keep each instance's own copy of the aircraft, so a booking doesn't call that service. The events are sent here through RabbitMQ's management API, the way that service sends them. An older event changes nothing. Skipped without a broker (run-local.sh --h2).",
+      "item": [
+        {
+          "name": "Aircraft & Maintenance: aircraft.created (CS-EVP, unknown to the built-in data)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{aircraft_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AircraftCreatedEvent\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  registration: \"CS-EVP\"",
+                  "}, {\"serialNumber\": \"SN-EVP\", \"modelCode\": \"A320neo\", \"modelName\": \"Airbus\", \"maxRange\": 6300.0, \"fuelCapacity\": 24000.0, \"fuelBurnRate\": 3.8095, \"seatingCapacity\": 180, \"status\": \"AVAILABLE\", \"flightHours\": 0.0});",
+                  "pm.variables.set(\"aircraft_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2,",
+                  "               headers: {eventId: ev.eventId, eventType: ev.eventType}},",
+                  "  routing_key: \"aircraft.created\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to aircraft.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-EVP - the aircraft comes from this service's copy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-EVP\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "// far in the future, a different time on each run (the flights of earlier runs stay)",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 45 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 201 (the REST API / built-in data doesn't know it: only the event told us)\", () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aircraft & Maintenance: aircraft.status.changed -> UNDER_MAINTENANCE",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{aircraft_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AircraftStatusChangedEvent\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  registration: \"CS-EVP\"",
+                  "}, {\"previousStatus\": \"AVAILABLE\", \"newStatus\": \"UNDER_MAINTENANCE\", \"totalFlightHours\": 0.0});",
+                  "pm.variables.set(\"aircraft_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2,",
+                  "               headers: {eventId: ev.eventId, eventType: ev.eventType}},",
+                  "  routing_key: \"aircraft.status.changed\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to aircraft.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-EVP again - refused, it is under maintenance (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-EVP\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "// far in the future, a different time on each run (the flights of earlier runs stay)",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 45 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "  pm.test(\"says why\", () => pm.expect(pm.response.json().error).to.match(/UNDER_MAINTENANCE/));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A late, older event (AVAILABLE, 1 min old): changes nothing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{aircraft_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AircraftStatusChangedEvent\",",
+                  "  occurredAt: new Date(Date.now() - 60000).toISOString(),",
+                  "  registration: \"CS-EVP\"",
+                  "}, {\"previousStatus\": \"IN_FLIGHT\", \"newStatus\": \"AVAILABLE\", \"totalFlightHours\": 0.0});",
+                  "pm.variables.set(\"aircraft_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2,",
+                  "               headers: {eventId: ev.eventId, eventType: ev.eventType}},",
+                  "  routing_key: \"aircraft.status.changed\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to aircraft.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-EVP - still refused (the newest change wins)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-EVP\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "// far in the future, a different time on each run (the flights of earlier runs stay)",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 45 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aircraft & Maintenance: aircraft.status.changed -> AVAILABLE (maintenance done)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{rabbitmqManagement}}/api/exchanges/%2F/aisafe.events/publish",
+              "host": [
+                "{{rabbitmqManagement}}"
+              ],
+              "path": [
+                "api",
+                "exchanges",
+                "%2F",
+                "aisafe.events",
+                "publish"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{aircraft_event}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "guest",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "guest",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "const ev = Object.assign({",
+                  "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
+                  "  eventType: \"AircraftStatusChangedEvent\",",
+                  "  occurredAt: new Date(Date.now() - 0).toISOString(),",
+                  "  registration: \"CS-EVP\"",
+                  "}, {\"previousStatus\": \"UNDER_MAINTENANCE\", \"newStatus\": \"AVAILABLE\", \"totalFlightHours\": 0.0});",
+                  "pm.variables.set(\"aircraft_event\", JSON.stringify({",
+                  "  properties: {content_type: \"application/json\", delivery_mode: 2,",
+                  "               headers: {eventId: ev.eventId, eventType: ev.eventType}},",
+                  "  routing_key: \"aircraft.status.changed\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
+                  "}));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  if (pm.response.code === 0 || pm.response.code >= 500) {",
+                  "    pm.test.skip(\"SKIPPED: management API not reachable from here (\" + pm.environment.get(\"rabbitmqManagement\") + \")\", () => {});",
+                  "  } else {",
+                  "    pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "    pm.test(\"routed to the queues bound to aircraft.# (one per instance)\", () => pm.expect(pm.response.json().routed).to.eql(true));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Command: book CS-EVP - accepted again",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{instance1}}/api/scheduled-flights",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"route-opo-lis\",\n  \"aircraftRegistration\": \"CS-EVP\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// the events are pushed within milliseconds; wait 1 s so every instance has its copy up to date",
+                  "setTimeout(() => {}, 1000);",
+                  "// far in the future, a different time on each run (the flights of earlier runs stay)",
+                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
+                  "const dep = Date.now() + (400 + Math.floor(Math.random() * 3000)) * 86400000;",
+                  "pm.variables.set(\"departure\", local(dep));",
+                  "pm.variables.set(\"arrival\", local(dep + 45 * 60000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Which instance owns CS-EVP (it did the bookings)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{instance1}}/api/cluster/owner/CS-EVP",
+              "host": [
+                "{{instance1}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "owner",
+                "CS-EVP"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const n = pm.response.json().owner.replace(/\\D/g, \"\");",
+                  "  pm.environment.set(\"aircraft_owner\", pm.environment.get(\"instance\" + n) || pm.environment.get(\"instance1\"));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Its metrics: aircraft from the copy, aircraft events received and ignored",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{aircraft_owner}}/api/cluster/metrics",
+              "host": [
+                "{{aircraft_owner}}"
+              ],
+              "path": [
+                "api",
+                "cluster",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get(\"amqpOn\") !== true) {",
+                  "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else {",
+                  "  pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "  const m = pm.response.json();",
+                  "  const by = m.messages.byRoutingKey;",
+                  "  pm.test(\"bookings used the copy (aircraftLookups.copy)\", () => pm.expect(m.aircraftLookups.copy || 0).to.be.above(0));",
+                  "  pm.test(\"aircraft.created received\", () => pm.expect((by.received || {})[\"aircraft.created\"] || 0).to.be.above(0));",
+                  "  pm.test(\"aircraft.status.changed received\", () => pm.expect((by.received || {})[\"aircraft.status.changed\"] || 0).to.be.above(0));",
+                  "  pm.test(\"the late one was ignored\", () => pm.expect((by.ignored || {})[\"aircraft.status.changed\"] || 0).to.be.above(0));",
+                  "  console.log(\"aircraftLookups\", JSON.stringify(m.aircraftLookups), \"messages\", JSON.stringify(m.messages));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "03 Resilience - instance 2 is stopped and restarted",
       "description": "PL3 p.16 test 03, PL3 p.14 (automatic recovery) and P1 p.2 \"redundancy-based fault tolerance\". Runs last. Needs the instances started with scripts/run-local.sh --stub (stub = test mode, where an ADMIN may shut an instance down over HTTP; the script restarts a stopped instance after 10 s).\n\n1. Stops instance 2 (POST /actuator/shutdown) and waits until it is gone.\n2. Its flights are still readable from their copies (replication: each of its flights has a copy on instance 1 or 3). Lists are complete (no X-Partial-Result) but say a peer was unreachable. A booking for an aircraft owned by instance 2 is taken by its backup; the copy for instance 2 waits in the backup's outbox.\n3. Waits for instance 2 to come back (up to 90 s): it has caught up with the booking made while it was down, and the outbox of the instance that took that booking is empty again.\n\nWithout replication (REPLICATION_FACTOR=1) step 2 expects what PL3 p.16 describes instead: 404 for data stored only on instance 2.\n\nOnly in stub mode: it stops instance 2 through `POST /actuator/shutdown`, which the normal (whole-system) configuration does not expose.\n\nCQRS (Assignment 2): these requests send X-Read-Side: write-side (folder pre-request script), so they are answered as in Assignment 1 - from the instances holding the data - and this folder still tests forwarding and partial results. Folder 12 tests the read model.",
       "item": [

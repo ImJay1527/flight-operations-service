@@ -409,6 +409,8 @@ Every change a flight-ops instance makes is stored together with its **event** (
 the topic exchange **`aisafe.events`** and confirmed by the broker. Every instance, and every other service, has
 **its own queue** bound to it (publish/subscribe), so each one receives every event and reacts to it: the other
 flight-ops instances update their read models, Aircraft & Maintenance adds the flight hours of `flight.completed`.
+The other way round, Aircraft & Maintenance's `aircraft.*` events keep each flight-ops instance's **own copy of the
+aircraft**, so a booking doesn't have to call that service.
 
 ### Topology
 
@@ -421,6 +423,11 @@ flight-ops instance --->   flight.scheduled | flight.cancelled | flight.complete
                               |                        |                           |
                      read model of 1          read model of 2       flight hours (Aircraft & Maintenance)
 
+Aircraft & Maintenance ---> aircraft.created | aircraft.status.changed | aircraft.maintenance.*
+                              | aircraft.#             | aircraft.#
+                              v                        v
+               flight.events.instance1   flight.events.instance2   ->  aircraft copy of each instance
+
 failed / expired / overflow --> aisafe.dlx --(flight.events.dlq)--> flight.events.dlq
 ```
 
@@ -428,7 +435,7 @@ failed / expired / overflow --> aisafe.dlx --(flight.events.dlq)--> flight.event
 |---|---|
 | Broker | one RabbitMQ for the whole system (`rabbitmq` in docker-compose, port 5672, UI 15672; `k8s/rabbitmq.yaml`) |
 | Exchange | `aisafe.events`, topic, durable: every service publishes its events there (`<entity>.<what happened>`) |
-| Queues | `flight.events.<instance>`, durable, one per instance, bound to `flight.#`; at most 100 000 messages, each kept 1 day; the queue is removed after 7 days without a consumer |
+| Queues | `flight.events.<instance>`, durable, one per instance, bound to `flight.#` and `aircraft.#`; at most 100 000 messages, each kept 1 day; the queue is removed after 7 days without a consumer |
 | Dead letters | `aisafe.dlx` -> `flight.events.dlq` (kept 7 days) |
 | Contract | `docs/service-contracts.md` "Events": routing keys, JSON fields, rules for publishers and consumers |
 
@@ -459,6 +466,33 @@ read model. Its own events come back too and are skipped (already projected afte
 * A read database that is down does not reject the message: the read model turns STALE, queries use the write side,
   and the sync rebuilds it. The write side is the source of truth.
 
+### Aircraft events: a local copy of the aircraft
+
+A booking needs the aircraft (status, model, range, fuel, seats). In A1 every booking asked Aircraft & Maintenance
+over REST, so with that service down nobody could book. Now each instance keeps **its own copy** (table
+`aircraft_copy` in its write database), fed by that service's events, and `clients.LocalAircraftCopy` answers
+bookings and queries from it (it replaces `AircraftClient` with the "amqp" profile):
+
+| Event | What changes in the copy |
+|---|---|
+| `aircraft.created` | the whole aircraft is stored |
+| `aircraft.status.changed` | its status (`AVAILABLE`, `UNDER_MAINTENANCE`, `INACTIVE`, ...): a booking sees it at once |
+| `aircraft.maintenance.*` | nothing: that service sends an `aircraft.status.changed` with each one |
+
+* The listener **checks the routing key**: `aircraft.*` goes to the copy, `flight.*` to the read model.
+* **Idempotent**: each copy keeps `asOf`, when its data was true (the event's `occurredAt`); an older event changes
+  nothing. A status change of an aircraft not in the copy is skipped: the aircraft is read with its current status
+  the first time it is needed.
+* **REST is still there as the fallback**: an aircraft not in the copy yet (e.g. created before this instance was
+  listening) is read once from `GET /internal/aircraft/{registration}` and kept. A copy that hasn't changed for an
+  hour is read again (events can be lost, e.g. a queue removed after a long stop), and if that service is down the
+  copy is used anyway.
+* Kept in its own transaction, so a booking that fails still keeps what it read. A booking and an event writing the
+  same aircraft at once: the version check makes one of them fail; the event is retried, the REST read just isn't
+  kept.
+* Eventual consistency: for a few milliseconds after a status change (longer with the broker down) a booking can
+  still see the old status. Aircraft & Maintenance's own data is the source of truth.
+
 ### Consistency
 
 Eventual, with a much smaller window than before: the instance that made the change sees it at once (projected after
@@ -475,16 +509,18 @@ Order doesn't matter (newest revision wins). Delivery is **at least once**; dupl
 | Crash after the broker confirmed, before the outbox row is deleted | The event is sent again with the same `eventId`; consumers ignore it |
 | A message that can't be processed | 3 attempts, then the dead-letter queue (`messaging.deadLetters` on `/api/cluster/health`) |
 | Queue full or message too old | Dead-lettered (limits: 100 000 messages, 1 day); the read model is repaired by the sync |
+| Aircraft & Maintenance down | Bookings use the aircraft copy (`aircraftLookups` on `/api/cluster/metrics`: `copy`, or `old_copy` when the copy was due to be read again). Only an aircraft never seen before can't be booked (503) |
 | Broker stops answering (paused, network cut) | Calls give up after 5 s (RPC and publisher-confirm timeouts), and heartbeats every 10 s notice the dead connection: nothing hangs for minutes |
 
 ### Evidence
 
 * `GET /api/cluster/health` -> `messaging`: broker up, this instance's queue and its depth, its consumers, dead
   letters, events waiting in the outbox ("monitor queue depth").
-* `GET /api/cluster/metrics` -> `messages`: published, received, ignored (own), failed, per routing key.
+* `GET /api/cluster/metrics` -> `messages`: published, received, ignored (own), failed, per routing key;
+  `aircraftLookups`: where the aircraft of bookings came from (`copy`, `rest`, `refreshed`, `old_copy`).
 * The dashboard shows a "Broker (AMQP)" chip per instance; RabbitMQ's UI (http://localhost:15672) shows the exchanges,
   the queues and the message rates.
-* Postman folder 13 and `MessagingIntegrationTest`.
+* Postman folders 13 and 15, `MessagingIntegrationTest`, `AircraftEventsTest`, `LocalAircraftCopyTest`.
 
 ### Decisions and alternatives
 
@@ -507,6 +543,10 @@ Order doesn't matter (newest revision wins). Delivery is **at least once**; dupl
   queries keep working and nothing is lost. A 3-node cluster with quorum queues would remove it.
 * **JSON without type headers.** Consumers in other services don't need our Java classes (no `__TypeId__`), and
   unknown fields are ignored, so adding a field breaks no one.
+* **A local copy of the aircraft (chosen) vs. a REST call per booking (A1).** The copy makes bookings independent
+  of Aircraft & Maintenance being up, and faster (no remote call). The cost: a table, and a status that can be a few
+  milliseconds old. Only the fields a booking needs are kept. REST stays as the fallback for what the copy doesn't
+  have.
 * **`PATCH .../complete` (new command).** Aircraft & Maintenance consumes `flight.completed` (flight hours), so a
   flight can now be marked as landed: only a scheduled flight, and not before its departure.
 
