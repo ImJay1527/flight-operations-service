@@ -4,8 +4,9 @@
 #   ./loadtest/run.sh 2          2 instances
 #   ./loadtest/run.sh 3          3 instances (the default setup)
 #   VUS=100 DURATION=90s ./loadtest/run.sh 3
+#   READ_SIDE=write-side ./loadtest/run.sh 3     the same requests without the read model (the Assignment 1 path)
 #
-# Needs: Docker, and ./scripts/generate-dev-certs.sh run once. Results: loadtest/results/<N>-instances.txt
+# Needs: Docker, and ./scripts/generate-dev-certs.sh run once. Results: loadtest/results/<N>-instances[-write-side].txt
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1   # Git Bash on Windows: don't rewrite /scripts paths
@@ -13,6 +14,7 @@ export MSYS_NO_PATHCONV=1   # Git Bash on Windows: don't rewrite /scripts paths
 N="${1:-3}"
 VUS="${VUS:-50}"
 DURATION="${DURATION:-60s}"
+READ_SIDE="${READ_SIDE:-}"
 PROJECT=flightops-loadtest
 
 FILES=(-f docker-compose.yml -f loadtest/limits.yml)
@@ -39,7 +41,7 @@ sleep 10   # let the JVMs finish starting
 k6() {
   docker run --rm --network "${PROJECT}_default" \
     -v "$(pwd -W 2>/dev/null || pwd)/loadtest:/scripts" \
-    -e TARGETS="$TARGETS" -e VUS="$VUS" -e DURATION="$1" \
+    -e TARGETS="$TARGETS" -e VUS="$VUS" -e DURATION="$1" -e READ_SIDE="$READ_SIDE" \
     grafana/k6:latest run --quiet /scripts/flightops.js
 }
 
@@ -50,7 +52,7 @@ k6 30s > /dev/null 2>&1 || true
 k6 30s > /dev/null 2>&1 || true
 
 mkdir -p loadtest/results
-OUT="loadtest/results/${N}-instances.txt"
+OUT="loadtest/results/${N}-instances${READ_SIDE:+-$READ_SIDE}.txt"
 echo "Running k6: $VUS virtual users for $DURATION against $TARGETS"
 k6 "$DURATION" | tee "$OUT"
 echo "Saved to $OUT"

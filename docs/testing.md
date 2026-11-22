@@ -65,9 +65,18 @@ By hand (Postman app, e.g. in a demo): run 00 Setup, set the environment variabl
 11a, `docker compose stop flightops-2`, set it to `b` and run 11b, and so on (each phase's description says what to
 stop or start). In a normal run of the collection folder 11 is skipped.
 
-Last runs (2026-10-29): stub mode 122 assertions, whole system 114 assertions plus 57 in folder 11 through the
-script; 0 failed, and no request errors (folder 03 asks instance 1 whether instance 2 is up, instead of calling the
-stopped instance itself).
+Last runs (2026-11-22, the current versions of the three services):
+
+| Setup | Assertions | Failed |
+|---|---|---|
+| Stub mode, `./scripts/run-local.sh --stub --tls --queries 2` (folder 17 included) | 289 | 0 |
+| Whole system, `docker compose up` | 253 | 0 |
+| Whole system with `--profile queries`, folders 00 and 17 | 37 | 0 |
+| Whole system, folder 11 through `./scripts/test-failures.sh` (phases 11a to 11g) | 71 | 0 |
+
+The stub run has no request errors (folder 03 asks instance 1 whether instance 2 is up, instead of calling the
+stopped instance itself). A run without query instances reports one request error: folder 17's check for a query
+instance on port 8113, after which the folder is skipped.
 
 | Folder | PL3 p.16 test |
 |---|---|
@@ -85,7 +94,7 @@ stopped instance itself).
 | 13 Messaging - events through RabbitMQ | Assignment 2: instance 1 connected to the broker, its own queue with one consumer, empty outbox; a flight of CS-TPA booked to depart in 3 s, then completed (`flight.completed`), completing it again → 409; the instance holding **no copy** of CS-TPA sees it COMPLETED in its read model a second later (only the broker can have told it) and counts one more `flight.completed` received; RabbitMQ's management API: one durable queue per instance with its consumer, dead-letter exchange and limits, `flight.events.dlq`. Skipped without a broker (`--h2`) |
 | 14 Unicorns | Assignment 2 mock endpoint (runs on its own: its first request checks whether there is a read model): `GET /api/v2/unicorns` returns a JSON list, each airplane with a known mood and a message, from the read model (`X-Read-Side`); CS-TPB booked to leave in 3 s is `FLYING`, and after completing the flight it isn't any more; unknown airplane → 404, no token → 401 |
 | 15 Aircraft events | Assignment 2 (runs on its own, like 14 and 16): `aircraft.created` for CS-EVP (unknown to the built-in data) sent through RabbitMQ's management API → booking 201 from the copy; `aircraft.status.changed` → `UNDER_MAINTENANCE` → booking 409; a late, older `AVAILABLE` changes nothing (still 409); a newer `AVAILABLE` → 201; the owner's metrics: lookups from the copy, aircraft events received and the late one ignored. Skipped without a broker (`--h2`) |
-| 16 Route and airport events | Assignment 2: `airport.created` FNC and PDL and `route.created` route-fnc-pdl (unknown to the built-in data), in the JSON Airports & Routes publishes → booking 201 from the copies; a 737 MAX → 409 (FNC not certified) until `airport.certification.added`; `airport.status` PDL CLOSED → 409, a late older OPERATIONAL changes nothing, a newer one reopens it; `route.deactivated` → 409; a `route.created` without the requirements (what the service sends today) is ignored and the REST API decides (404); the owner's metrics: lookups from the copy, events received and ignored. Skipped without a broker (`--h2`) |
+| 16 Route and airport events | Assignment 2: `airport.created` FNC and PDL and `route.created` route-fnc-pdl (unknown to the built-in data), in the JSON Airports & Routes publishes → booking 201 from the copies; a 737 MAX → 409 (FNC not certified) until `airport.certification.added`; `airport.status` PDL CLOSED → 409, a late older OPERATIONAL changes nothing, a newer one reopens it; `route.deactivated` → 409; a `route.created` without the requirements (what the service sends today) is ignored and the REST API decides (404 in stub mode; in the whole system Airports & Routes consumes the event too, so its REST API may know the route: 201 or 404); the owner's metrics: lookups from the copy, events received and ignored. Skipped without a broker (`--h2`) |
 | 17 CQRS - query instances | Assignment 2, separate processes (runs on its own; skipped without query instances: `run-local.sh --queries 2`, `docker compose --profile queries`, or on Kubernetes set `queryInstance` to https://localhost:9444): instance 1 is a command instance and the query instance is not a member; the query instance answers queries only, its read model READY, its own queue; a booking on instance 1 read on the query instance from its read model (it came through the broker, polled every second); with `X-Read-Side: write-side` a command instance answers (`peer:`); a booking sent to it → 405 `Allow: GET, HEAD`; unicorns from its read model; a cancel on instance 2 seen there as CANCELED |
 | 11 Whole system - failures | Week 5 p.14 "stop container, verify 404" (this system answers `503` while the data may be on a stopped instance, and `404` only when it is known not to exist: [ADR 0004](decisions/0004-503-for-unreachable-data.md)), Week 4 p.11, PL3 p.14/p.16 (whole system, `scripts/test-failures.sh`). **11a** CS-TPC's holders recorded (owner instance2), flights booked. **11b** flightops-2 stopped: its flight read from the copy (`X-Data-Source: peer:…`), list complete (`X-Unreachable-Peers: 1`), the backup takes a booking and queues it for instance 2. **11c** the backup stopped too: **503** "could not be reached" with `Retry-After`, list flagged `X-Partial-Result`, other aircraft unaffected, a booking still accepted where it was received (AP). **11d** both started: caught up (`X-Data-Source: local`), outbox empty, the left-over copy handed off. **11e** aircraft-1 and airports-1 stopped: bookings still 201 (their other instances). **11f** the broker (rabbitmq) stopped: the instances stay UP and see it down, a booking still 201 and readable, its event waits in an outbox. **11g** the broker started: every outbox empty again, the flight in the read models |
 

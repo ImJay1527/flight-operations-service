@@ -49,4 +49,6 @@ transaction, not the reports.
 
 `CqrsIntegrationTest` (two instances with their own write and read databases), `MongoReadModelTest`,
 `FlightQueriesTest`, Postman folder **12 CQRS**, diagram [8-cqrs](../diagrams/8-cqrs.png),
-[architecture.md, CQRS](../architecture.md#cqrs-assignment-2).
+[architecture.md, CQRS](../architecture.md#cqrs-assignment-2). Load test (2026-11-22): the reports went from 163 to
+261 req/s between 2 and 3 instances, against 77 and 71 req/s for the same requests on the write side
+([architecture.md, What the results mean](../architecture.md#what-the-results-mean)).
