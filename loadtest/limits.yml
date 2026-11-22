@@ -23,3 +23,11 @@ services:
     ports: !reset []
   flightops-lb:
     ports: !reset []
+  flightops-read-db-1:
+    ports: !reset []
+  flightops-read-db-2:
+    ports: !reset []
+  flightops-read-db-3:
+    ports: !reset []
+  rabbitmq:
+    ports: !reset []

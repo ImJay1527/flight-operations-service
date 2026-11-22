@@ -53,6 +53,8 @@ docker compose --profile queries up --build flightops-lb flightops-query-1 fligh
 # load test (k6 in Docker, 1 CPU per instance); results in loadtest/results/
 ./loadtest/run.sh 2
 ./loadtest/run.sh 3
+# the same requests on the write side (X-Read-Side: write-side), the Assignment 1 path, for comparison
+READ_SIDE=write-side ./loadtest/run.sh 3
 
 # local vs forwarded latency, availability while an instance is killed (with and without the load balancer)
 ./loadtest/performance.sh latency

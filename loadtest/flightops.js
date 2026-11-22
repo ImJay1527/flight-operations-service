@@ -1,8 +1,9 @@
 // k6 load test for flight-operations-service. Run it with ./loadtest/run.sh (k6 runs in Docker).
 //
 // Each virtual user picks a random instance (like a load balancer would) and a random read endpoint.
-// All endpoints used here are answered with data from EVERY instance (scatter-gather over the peers),
-// so they exercise the peer-to-peer path, not just the local DB.
+// All endpoints used here need the data of EVERY instance. With the read model READY (Assignment 2) each one is a
+// local query on the instance that receives it; READ_SIDE=write-side sends X-Read-Side: write-side, so the same
+// requests take the Assignment 1 path instead (scatter-gather over the peers).
 import http from 'k6/http';
 import { check } from 'k6';
 
@@ -45,7 +46,8 @@ export default function (data) {
     const base = TARGETS[Math.floor(Math.random() * TARGETS.length)];
     const path = PATHS[Math.floor(Math.random() * PATHS.length)];
     const res = http.get(base + path, {
-        headers: { Authorization: `Bearer ${data.token}` },
+        headers: Object.assign({ Authorization: `Bearer ${data.token}` },
+                               __ENV.READ_SIDE ? { 'X-Read-Side': __ENV.READ_SIDE } : {}),
         tags: { name: path },
     });
     check(res, { 'status 200': (r) => r.status === 200 });

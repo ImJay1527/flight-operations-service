@@ -69,7 +69,7 @@ and [Messaging](#messaging-assignment-2) (diagrams 9 to 11).
 | Benefit | How this system provides it | Limit |
 |---|---|---|
 | **High availability**: the service continues if instances fail | 3 instances per component behind a load balancer (nginx, or the Kubernetes Service: health-aware, fails over to another instance); any instance answers any request (stateless JWT); every flight kept on 2 instances, so a failed instance's data is still served from its copies; retries, circuit breaker; Docker / Kubernetes restart an instance whose process stops; a restarted instance catches up before taking traffic | With 2 copies, losing **both** holders of an aircraft at once makes its flights unavailable until one is back |
-| **Horizontal scalability**: add instances as load grows | Kubernetes auto-scaler (3 to 5 instances, by CPU) with DNS service discovery; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins, and their flights are copied to it automatically); requests spread by the load balancer | Bookings of one aircraft are serialised on its owner. Reports answered on the fallback path ask every instance and do not get faster with more instances; with the read model (Assignment 2) they are local ("What the results mean" below) |
+| **Horizontal scalability**: add instances as load grows | Kubernetes auto-scaler (3 to 5 instances, by CPU) with DNS service discovery; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins, and their flights are copied to it automatically); requests spread by the load balancer | Bookings of one aircraft are serialised on its owner. Reports answered on the fallback path ask every instance and do not get faster with more instances; with the read model (Assignment 2) they are local, and the load test went from 163 to 261 req/s between 2 and 3 instances ("What the results mean" below) |
 | **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate databases per instance; a broker or read database that fails stops neither commands nor queries; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); replication runs on its own thread, so a dead peer never slows down requests | Instances of one component share the same code, so a bug can affect all of them |
 | **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
 
@@ -783,16 +783,28 @@ Tool: [k6](https://k6.io), run in Docker (`./loadtest/run.sh 2` and `./loadtest/
 
 * **Workload:** 50 virtual users for 60 s, each request to a random instance (like a load balancer) and a random
   read endpoint: `/api/aircraft-utilization`, `/api/aircraft-utilization/CS-TPA`, `/api/fuel-efficiency/aircraft`,
-  `/api/fuel-efficiency/routes`. All of them need the data of every instance, so they exercise the peer-to-peer
-  path.
+  `/api/fuel-efficiency/routes`. All of them need the data of every instance. With the read model `READY` each one
+  is a local query on the instance that receives it; with `X-Read-Side: write-side`
+  (`READ_SIDE=write-side ./loadtest/run.sh N`) the same requests take the Assignment 1 path, a scatter-gather over
+  the peers.
 * **Conditions:**
   * Every flight-ops instance is limited to **1 CPU and 768 MB** (`loadtest/limits.yml`), to simulate one small
     machine per instance; all on one laptop.
   * HTTPS between all parties.
   * 2 × 30 s warm-up before measuring: on 1 CPU the JVM's JIT compilation otherwise dominates the first minute.
 
-**Results (2026-10-02, Assignment 1: before replication and CQRS), each instance with its own PostgreSQL
-container:**
+**Results (2026-11-22, Assignment 2)**, each instance with its own PostgreSQL and MongoDB containers and the
+broker; all four runs on the same machine on the same day:
+
+| Instances | Read side | Throughput | Median latency | p95 | p99 | Errors |
+|---|---|---|---|---|---|---|
+| 2 | read model | **163 req/s** | 100 ms | 1.08 s | 1.49 s | 0 % |
+| 3 | read model | **261 req/s** | 77 ms | 808 ms | 1.17 s | 0 % |
+| 2 | write side (`X-Read-Side: write-side`) | **77 req/s** | 511 ms | 1.48 s | 2.00 s | 0 % |
+| 3 | write side (`X-Read-Side: write-side`) | **71 req/s** | 577 ms | 1.68 s | 2.30 s | 0 % |
+
+**Results (2026-10-02, Assignment 1: before replication and CQRS)**, each instance with its own PostgreSQL
+container:
 
 | Instances | Throughput | Median latency | p95 | p99 | Errors |
 |---|---|---|---|---|---|
@@ -819,12 +831,16 @@ The measurement proposed three remedies. All three are now in place:
 | Replicate, so a flight survives the loss of an instance and is more often read locally | Owner + backup ([ADR 0002](decisions/0002-two-copies-of-every-flight.md)) |
 | Precompute the reports per instance, so they stop fanning out | The CQRS read model: every flight and every report on each instance, kept current by events ([ADR 0009](decisions/0009-cqrs-separate-read-database.md)) |
 
-**Assignment 2: expected effect.** With the read model `READY`, each of the four requests of this workload is one
-local MongoDB query on the instance that receives it; no peer is asked. The work per request no longer grows with
-N, so throughput should grow with the number of instances, while the write side (bookings on the owner) and the
-fallback path keep the Assignment 1 behaviour. This is to be confirmed by repeating `./loadtest/run.sh 2` and
-`./loadtest/run.sh 3` with the Assignment 2 configuration; the table above will then gain the new rows, and
-sending `X-Read-Side: write-side` with the same workload would reproduce the Assignment 1 path for comparison.
+**Assignment 2: a third instance now increases capacity.** With the read model `READY`, each of the four requests
+of this workload is one local MongoDB query on the instance that receives it; no peer is asked. The work per
+request no longer grows with N, and throughput rises from 163 req/s with 2 instances to 261 req/s with 3 (1.6 times,
+for 1.5 times the instances), while the median latency falls from 100 ms to 77 ms.
+
+The same requests sent with `X-Read-Side: write-side` take the Assignment 1 path and behave as in Assignment 1:
+throughput stays flat (77 req/s with 2 instances, 71 with 3). On the same machine and day, the read model serves
+this workload 2.1 times faster than the write side with 2 instances and 3.7 times faster with 3. The write-side rows
+are higher than those of 2026-10-02 (another build, another day); the comparison that counts is between rows of the
+same date. Bookings still run on the aircraft's owner, so commands keep the Assignment 1 behaviour.
 
 ### Performance problems found by load testing (fixed)
 
