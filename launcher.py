@@ -24,6 +24,8 @@ from tkinter import messagebox, ttk
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WINDOWS = os.name == 'nt'
 LOCAL_PORTS = (8083, 8093, 8103)
+QUERY_PORT = 8113                       # first query instance (CQRS with separate processes)
+RABBITMQ_UI = 'http://localhost:15672'  # management UI of the broker (guest / guest in development)
 ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')   # terminal colour codes
 NEWMAN_ASSERTIONS = re.compile(r'assertions\D+(\d+)\D+(\d+)')   # summary line: executed, failed
 
@@ -70,7 +72,7 @@ class Launcher:
         self.output = queue.Queue()
         self.processes = {}   # task name -> Popen
         window.title('AISafe - Flight Operations - control panel')
-        window.geometry('1180x760')
+        window.geometry('1280x800')
         window.minsize(980, 620)
 
         style = ttk.Style()
@@ -84,7 +86,8 @@ class Launcher:
         self.lights = {}
         lights = ttk.Frame(top)
         lights.pack(side='right')
-        for name in ('Docker', 'Kubernetes', 'Local instances', 'Kubernetes service', 'Docker Compose'):
+        for name in ('Docker', 'Kubernetes', 'Local instances', 'Query instances', 'RabbitMQ', 'Kubernetes service',
+                     'Docker Compose'):
             frame = ttk.Frame(lights)
             frame.pack(side='left', padx=6)
             dot = tk.Label(frame, text='●', fg='#bbbbbb', font=('Segoe UI', 12))
@@ -131,6 +134,7 @@ class Launcher:
         self.https = tk.BooleanVar(value=False)
         self.no_docker = tk.BooleanVar(value=False)
         self.with_teammates = tk.BooleanVar(value=False)
+        self.queries = tk.BooleanVar(value=False)
 
         start = self.section(inner, '1. Start')
         self.action(start, 'Run 3 instances on this computer',
@@ -143,9 +147,12 @@ class Launcher:
         ttk.Checkbutton(options, text='without Docker (data in memory)', variable=self.no_docker).pack(side='left', padx=12)
 
         self.action(start, 'Start the whole system with Docker Compose',
-                    '3 services x 3 instances, each Flight Operations instance with its own PostgreSQL, load balancer '
-                    'on https://localhost:8443. Needs the three repositories side by side and a lot of memory.',
-                    lambda: ['docker', 'compose', 'up', '--build', '-d'], task='docker compose')
+                    '3 services x 3 instances. Each Flight Operations instance has its own PostgreSQL (write side) '
+                    'and MongoDB (read side, CQRS); one RabbitMQ broker carries the events; load balancer on '
+                    'https://localhost:8443. Needs the three repositories side by side and a lot of memory.',
+                    self.cmd_compose, task='docker compose')
+        ttk.Checkbutton(start, text='with 2 query instances (CQRS, 8113 / 8123)',
+                        variable=self.queries).pack(anchor='w', padx=18, pady=(0, 6))
         self.action(start, 'Start on Kubernetes (auto-scaling 3 to 5 instances)',
                     'Docker Desktop with Kubernetes enabled. Address: https://localhost:9443. First start takes a few '
                     'minutes.', self.cmd_kubernetes, task='kubernetes')
@@ -156,16 +163,33 @@ class Launcher:
         self.action(see, 'Open the dashboard',
                     'Opens the live dashboard of whatever is running (sign in as admin / admin123).',
                     None, handler=self.open_dashboard)
+        self.action(see, 'Open the RabbitMQ management UI',
+                    'The broker: exchange aisafe.events, one queue per instance of every service, consumers, '
+                    'messages and the dead-letter queues (sign in as guest / guest).',
+                    None, handler=self.open_rabbitmq)
         self.action(see, 'Run the Postman tests',
-                    'Runs the whole Postman collection against the 3 local instances (start them first). '
-                    'Takes about a minute; folder 03 stops instance 2 and waits for it to come back.',
+                    'Runs the whole Postman collection against instances 1-3 on 8083 / 8093 / 8103 (local or Docker '
+                    'Compose; start them first). Tick HTTPS above when they run with TLS, as Docker Compose always '
+                    'does. Takes one to two minutes. With local instances, folder 03 stops instance 2 and waits for '
+                    'it to come back.',
                     self.cmd_postman, task='postman')
+        self.action(see, 'Run the failure tests of the whole system',
+                    'Docker Compose only (HTTPS). Stops and starts containers between the phases: instance 2, then '
+                    'its backup, one instance of each other service, the broker. About 3 minutes; everything is '
+                    'started again at the end.',
+                    lambda: [BASH, 'scripts/test-failures.sh'], task='failure tests')
         self.action(see, 'Run the automated tests (JUnit)',
                     'All the JUnit tests, a few minutes. No Docker needed. Stop the local instances first: they '
                     'lock the build.', self.cmd_unit_tests, task='unit tests')
         self.action(see, 'Generate load on Kubernetes (2 minutes)',
                     'k6 with 30 users against https://localhost:9443. Watch the dashboard: the auto-scaler adds '
                     'instances when CPU passes 70 %. Uses a lot of memory.', self.cmd_load, task='load')
+        self.action(see, 'Load test: read model against write side (about 8 minutes)',
+                    'k6 in its own Docker project (3 instances, 1 CPU each), first with the read model, then the same '
+                    'requests with X-Read-Side: write-side (the Assignment 1 path). Compare the http_reqs lines. '
+                    'Stop the other setups first: it needs memory.',
+                    lambda: [BASH, '-c', './loadtest/run.sh 3 && READ_SIDE=write-side ./loadtest/run.sh 3'],
+                    task='load test')
         self.action(see, 'Show the Kubernetes pods',
                     'Pods, auto-scaler and services in the namespace aisafe.',
                     lambda: ['kubectl', '-n', 'aisafe', 'get', 'pods,hpa,svc'], task='kubectl')
@@ -175,8 +199,14 @@ class Launcher:
                     'Stops the 3 instances started on this computer (their databases keep their data).',
                     None, handler=self.stop_local)
         self.action(stop, 'Stop Docker Compose',
-                    'Stops and removes the containers; the databases keep their data (named volumes).',
-                    lambda: ['docker', 'compose', 'down'], task='docker compose down')
+                    'Stops and removes the containers (query instances included); the databases keep their data '
+                    '(named volumes).',
+                    lambda: ['docker', 'compose', '--profile', 'queries', 'down'], task='docker compose down')
+        self.action(stop, 'Pause Kubernetes (keeps the data)',
+                    'Docker Desktop starts the Kubernetes pods again by itself after a restart. This stops them '
+                    '(0 pods) and frees several GB; "Start on Kubernetes" brings them back.',
+                    lambda: ['kubectl', '-n', 'aisafe', 'scale', 'statefulset', '--all', '--replicas=0'],
+                    task='kubernetes pause')
         self.action(stop, 'Remove everything from Kubernetes',
                     'Deletes the namespace aisafe, including its databases.',
                     lambda: [BASH, 'k8s/deploy.sh', '--down'], task='kubernetes down', confirm=True)
@@ -221,7 +251,14 @@ class Launcher:
             args.append('--tls')
         if self.no_docker.get():
             args.append('--h2')
+        if self.queries.get() and not self.no_docker.get():   # query instances need their read databases
+            args += ['--queries', '2']
         return args
+
+    def cmd_compose(self):
+        if self.queries.get():
+            return ['docker', 'compose', '--profile', 'queries', 'up', '--build', '-d']
+        return ['docker', 'compose', 'up', '--build', '-d']
 
     def cmd_kubernetes(self):
         if self.with_teammates.get():
@@ -281,12 +318,14 @@ class Launcher:
             self.output.put((line, 'ready' if 'READY' in line else ('error' if 'ERROR' in line else None)))
         code = process.wait()
         if task == 'postman' and assertions:
-            # newman also exits with 1 when requests can't connect: folder 03 stops instance 2 on purpose
+            # newman also exits with 1 when requests can't connect: folder 03 stops instance 2 on purpose, and
+            # folder 17 looks for a query instance on 8113
             executed, failed = assertions
             if failed == 0:
                 self.output.put((f'\nPostman: all {executed} checks passed.\n'
                                  f'(Any "ECONNREFUSED ...:8093" above is instance 2 being stopped on purpose by '
-                                 f'folder 03.)\n', 'ready'))
+                                 f'folder 03; "ECONNREFUSED ...:{QUERY_PORT}" is folder 17 finding no query '
+                                 f'instance, so it skips itself.)\n', 'ready'))
             else:
                 self.output.put((f'\nPostman: {failed} of {executed} checks FAILED - see the list above.\n', 'error'))
         else:
@@ -350,6 +389,14 @@ class Launcher:
                 return
         messagebox.showinfo('Nothing running', 'Start the system first (section 1).')
 
+    def open_rabbitmq(self):
+        if answers(RABBITMQ_UI):
+            self.say(f'\nOpening the RabbitMQ management UI: {RABBITMQ_UI} (sign in as guest / guest)\n', 'command')
+            webbrowser.open(RABBITMQ_UI)
+        else:
+            messagebox.showinfo('Broker not running', 'Start the system first (section 1): the broker runs with the '
+                                'local instances and with Docker Compose.')
+
     # ------------------------------------------------------------------ status
 
     def check_tools(self):
@@ -371,6 +418,9 @@ class Launcher:
                 'Docker': quiet_ok(['docker', 'info']),
                 'Kubernetes': quiet_ok(['kubectl', 'get', 'nodes', '--request-timeout=4s']),
                 'Local instances': any(answers(f'{s}://localhost:8083/actuator/health') for s in ('http', 'https')),
+                'Query instances': any(answers(f'{s}://localhost:{QUERY_PORT}/actuator/health')
+                                       for s in ('http', 'https')),
+                'RabbitMQ': answers(RABBITMQ_UI),
                 'Kubernetes service': answers('https://localhost:9443/actuator/health'),
                 'Docker Compose': answers('https://localhost:8443/actuator/health'),
             }
