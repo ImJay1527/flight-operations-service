@@ -319,12 +319,12 @@ class Launcher:
         code = process.wait()
         if task == 'postman' and assertions:
             # newman also exits with 1 when requests can't connect: folder 03 stops instance 2 on purpose, and
-            # folder 17 looks for a query instance on 8113
+            # folder 16 looks for a query instance on 8113
             executed, failed = assertions
             if failed == 0:
                 self.output.put((f'\nPostman: all {executed} checks passed.\n'
                                  f'(Any "ECONNREFUSED ...:8093" above is instance 2 being stopped on purpose by '
-                                 f'folder 03; "ECONNREFUSED ...:{QUERY_PORT}" is folder 17 finding no query '
+                                 f'folder 03; "ECONNREFUSED ...:{QUERY_PORT}" is folder 16 finding no query '
                                  f'instance, so it skips itself.)\n', 'ready'))
             else:
                 self.output.put((f'\nPostman: {failed} of {executed} checks FAILED - see the list above.\n', 'error'))

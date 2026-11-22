@@ -51,7 +51,6 @@ area in [testing.md](testing.md#automated-tests-junit).
 | Why `503` and not `404`? | `404` only when every possible holder answered; otherwise the data may exist | [ADR 0004](decisions/0004-503-for-unreachable-data.md), [Status codes](architecture.md#status-codes-404-or-503) |
 | How are reads and writes separated? | Commands on PostgreSQL (sharded), queries on a MongoDB per instance holding the whole cluster | [CQRS](architecture.md#cqrs-assignment-2), [ADR 0009](decisions/0009-cqrs-separate-read-database.md) |
 | How is the read model kept up to date? | Projection after each commit, broker events from the other instances, periodic rebuild | [How the read model is kept up to date](architecture.md#how-the-read-model-is-kept-up-to-date) |
-| How does `/api/v2/unicorns` fit CQRS? | It is a query: the moods are computed from the read model when asked, never stored or changed; the commands' events keep its input current | [The unicorns endpoint](architecture.md#the-unicorns-endpoint-a-query), Postman folder **14** |
 | What if the read database fails? | Queries fall back to the write side; commands are unaffected | [ADR 0010](decisions/0010-read-model-fallback.md) |
 | How is data isolated between instances? | Each instance has its own PostgreSQL and its own MongoDB; no database is shared, and instances exchange data only through their APIs and the broker | [ADR 0005](decisions/0005-database-per-instance.md), [Data stores](operations.md#data-stores) |
 | How do the services communicate? | REST for clients and lookups; AMQP events on one topic exchange, one queue per instance | [Messaging](architecture.md#messaging-assignment-2), [ADR 0011](decisions/0011-publish-subscribe-one-queue-per-instance.md), [contract](service-contracts.md#events-amqp-assignment-2) |
@@ -64,7 +63,7 @@ area in [testing.md](testing.md#automated-tests-junit).
 | Which communication patterns are used, and why? | REST for clients; forwarding and scatter-gather between instances; outbox push for replicas; publish/subscribe (AMQP) for events | [Communication patterns](architecture.md#communication-patterns) |
 | What changed from Assignment 1, and why? | Each limitation named in P2 p.1 against what Assignment 1 did and what Assignment 2 does | [From Assignment 1 to Assignment 2](architecture.md#from-assignment-1-to-assignment-2) |
 | How is it secured? | TLS 1.3 only (also AMQPS), AES-256-SIV at rest, user and service JWTs, roles checked per endpoint | [security.md](security.md), [roles per endpoint](security.md#roles-per-endpoint), [ADR 0007](decisions/0007-encryption-in-transit-and-at-rest.md) |
-| How is it tested? | JUnit with real instances, databases and broker (Testcontainers); 151 Postman requests | [testing.md](testing.md) |
+| How is it tested? | JUnit with real instances, databases and broker (Testcontainers); 143 Postman requests | [testing.md](testing.md) |
 
 ## Diagrams
 

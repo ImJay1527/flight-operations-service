@@ -47,6 +47,6 @@ their own auto-scaler (2 to 4) and their own address.
 
 ## Evidence
 
-`QueryInstanceIntegrationTest`, `ClusterTest`, Postman folder **17**, diagram
+`QueryInstanceIntegrationTest`, `ClusterTest`, Postman folder **16**, diagram
 [12-query-instances](../diagrams/12-query-instances.png),
 [architecture.md, Separate processes](../architecture.md#separate-processes-query-instances-optional).

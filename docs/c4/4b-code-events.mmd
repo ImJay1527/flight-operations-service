@@ -97,7 +97,7 @@ classDiagram
         +statusChanged(registration, status, at) boolean
     }
 
-    FlightCommandService --> LocalBookingService : on the aircraft's owner
+    FlightCommandService --> LocalBookingService : on the owner (book) or a copy (cancel, complete)
     LocalBookingService ..> FlightChanged : publishes madeHere
     FlightCommandService ..> FlightChanged : publishes learnt (made by a peer)
     FlightChanged <.. ReadModelProjection : listens

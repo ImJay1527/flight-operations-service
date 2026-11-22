@@ -87,12 +87,14 @@ that keep the read model and the local copies up to date.
 
 ![C4 Level 3a - Components: requests](c4/3a-components-requests.png)
 
-* **Commands** (`POST`, `PATCH`) go to `FlightCommandService`, which asks `Cluster` who owns the aircraft. If it is
-  this instance, `LocalBookingService` checks the business rules (with the local copies of the other services'
-  data), locks the aircraft and saves, in one transaction, the flight, its replication task and its event;
-  otherwise the command is forwarded to the owner (diagram 5). On a query instance, commands are refused with `405`
-  before they reach the API.
-* **Queries** (`GET`) go to `FlightQueries` and the report services (utilization, fuel efficiency, unicorns), which
+* **Commands** (`POST`, `PATCH`) go to `FlightCommandService`. For a booking it asks `Cluster` who owns the
+  aircraft. If it is this instance, `LocalBookingService` checks the business rules (with the local copies of the
+  other services' data), locks the aircraft and saves, in one transaction, the flight, its replication task and its
+  event; otherwise the booking is forwarded to the owner (diagram 5). A cancel or a completion is applied on this
+  instance when it holds a copy of the flight (owner or backup), and forwarded to a holder otherwise; replication
+  brings the change to the other copy. On a query instance, commands are refused with `405` before they reach the
+  API.
+* **Queries** (`GET`) go to `FlightQueries` and the report services (utilization, fuel efficiency), which
   answer from the **read model** while it is `READY`: one local MongoDB query, no peer involved.
 * When the read model is not `READY`, or the client asks for `X-Read-Side: write-side`, the query takes the
   **fallback path** of Assignment 1, `FlightQueryService`: the local write database first, then the peers. Lists ask
@@ -227,11 +229,11 @@ other. Every package may use `common`.
 <!-- development-view:start -->
 | Group | Package | Classes | Purpose | Imports (besides `common`) |
 |---|---|---|---|---|
-| Entry points | `api` | 8 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
+| Entry points | `api` | 7 | REST controllers | `api.dto`, `cluster`, `replication`, `repositories`, `services` |
 | Entry points | `monitoring` | 6 | monitoring API, dashboard | `cluster`, `domain`, `messaging`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
 | Entry points | `security` | 5 | sign-in, users | - |
 | Entry points | `bootstrap` | 1 | sample data | `cluster`, `domain`, `repositories`, `security` |
-| Application | `services` | 16 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
+| Application | `services` | 14 | business logic | `api.dto`, `clients`, `cluster`, `domain`, `events`, `peers`, `readmodel`, `replication`, `repositories`, `resilience` |
 | Messaging (AMQP) | `messaging` | 8 | AMQP (RabbitMQ): outbox relay, events of every service, consumer | `api.dto`, `clients`, `domain`, `events`, `readmodel`, `repositories` |
 | Read side (CQRS) | `readmodel` | 13 | CQRS read side: read database (MongoDB), projections, sync | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
 | Distribution | `replication` | 4 | outbox, copies, catch-up | `api.dto`, `cluster`, `domain`, `events`, `peers`, `repositories`, `resilience` |
@@ -242,7 +244,7 @@ other. Every package may use `common`.
 | Integration | `resilience` | 5 | retry, circuit breaker, health | - |
 | Data | `repositories` | 7 | Spring Data JPA | `domain` |
 | Data | `events` | 1 | domain events (write side -> read side) | `api.dto` |
-| Data | `api.dto` | 9 | request / response objects | `domain` |
+| Data | `api.dto` | 8 | request / response objects | `domain` |
 | Data | `domain` | 9 | entities | - |
 | Shared | `common` | 14 | crypto, exceptions, HTTP client, JWT, metrics, tracing | - |
 
@@ -265,7 +267,7 @@ Postman collection, or the Kubernetes test in [architecture.md](architecture.md)
 | [A command and a query take different paths](#a-command-and-a-query-take-different-paths-cqrs-p2-p2) | A2 | Postman 12 |
 | [An event reaches every consumer](#an-event-reaches-every-consumer-p2-p2) | A2 | Postman 13 |
 | [The broker is down](#the-broker-is-down-and-comes-back) | A2 | Postman 11f-11g |
-| [Queries served by query instances](#queries-served-by-query-instances-optional) | A2 | Postman 17 |
+| [Queries served by query instances](#queries-served-by-query-instances-optional) | A2 | Postman 16 |
 
 ### Reading a flight stored on another instance (PL3 p.11)
 
@@ -291,9 +293,9 @@ Postman collection, or the Kubernetes test in [architecture.md](architecture.md)
 
 ![CQRS](diagrams/8-cqrs.png)
 
-A command changes the write database of the aircraft's owner; a query reads the instance's own read database, which
-holds every flight of the cluster. The two meet only through events: the projection after the commit, the broker,
-and the periodic sync.
+A command changes the write database of an instance that holds the aircraft (the owner for a booking, either copy
+for a cancel or a completion); a query reads the instance's own read database, which holds every flight of the
+cluster. The two meet only through events: the projection after the commit, the broker, and the periodic sync.
 
 ### An event reaches every consumer (P2 p.2)
 

@@ -47,5 +47,5 @@ the other service is down the existing copy is used.
 ## Evidence
 
 `LocalAircraftCopyTest`, `LocalRouteCopyTest`, `AircraftEventsTest`, `RouteEventsTest`, `MessagingIntegrationTest`,
-Postman folders **15** and **16**, phase **11e** of `scripts/test-failures.sh`; `aircraftLookups` and
+Postman folders **14** and **15**, phase **11e** of `scripts/test-failures.sh`; `aircraftLookups` and
 `routeLookups` in `GET /api/cluster/metrics` (`copy`, `rest`, `refreshed`, `old_copy`).

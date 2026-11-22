@@ -33,9 +33,6 @@ public interface ReadModel {
 
     List<FlightView> flightsOfAircraft(String registration);
 
-    /** Every non-cancelled flight of the cluster, by departure time. */
-    List<FlightView> activeFlights();
-
     /** Non-cancelled flights leaving {@code originIata} between the two times, by departure time. */
     List<FlightView> departures(String originIata, LocalDateTime from, LocalDateTime to);
 
