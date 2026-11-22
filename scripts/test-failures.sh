@@ -33,7 +33,9 @@ COLLECTION=postman/flight-operations.postman_collection.json
 ENV_FILE=$(mktemp --suffix=.json)
 cp postman/local-https.postman_environment.json "$ENV_FILE"
 NEWMAN=(npx -y newman@6 run "$COLLECTION" --ssl-extra-ca-certs certs/ca.crt --color on)
-PYTHON=$(command -v python3 || command -v python)
+# the first Python that runs (on Windows "python3" can be the Microsoft Store shortcut, which only prints a message)
+PYTHON=$(for p in python3 python; do "$p" -c "" >/dev/null 2>&1 && { echo "$p"; break; }; done)
+[[ -n "$PYTHON" ]] || { echo "needs Python (python3 or python)"; exit 1; }
 STOPPED=()
 RESULTS=()
 failed=0

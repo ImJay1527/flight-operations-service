@@ -6946,13 +6946,15 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.environment.get(\"rabbitmqManagement\") || pm.environment.set(\"rabbitmqManagement\", \"http://localhost:15672\");",
+                  "// a new route id on every run: an earlier run, or the other service's REST API, may have left a copy of the old one",
+                  "pm.collectionVariables.set(\"noReqRoute\", \"route-fnc-pdl-x-\" + Date.now());",
                   "const ev = Object.assign({",
                   "  \"@type\": \"pt.isep.sidis.airports.events.FlightRouteCreatedEvent\",",
                   "  eventId: pm.variables.replaceIn(\"{{$guid}}\"),",
                   "  eventType: \"FLIGHT_ROUTE_CREATED\",",
                   "  occurredAt: new Date(Date.now() - 0).toISOString(),",
                   "  sourceInstance: \"instance1\"",
-                  "}, {\"routeId\": \"route-fnc-pdl-x\", \"originIata\": \"FNC\", \"destinationIata\": \"PDL\", \"distanceKm\": 1000.0, \"estimatedFlightTime\": 120, \"status\": \"ACTIVE\"});",
+                  "}, {\"routeId\": pm.collectionVariables.get(\"noReqRoute\"), \"originIata\": \"FNC\", \"destinationIata\": \"PDL\", \"distanceKm\": 1000.0, \"estimatedFlightTime\": 120, \"status\": \"ACTIVE\"});",
                   "pm.variables.set(\"route_event\", JSON.stringify({",
                   "  properties: {content_type: \"application/json\", delivery_mode: 2, headers: {eventId: ev.eventId}},",
                   "  routing_key: \"route.created\", payload: JSON.stringify(ev), payload_encoding: \"string\"",
@@ -6981,7 +6983,7 @@
           ]
         },
         {
-          "name": "Command: book on route-fnc-pdl-x - not in the copy, the REST API decides (404 here)",
+          "name": "Command: book on route-fnc-pdl-x-<time> - not in the copy, the REST API decides (404 in stub mode)",
           "request": {
             "method": "POST",
             "header": [
@@ -7002,7 +7004,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"routeId\": \"route-fnc-pdl-x\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
+              "raw": "{\n  \"routeId\": \"{{noReqRoute}}\",\n  \"aircraftRegistration\": \"CS-TPA\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -7032,6 +7034,9 @@
                 "exec": [
                   "if (pm.environment.get(\"amqpOn\") !== true) {",
                   "  pm.test.skip(\"SKIPPED: messaging is off here (run-local.sh --h2, or no amqp profile): no broker. Run without --h2, or docker compose up, for RabbitMQ\", () => {});",
+                  "} else if (pm.environment.get(\"wholeSystem\") === true) {",
+                  "  // whole system: no copy either, but Airports & Routes consumes route.created too, so its REST API may know the route",
+                  "  pm.test(\"status 201 or 404 (no copy made without the requirements: Airports & Routes' REST API decides)\", () => pm.expect(pm.response.code).to.be.oneOf([201, 404]));",
                   "} else {",
                   "  pm.test(\"status 404 (no copy made without the requirements; the built-in data doesn't know it)\", () => pm.response.to.have.status(404));",
                   "}"
