@@ -1,0 +1,61 @@
+---
+config:
+  layout: elk
+  flowchart:
+    wrappingWidth: 400
+---
+%% C4 Level 3c - Components of the Flight Operations API: events (AMQP) and the upkeep of the read model (CQRS)
+flowchart TB
+    broker{{"<b>Message broker</b><br/>[Container: RabbitMQ 3]<br/><br/>aisafe.events, flight.events.&lt;instance&gt;,<br/>aisafe.dlx, flight.events.dlq"}}
+    others["<b>Aircraft & Maintenance,<br/>Airports & Routes</b><br/>[Software Systems]"]
+    peers["<b>Other API instances</b><br/>[Container: Flight Operations API]"]
+
+    subgraph API["Flight Operations API [Container: Java 21, Spring Boot] - one instance"]
+        direction TB
+        app["<b>Write side</b><br/>[see diagram 3a]<br/><br/>LocalBookingService publishes<br/>FlightChanged inside its transaction"]
+
+        projection["<b>ReadModelProjection</b><br/>[Component: readmodel]<br/><br/>After the commit, in the request's thread:<br/>read your own writes"]
+        outbox["<b>EventOutbox</b><br/>[Component: messaging]<br/><br/>Before the commit, in the same transaction:<br/>the event as a row of event_outbox<br/>(changes made here only)"]
+        relay["<b>EventRelay</b><br/>[Component: messaging]<br/><br/>Own thread. Publishes the rows in order,<br/>waits for the publisher confirm, deletes them;<br/>retried every 1 s while the broker is down"]
+        config["<b>MessagingConfig</b><br/>[Component: messaging]<br/><br/>Declares the exchanges, this instance's queue,<br/>its bindings and limits (TTL 1 day,<br/>100 000 messages, dead letters)"]
+        listener["<b>FlightEventListener</b><br/>[Component: messaging]<br/><br/>Consumes this instance's queue by routing key;<br/>ack after processing, 3 attempts,<br/>then the dead-letter queue"]
+        copies["<b>LocalAircraftCopy, LocalRouteCopy</b><br/>[Component: clients]<br/><br/>aircraft_copy, route_copy, airport_copy:<br/>newest change wins"]
+        sync["<b>ReadModelSync</b><br/>[Component: readmodel]<br/><br/>Rebuild from every write side: at startup,<br/>every 30 s, after a peer recovers.<br/>READY when every flight was seen<br/>(fewer unreachable peers than copies)"]
+        readModel["<b>MongoReadModel</b><br/>[Component: readmodel]<br/><br/>Upsert only if the revision is newer<br/>(idempotent); reports recomputed"]
+        repos["<b>Repositories</b><br/>[Component: repositories]"]
+        peerClient["<b>PeerClient + Resilience</b><br/>[see diagram 3b]"]
+    end
+
+    db[("<b>Write database</b><br/>[Container: PostgreSQL 16]")]
+    rdb[("<b>Read database</b><br/>[Container: MongoDB 7]")]
+
+    app -.->|"FlightChanged"| projection
+    app -.->|"FlightChanged"| outbox
+    projection --> readModel
+    outbox -->|"event_outbox row"| repos
+    outbox -.->|"wake up after the commit"| relay
+    relay -->|"read and delete rows"| repos
+    relay -->|"AMQPS publish (persistent),<br/>publisher confirms"| broker
+    config -->|"declares at startup"| broker
+    others -->|"aircraft.*, airport.*, route.*"| broker
+    peers -->|"flight.*"| broker
+    broker -->|"flight.events.&lt;instance&gt;<br/>(push)"| listener
+    listener -->|"flight.*"| readModel
+    listener -->|"aircraft.*, airport.*, route.*"| copies
+    copies --> repos
+    sync -->|"own flights"| repos
+    sync -->|"GET /internal/flights/all"| peerClient
+    peerClient -->|"HTTPS, service JWT"| peers
+    sync -->|"rebuild"| readModel
+    readModel -->|"MongoDB driver"| rdb
+    repos -->|"JDBC"| db
+
+    classDef component fill:#85bbf0,stroke:#5d82a8,color:#000000
+    classDef container fill:#438dd5,stroke:#2e6295,color:#ffffff
+    classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff
+    classDef elsewhere fill:#ffffff,stroke:#5d82a8,color:#000000,stroke-dasharray:4 3
+    class projection,outbox,relay,config,listener,copies,sync,readModel,repos component
+    class app,peerClient elsewhere
+    class broker,peers,db,rdb container
+    class others external
+    style API fill:none,stroke:#444444,stroke-dasharray:6 4

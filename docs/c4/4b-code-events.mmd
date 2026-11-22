@@ -1,0 +1,116 @@
+%% C4 Level 4 - Code: the classes behind CQRS and messaging (only the significant members)
+classDiagram
+    direction TB
+
+    class FlightChanged {
+        <<events, record>>
+        +FlightView flight
+        +boolean madeHere
+    }
+    class FlightCommandService {
+        <<services>>
+        +handle(ScheduleFlightCommand) Booking
+        +handle(CancelFlightCommand) FlightView
+        +handle(CompleteFlightCommand) FlightView
+    }
+    class LocalBookingService {
+        <<services>>
+        +book(ScheduleFlightCommand) FlightView
+        +cancel(flightNumber) FlightView
+        +complete(flightNumber) FlightView
+    }
+    class FlightQueries {
+        <<services>>
+        +flight(flightNumber) FlightLookup
+        +flightsOfAircraft(registration) List~FlightView~
+        +departures(originIata, hours) List~FlightView~
+        -useReadModel() boolean
+    }
+    class ReadModel {
+        <<interface, readmodel>>
+        +state() ReadModelState
+        +project(flight) void
+        +flight(flightNumber) Optional~FlightView~
+        +departures(origin, from, to) List~FlightView~
+        +utilization() List~AircraftUtilizationDTO~
+        +aircraftFuel() List~AircraftFuelEfficiencyDTO~
+    }
+    class MongoReadModel {
+        <<readmodel>>
+        +project(flight) void
+        +rebuild(flights, complete, startedAt) int
+        -upsert(flight) boolean
+        -recomputeAircraft(registration) void
+        -recomputeRoute(routeId) void
+    }
+    class ReadModelState {
+        <<readmodel>>
+        DISABLED | BUILDING | READY | STALE
+        +ready() void
+        +stale(reason) void
+    }
+    class ReadModelProjection {
+        <<readmodel>>
+        +on(FlightChanged) void «after commit»
+    }
+    class ReadModelSync {
+        <<readmodel>>
+        +syncOnce() void
+        +syncSoon() void
+    }
+    class EventOutbox {
+        <<messaging>>
+        +on(FlightChanged) void «before commit»
+        +committed(FlightChanged) void «after commit»
+    }
+    class OutboxMessage {
+        <<domain, JPA entity: event_outbox>>
+        -String eventId
+        -String routingKey
+        -String payload «encrypted»
+        -Instant createdAt
+    }
+    class EventRelay {
+        <<messaging>>
+        +wakeUp() void
+        +pending() long
+        -sendPendingSafely() void
+    }
+    class FlightEvent {
+        <<messaging, record>>
+        +String eventId
+        +String eventType
+        +String flightNumber
+        +long revision
+        +routingKey() String
+        +flight() FlightView
+    }
+    class FlightEventListener {
+        <<messaging>>
+        +on(Message) void
+        -onAircraftEvent(message, key) void
+        -onAirportsRoutesEvent(message, key) void
+    }
+    class LocalAircraftCopy {
+        <<clients>>
+        +getAircraft(registration) AircraftInfo
+        +statusChanged(registration, status, at) boolean
+    }
+
+    FlightCommandService --> LocalBookingService : on the aircraft's owner
+    LocalBookingService ..> FlightChanged : publishes madeHere
+    FlightCommandService ..> FlightChanged : publishes learnt (made by a peer)
+    FlightChanged <.. ReadModelProjection : listens
+    FlightChanged <.. EventOutbox : listens
+    ReadModelProjection --> ReadModel : project
+    FlightQueries --> ReadModel : while READY
+    ReadModel <|.. MongoReadModel
+    MongoReadModel --> ReadModelState
+    ReadModelSync --> MongoReadModel : rebuild
+    EventOutbox ..> OutboxMessage : saves, in the transaction
+    EventOutbox --> EventRelay : wakeUp after commit
+    EventRelay ..> OutboxMessage : publishes, then deletes
+    EventRelay ..> FlightEvent : message body
+    FlightEventListener ..> FlightEvent : reads flight.*
+    FlightEventListener --> ReadModel : project
+    FlightEventListener --> LocalAircraftCopy : aircraft.*
