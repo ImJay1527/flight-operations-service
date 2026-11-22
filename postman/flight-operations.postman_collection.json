@@ -7331,7 +7331,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "const tries = Number(pm.variables.get(\"queryTries\") || 0);",
-                  "if (pm.response.code !== 200 && tries < 10) {",
+                  "// a miss in the read model is answered by the write side (200 too): wait until the event has been projected",
+                  "if ((pm.response.code !== 200 || pm.response.headers.get(\"X-Read-Side\") !== \"read-model\") && tries < 10) {",
                   "  pm.variables.set(\"queryTries\", tries + 1);",
                   "  pm.execution.setNextRequest(pm.info.requestName);   // not there yet: ask again in 1 s",
                   "} else {",

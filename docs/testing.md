@@ -72,6 +72,7 @@ Last runs (2026-11-22, the current versions of the three services):
 | Stub mode, `./scripts/run-local.sh --stub --tls --queries 2` (folder 17 included) | 289 | 0 |
 | Whole system, `docker compose up` | 253 | 0 |
 | Whole system with `--profile queries`, folders 00 and 17 | 37 | 0 |
+| Whole system with `--profile queries`, one instance of each other service, whole collection | 278 | 0 |
 | Whole system, folder 11 through `./scripts/test-failures.sh` (phases 11a to 11g) | 71 | 0 |
 
 The stub run has no request errors (folder 03 asks instance 1 whether instance 2 is up, instead of calling the

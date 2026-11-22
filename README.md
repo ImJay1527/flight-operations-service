@@ -78,7 +78,8 @@ port and profile: [docs/running.md](docs/running.md). API reference: Swagger UI 
 ## Screenshots
 
 **Dashboard, whole system** (`/dashboard`, 3 instances with the real aircraft and airports/routes services; one
-instance of each other service was running, so their other two instances show `OPEN`):
+instance of each other service was running, so their other two instances show `OPEN`). Each instance card shows
+its read model (CQRS, `READY`) and its broker connection (AMQP, `UP`, messages waiting in its queue):
 
 ![Dashboard with the whole system](docs/screenshots/dashboard-whole-system.png)
 
@@ -89,7 +90,8 @@ instance of each other service was running, so their other two instances show `O
 
 ![kubectl: pods, auto-scaler and services](docs/screenshots/kubernetes-pods.png)
 
-**Postman collection against the whole system** (newman; folder 10 and the summary):
+**Postman collection against the whole system** with the query instances (newman, 2026-11-22; folder 10 and the
+summary: 278 assertions, none failed):
 
 ![Postman run against the whole system](docs/screenshots/postman-whole-system.png)
 

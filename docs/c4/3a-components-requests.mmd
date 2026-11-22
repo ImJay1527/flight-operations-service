@@ -16,7 +16,7 @@ flowchart TB
 
         subgraph CMD["Write side (commands)"]
             direction TB
-            commands["<b>FlightCommandService</b><br/>[Component: services]<br/><br/>Schedule, Cancel and CompleteFlightCommand.<br/>Made on the aircraft's owner (its backup<br/>if the owner can't be reached)"]
+            commands["<b>FlightCommandService</b><br/>[Component: services]<br/><br/>Schedule: on the aircraft's owner (its backup<br/>if the owner can't be reached).<br/>Cancel, Complete: on the first copy<br/>of the flight that is reached"]
             lbs["<b>LocalBookingService</b><br/>[Component: services]<br/><br/>Business rules, per-aircraft lock;<br/>saves the flight, its replication task and<br/>its event in one transaction"]
         end
 
@@ -43,8 +43,8 @@ flowchart TB
     filters -->|"/api/** (role checked)"| flightApi
     flightApi -->|"POST, PATCH"| commands
     flightApi -->|"GET"| queries
-    commands -->|"who owns the aircraft?<br/>forward to the owner"| dist
-    commands -->|"booking is made here"| lbs
+    commands -->|"not here: forward to the owner<br/>(booking) or a holder (cancel, complete)"| dist
+    commands -->|"owner here, or a copy here"| lbs
     lbs -->|"aircraft available? route active?<br/>airports certified?"| clients
     lbs -->|"flight + tasks + event"| repos
     lbs -.->|"FlightChanged"| events

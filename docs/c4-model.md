@@ -87,11 +87,13 @@ that keep the read model and the local copies up to date.
 
 ![C4 Level 3a - Components: requests](c4/3a-components-requests.png)
 
-* **Commands** (`POST`, `PATCH`) go to `FlightCommandService`, which asks `Cluster` who owns the aircraft. If it is
-  this instance, `LocalBookingService` checks the business rules (with the local copies of the other services'
-  data), locks the aircraft and saves, in one transaction, the flight, its replication task and its event;
-  otherwise the command is forwarded to the owner (diagram 5). On a query instance, commands are refused with `405`
-  before they reach the API.
+* **Commands** (`POST`, `PATCH`) go to `FlightCommandService`. For a booking it asks `Cluster` who owns the
+  aircraft. If it is this instance, `LocalBookingService` checks the business rules (with the local copies of the
+  other services' data), locks the aircraft and saves, in one transaction, the flight, its replication task and its
+  event; otherwise the booking is forwarded to the owner (diagram 5). A cancel or a completion is applied on this
+  instance when it holds a copy of the flight (owner or backup), and forwarded to a holder otherwise; replication
+  brings the change to the other copy. On a query instance, commands are refused with `405` before they reach the
+  API.
 * **Queries** (`GET`) go to `FlightQueries` and the report services (utilization, fuel efficiency, unicorns), which
   answer from the **read model** while it is `READY`: one local MongoDB query, no peer involved.
 * When the read model is not `READY`, or the client asks for `X-Read-Side: write-side`, the query takes the
@@ -291,9 +293,9 @@ Postman collection, or the Kubernetes test in [architecture.md](architecture.md)
 
 ![CQRS](diagrams/8-cqrs.png)
 
-A command changes the write database of the aircraft's owner; a query reads the instance's own read database, which
-holds every flight of the cluster. The two meet only through events: the projection after the commit, the broker,
-and the periodic sync.
+A command changes the write database of an instance that holds the aircraft (the owner for a booking, either copy
+for a cancel or a completion); a query reads the instance's own read database, which holds every flight of the
+cluster. The two meet only through events: the projection after the commit, the broker, and the periodic sync.
 
 ### An event reaches every consumer (P2 p.2)
 
