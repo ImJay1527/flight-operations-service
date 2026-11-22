@@ -4,7 +4,7 @@
     Windows: double-click Launcher.cmd        Mac / Linux: python3 launcher.py
 
 Each button says what it does and shows the exact command it runs, so the commands can also be learned and run by
-hand (README). Needs what the commands need: Java 21, Docker Desktop (databases, Docker Compose, Kubernetes), Git
+hand (docs/running.md). Needs what the commands need: Java 21, Docker Desktop (databases, Docker Compose, Kubernetes), Git
 Bash on Windows (the scripts are bash), Node.js (Postman's command-line runner) - the "Tools" line says what is found.
 """
 import os
