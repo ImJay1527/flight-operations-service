@@ -25,9 +25,11 @@ order for each kind of reader, and points to where each design question is answe
 **Architecture review (about 15 minutes).**
 1. [README](../README.md): the system overview diagram and the requirements table.
 2. [architecture.md, System architecture](architecture.md#system-architecture-pl3-p20): diagrams 1 to 6.
-3. [CQRS](architecture.md#cqrs-assignment-2) and [Messaging](architecture.md#messaging-assignment-2): diagrams 8 to 12.
-4. [Decision records](decisions/README.md): the index, then the records of interest.
-5. [Known limitations](limitations.md).
+3. [From Assignment 1 to Assignment 2](architecture.md#from-assignment-1-to-assignment-2) and
+   [Communication patterns](architecture.md#communication-patterns): what changed and how the parts talk.
+4. [CQRS](architecture.md#cqrs-assignment-2) and [Messaging](architecture.md#messaging-assignment-2): diagrams 8 to 12.
+5. [Decision records](decisions/README.md): the index, then the records of interest.
+6. [Known limitations](limitations.md).
 
 **Checking the statement.** The [requirements table](../README.md#assignment-2-requirements-and-evidence) maps every
 requirement of P2 p.2 and RMQ p.15 to what was built and to the test, Postman folder or endpoint that shows it.
@@ -55,11 +57,13 @@ area in [testing.md](testing.md#automated-tests-junit).
 | How do the services communicate? | REST for clients and lookups; AMQP events on one topic exchange, one queue per instance | [Messaging](architecture.md#messaging-assignment-2), [ADR 0011](decisions/0011-publish-subscribe-one-queue-per-instance.md), [contract](service-contracts.md#events-amqp-assignment-2) |
 | Can an event be lost? | No: transactional outbox and publisher confirms; the read models are also rebuilt periodically | [ADR 0012](decisions/0012-event-outbox-and-publisher-confirms.md) |
 | What about duplicates and failed messages? | Idempotent consumers (newest revision wins); 3 attempts, then a dead-letter queue | [ADR 0013](decisions/0013-at-least-once-idempotent-consumers.md) |
-| What if the broker is down? | Commands and queries continue; events wait in the outbox; the sync keeps read models current | [Messaging failures](architecture.md#failures-1), diagram 11 |
+| What if the broker is down? | Commands and queries continue; events wait in the outbox; the sync keeps read models current | [Messaging failures](architecture.md#messaging-failures), diagram 11 |
 | What if another service is down? | Bookings use the local copies of aircraft, routes and airports | [ADR 0014](decisions/0014-local-copies-of-other-services-data.md) |
 | How does it scale? | Kubernetes auto-scaler (3-5 instances) with DNS discovery; optional query instances scale reads alone | [ADR 0008](decisions/0008-kubernetes-statefulset-and-discovery.md), [ADR 0015](decisions/0015-query-instances.md), [Horizontal scaling](architecture.md#horizontal-scaling) |
 | How fast is it? | Local and forwarded latency, availability during a failure, 2 vs 3 instances, measured with k6 | [Performance](architecture.md#performance-pl3-p21) |
-| How is it secured? | TLS 1.3 only (also AMQPS), AES-256-SIV at rest, user and service JWTs | [security.md](security.md), [ADR 0007](decisions/0007-encryption-in-transit-and-at-rest.md) |
+| Which communication patterns are used, and why? | REST for clients; forwarding and scatter-gather between instances; outbox push for replicas; publish/subscribe (AMQP) for events | [Communication patterns](architecture.md#communication-patterns) |
+| What changed from Assignment 1, and why? | Each limitation named in P2 p.1 against what Assignment 1 did and what Assignment 2 does | [From Assignment 1 to Assignment 2](architecture.md#from-assignment-1-to-assignment-2) |
+| How is it secured? | TLS 1.3 only (also AMQPS), AES-256-SIV at rest, user and service JWTs, roles checked per endpoint | [security.md](security.md), [roles per endpoint](security.md#roles-per-endpoint), [ADR 0007](decisions/0007-encryption-in-transit-and-at-rest.md) |
 | How is it tested? | JUnit with real instances, databases and broker (Testcontainers); 151 Postman requests | [testing.md](testing.md) |
 
 ## Diagrams
@@ -71,6 +75,7 @@ the code by `scripts/generate-development-view.py` and checked in CI.
 | Diagram | Shows | Type |
 |---|---|---|
 | [1 System overview](diagrams/1-system-overview.png) | the three services, their instances, databases, load balancers and broker | deployment |
+| [2 Inside one instance](c4-model.md#level-3--components) | C4 level 3: the components of one instance (3a requests, 3b distribution, 3c events); kept in `docs/c4/` with the rest of the C4 model, hence no file `2-*` here | structure |
 | [3 Forwarding](diagrams/3-forwarding.png) | a lookup answered by another instance | sequence |
 | [4 Failure and recovery](diagrams/4-failure-and-recovery.png) | an instance fails: copies, circuit breaker, catch-up | sequence |
 | [5 Sharded booking](diagrams/5-booking-sharded.png) | a booking forwarded to the aircraft's owner and copied to its backup | sequence |

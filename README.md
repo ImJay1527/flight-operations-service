@@ -1,8 +1,8 @@
 # flight-operations-service
 
 **Flight Operations** service of the AISafe Flight Management System (SIDIS 2026/27, Assignments 1 and 2): scheduled
-flights, assignment of aircraft to routes, availability checks, aircraft utilization (US223), fuel efficiency
-(US227), the departures board, and user sign-in for the whole system.
+flights and assignment of aircraft to routes (US212, US213), availability checks, aircraft utilization (US223),
+fuel efficiency (US227), the departures board, and user sign-in for the whole system.
 
 It is one of three services, each developed by a different team member and run as several instances:
 [`aircraft-maintenance-service`](../aircraft-maintenance-service), [`airports-routes-service`](../airports-routes-service)
@@ -72,7 +72,8 @@ docker compose up --build                # or: the whole system, 3 instances per
 
 Then sign in with `POST /api/auth/login` and `{"username":"atcc","password":"atcc123"}` (also `operator/operator123`,
 `admin/admin123`), open the dashboard at `/dashboard`, or run the Postman collection in `postman/`. Every run mode,
-port and profile: [docs/running.md](docs/running.md).
+port and profile: [docs/running.md](docs/running.md). API reference: Swagger UI at `/swagger-ui.html` (OpenAPI document at
+`/v3/api-docs`), on every instance.
 
 ## Screenshots
 
