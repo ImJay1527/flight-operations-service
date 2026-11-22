@@ -1,0 +1,44 @@
+---
+config:
+  flowchart:
+    wrappingWidth: 400
+---
+%% CQRS (P2 p.2): commands change the write model, queries read the read model; two databases per instance
+flowchart LR
+    client["<b>Client</b><br/>(ATCC, backoffice, dashboard)"]
+
+    subgraph inst["One Flight Operations instance"]
+        direction LR
+        subgraph W["Write side (commands)"]
+            direction TB
+            cmd["<b>FlightCommandService</b><br/>ScheduleFlightCommand<br/>CancelFlightCommand<br/>CompleteFlightCommand"]
+            book["<b>LocalBookingService</b><br/>business rules, per-aircraft lock,<br/>overlap check"]
+            wdb[("<b>PostgreSQL</b><br/>this instance's shard<br/>(owner + backup copies)<br/>+ outboxes")]
+            cmd --> book --> wdb
+        end
+        subgraph R["Read side (queries)"]
+            direction TB
+            qry["<b>FlightQueries</b><br/>flights, lists, reports,<br/>departures, unicorns<br/><i>fallback to the write side when the<br/>read model is not READY or on<br/>X-Read-Side: write-side</i>"]
+            rdb[("<b>MongoDB</b><br/>every flight of the cluster<br/>+ precomputed reports<br/>(flights, aircraft_stats, route_stats)")]
+            qry --> rdb
+        end
+        proj["<b>ReadModelProjection</b><br/>after the commit<br/>(read your own write)"]
+        sync["<b>ReadModelSync</b><br/>at startup, every 30 s,<br/>after a peer recovers"]
+        listener["<b>FlightEventListener</b><br/>other instances' changes"]
+    end
+
+    broker{{"<b>RabbitMQ</b><br/>aisafe.events"}}
+    peers["Other instances'<br/>write sides"]
+
+    client -->|"POST, PATCH<br/>(commands)"| cmd
+    client -->|"GET<br/>(queries)"| qry
+    wdb -.->|"FlightChanged event"| proj --> rdb
+    broker -->|"flight.* (milliseconds)"| listener --> rdb
+    sync -->|"rebuild"| rdb
+    peers -->|"GET /internal/flights/all"| sync
+    qry -.->|"fallback"| wdb
+
+    classDef store fill:#eef6ff,stroke:#5b8def
+    classDef ext fill:#f2f2f2,stroke:#999
+    class wdb,rdb store
+    class broker,peers ext

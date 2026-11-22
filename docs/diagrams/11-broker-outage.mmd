@@ -1,0 +1,31 @@
+---
+config:
+  fontFamily: arial
+  sequence:
+    noteFontFamily: arial
+    messageFontFamily: arial
+    actorFontFamily: arial
+---
+%% The broker is down: commands and queries keep working, events wait in the outbox, nothing is lost (Postman 11f / 11g)
+sequenceDiagram
+    participant C as Client
+    participant I1 as instance1
+    participant DB1 as PostgreSQL 1
+    participant B as RabbitMQ
+    participant I2 as instance2
+
+    Note over B: the broker stops
+    C->>I1: POST /api/scheduled-flights (booking)
+    I1->>DB1: one transaction: flight + event_outbox row
+    I1-->>C: 201 Created (the broker is not on the request path)
+    I1-xB: EventRelay: publish - no connection
+    Note over I1: the row stays in event_outbox<br/>(/api/cluster/health: messaging.outbox = 1)<br/>retried every second
+    I2->>I1: ReadModelSync (every 30 s): GET /internal/flights/all
+    I1-->>I2: every flight, including the new one
+    Note over I2: read model up to date without the broker (pull)
+    Note over B: the broker starts again
+    I1->>B: EventRelay: publish the waiting event
+    B-->>I1: publisher confirm
+    I1->>DB1: delete the outbox row (outbox = 0)
+    B->>I2: flight.scheduled
+    Note over I2: same revision already applied: no change (idempotent)

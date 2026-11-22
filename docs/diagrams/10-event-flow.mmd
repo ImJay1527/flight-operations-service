@@ -1,0 +1,37 @@
+---
+config:
+  fontFamily: arial
+  sequence:
+    noteFontFamily: arial
+    messageFontFamily: arial
+    actorFontFamily: arial
+---
+%% P2 p.2 asynchronous communication: a flight is completed on instance 1 and every other party learns it through the broker
+sequenceDiagram
+    participant C as Client (ATCC)
+    participant I1 as instance1
+    participant DB1 as PostgreSQL 1
+    participant B as RabbitMQ (aisafe.events)
+    participant I2 as instance2
+    participant AM as Aircraft & Maintenance
+
+    C->>I1: PATCH /api/scheduled-flights/{n}/complete
+    I1->>DB1: one transaction: flight COMPLETED (revision n+1)<br/>+ event_outbox row "flight.completed"
+    Note over I1: after the commit: own read model updated<br/>(read your own write)
+    I1-->>C: 200 COMPLETED
+    I1->>B: EventRelay: publish flight.completed (persistent)
+    B-->>I1: publisher confirm
+    I1->>DB1: delete the outbox row
+    par fan-out: one copy per queue
+        B->>I2: flight.events.instance2
+        Note over I2: newer revision: read model updated<br/>(milliseconds after the commit)
+        I2-->>B: ack after processing
+    and
+        B->>AM: aircraft.events.<instance>
+        Note over AM: eventId not seen before:<br/>adds durationHours to the aircraft
+        AM-->>B: ack after processing
+    and
+        B->>I1: flight.events.instance1 (its own event)
+        Note over I1: already projected: skipped
+        I1-->>B: ack
+    end

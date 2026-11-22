@@ -1,6 +1,17 @@
 # Flight Operations – architecture notes
 
-Contents: [System architecture (p.20)](#system-architecture-pl3-p20) · [Performance (p.21)](#performance-pl3-p21) · [Consistency model](#consistency-model) · [CQRS (Assignment 2)](#cqrs-assignment-2) · [Horizontal scaling](#horizontal-scaling) · [Kubernetes and auto-scaling](#kubernetes-and-auto-scaling)
+[Documentation guide](README.md) · [Decision records](decisions/README.md) · [C4+1 model](c4-model.md) ·
+[Service contracts](service-contracts.md)
+
+How Flight Operations is distributed, how it behaves under failure, and why. Each section states the mechanism,
+the guarantees it gives, its failure behaviour and the alternatives considered; the decisions are also recorded one
+per file in [decisions/](decisions/README.md).
+
+Contents: [System architecture (p.20)](#system-architecture-pl3-p20) ·
+[Distribution and resilience](#distribution-and-resilience) · [Performance (p.21)](#performance-pl3-p21) ·
+[Consistency model](#consistency-model) · [CQRS (Assignment 2)](#cqrs-assignment-2) ·
+[Messaging (Assignment 2)](#messaging-assignment-2) · [Horizontal scaling](#horizontal-scaling) ·
+[Kubernetes and auto-scaling](#kubernetes-and-auto-scaling)
 
 ## System architecture (PL3 p.20)
 
@@ -43,6 +54,9 @@ Working with the other instances:
 
 ![Replication](diagrams/6-replication.png)
 
+Assignment 2 adds a read side and a message broker to this picture: [CQRS](#cqrs-assignment-2) (diagrams 8 and 12)
+and [Messaging](#messaging-assignment-2) (diagrams 9 to 11).
+
 ### Key architectural benefits (PL3 p.20)
 
 | Benefit | How this system provides it | Limit (honest) |
@@ -51,6 +65,59 @@ Working with the other instances:
 | **Horizontal scalability**: add instances as load grows | Kubernetes auto-scaler (3 to 5 instances, by CPU) with DNS service discovery; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins, and their flights are copied to it automatically); requests spread by the load balancer | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
 | **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); replication runs on its own thread, so a dead peer never slows down requests | Instances of one component share the same code, so a bug can affect all of them |
 | **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
+
+## Distribution and resilience
+
+The mechanisms behind the diagrams above, in one place. Decision records: sharding
+([0001](decisions/0001-shard-flights-by-aircraft.md)), replication ([0002](decisions/0002-two-copies-of-every-flight.md)),
+status codes ([0004](decisions/0004-503-for-unreachable-data.md)), resilience
+([0006](decisions/0006-resilience-on-remote-calls.md)).
+
+* **Sharding by aircraft** (P1 p.15): every instance knows all instances (`flightops.cluster`, or on Kubernetes
+  found through DNS, see [Kubernetes and auto-scaling](#kubernetes-and-auto-scaling)) and ranks them for
+  each aircraft by rendezvous hashing of its registration. A booking is made on the first of them, the **owner**,
+  forwarded there if it arrived elsewhere (`X-Stored-On` says where); `GET /api/cluster/owner/{registration}` shows
+  the owner and the backup.
+* **Replication** (P1 p.2 "redundancy-based fault tolerance"): every flight is also kept on the second instance of
+  the ranking, the **backup** (`flightops.replication.factor=2`, env `REPLICATION_FACTOR`; `X-Replicas` lists both).
+  A change is saved together with an outbox task in one transaction and copied to the other holder right after the
+  commit, retried while it is down; copies carry a `revision`, the newest wins. At startup (before reporting ready)
+  and every 60 s each instance fetches the flights it should hold from its peers, so a restarted instance catches up
+  even with an empty database. If the owner is down, its backup takes the aircraft's bookings.
+  `GET /api/cluster/health` shows `replicationBacklog` (copies still waiting per instance).
+* **Peer-to-peer reads**: a GET answers from the local DB and then asks the peers on `/internal/flights/**`:
+  lists ask **all peers at the same time** (P1 p.12), a single flight asks them one by one until found (PL3 p.11).
+  Results are merged and de-duplicated by `flightNumber` (newest copy wins). Internal endpoints answer from local
+  data only, so there are no loops. A list built while a peer was unreachable is still `200` with
+  `X-Unreachable-Peers: n`; `X-Partial-Result: true` is added only when data may really be missing (as many
+  instances down as there are copies).
+  Try: `GET http://localhost:8083/api/aircraft-utilization` and `GET http://localhost:8093/api/aircraft-utilization`.
+  Both return the 10 sample flights once, although each is stored on two instances.
+* **Fault tolerance**: an unreachable peer is skipped (logged as a warning). A stopped instance's flights are served
+  from their copies. If every instance that may hold a flight is unreachable, a single lookup is `503 Service Unavailable` with
+  `Retry-After: 10` and the number of unreachable instances in the message: the flight may exist there, so it is
+  not a `404`. `404` only when the instances that could have it answered "not here" ([Status codes: 404 or 503?](#status-codes-404-or-503),
+  [ADR 0004](decisions/0004-503-for-unreachable-data.md)).
+* **Calls to other services** (`AircraftClient`, `AirportsRoutesClient`) go round-robin over their instances and
+  fail over to the next one on timeout or 5xx. If none can be reached the answer is `503`
+  "… could not be reached"; a `404` from the service itself stays `404`.
+* **Resilience** (PL3 p.12, p.14; package `resilience`):
+  * *Retry with exponential backoff*: a failed GET to another instance is retried up to 2 more times, after
+    ~100 ms and ~200 ms (plus random jitter). A PATCH is never retried, because the first attempt may have worked.
+  * *Circuit breaker*: after 3 failures in a row an instance is skipped for 10 s (fail fast; a struggling instance
+    isn't flooded). Then one trial request is let through: success closes the circuit, failure skips it for twice
+    as long (max 60 s).
+  * *Health checks*: every 5 s each instance calls `/actuator/health` on its peers and on the other services'
+    instances. A recovered instance is used again as soon as it answers.
+  * *Load balancing*: incoming requests through nginx (least connections); between instances, the peer asked first
+    for a single flight rotates per request; calls to other services go round-robin.
+  * Status: `GET /api/cluster/health` (roles ADMIN, ATCC, BACKOFFICE_OPERATOR) lists every peer / remote instance
+    with its circuit state and failure count. Settings: `sidis.resilience.*` in `application.properties`.
+* **Consistency**: eventual - the other copy of a change arrives shortly after it is made (outbox, revisions,
+  catch-up). "No double-booking" is guaranteed while one holder takes an aircraft's bookings (owner, or its backup
+  while the owner is down, under a per-aircraft lock); if the two holders are cut off from each other, an overlap is
+  reported as a replication conflict instead of being prevented (AP in CAP).
+  Details, the known weak spots and how to fix them: [Consistency model](#consistency-model).
 
 ## Performance (PL3 p.21)
 
@@ -304,6 +371,9 @@ events (eventual consistency).
 
 ### The two sides
 
+![CQRS: write side and read side of one instance](diagrams/8-cqrs.png)
+
+
 | | Write side (commands) | Read side (queries) |
 |---|---|---|
 | Code | `services.FlightCommandService` handles `ScheduleFlightCommand` / `CancelFlightCommand` / `CompleteFlightCommand`; `LocalBookingService` applies them | `services.FlightQueries` (and the report services) read `readmodel.ReadModel` |
@@ -378,6 +448,8 @@ each instance's read model state; `GET /api/cluster/metrics` counts the lookups 
 
 ### Decisions and alternatives
 
+Recorded as [ADR 0009](decisions/0009-cqrs-separate-read-database.md) and [ADR 0010](decisions/0010-read-model-fallback.md).
+
 * **Separate database for reads (chosen) vs. separate models on the same database.** Two classes over the same
   table (or two tables in one PostgreSQL) would already split the code, but reads and writes would still compete for
   one database and fail together. A database of its own makes the read side independent: it can fail, be rebuilt or
@@ -399,6 +471,8 @@ each instance's read model state; `GET /api/cluster/metrics` counts the lookups 
   same deterministic scheme as the write database, so the indexes (by aircraft, by airport) still work.
 
 ### Separate processes: query instances (optional)
+
+![Query instances behind the load balancer](diagrams/12-query-instances.png)
 
 Above, every instance does both: it takes commands for its aircraft and answers every query from its read model.
 CQRS also allows the two sides to run as **different processes**, so that reads and writes scale and fail on their
@@ -440,6 +514,8 @@ consistency as between two command instances, nothing new.
 
 **Decisions and alternatives.**
 
+Recorded as [ADR 0015](decisions/0015-query-instances.md).
+
 * **Optional, next to the combined instances (chosen) vs. only separate processes.** With few instances the combined
   ones are simpler and read your own write at once; the split pays off when reads are much more frequent than writes,
   which only the deployment knows. The same image and code do both; the profile decides.
@@ -468,27 +544,7 @@ instance's **own copy of the aircraft, airports and routes**, so a booking doesn
 
 ### Topology
 
-```
-                         aisafe.events (topic, durable)
-flight-ops instance --->   flight.scheduled | flight.cancelled | flight.completed
-  (outbox + relay)            | flight.#               | flight.#                  | flight.#
-                              v                        v                           v
-               flight.events.instance1   flight.events.instance2   aircraft.events.<instance>
-                              |                        |                           |
-                     read model of 1          read model of 2       flight hours (Aircraft & Maintenance)
-
-Aircraft & Maintenance ---> aircraft.created | aircraft.status.changed | aircraft.maintenance.*
-                              | aircraft.#             | aircraft.#
-                              v                        v
-               flight.events.instance1   flight.events.instance2   ->  aircraft copy of each instance
-
-Airports & Routes ---> airport.created | airport.status(.changed) | route.created | route.deactivated | ...
-                              | airport.#, route.#     | airport.#, route.#
-                              v                        v
-               flight.events.instance1   flight.events.instance2   ->  airport and route copies of each instance
-
-failed / expired / overflow --> aisafe.dlx --(flight.events.dlq)--> flight.events.dlq
-```
+![Messaging topology: exchange, queues, dead letters](diagrams/9-messaging-topology.png)
 
 | | |
 |---|---|
@@ -500,6 +556,8 @@ failed / expired / overflow --> aisafe.dlx --(flight.events.dlq)--> flight.event
 | Contract | `docs/service-contracts.md` "Events": routing keys, JSON fields, rules for publishers and consumers |
 
 ### Publishing: outbox, relay, publisher confirms
+
+![An event from the commit to every consumer](diagrams/10-event-flow.png)
 
 1. The write side publishes `FlightChanged` in the change's transaction (as for CQRS). It says whether this instance
    **made** the change (`madeHere`) or only learnt it (a copy, a peer's answer). Only the instance that made it
@@ -569,6 +627,8 @@ Order doesn't matter (newest revision wins). Delivery is **at least once**; dupl
 
 ### Failures
 
+![The broker is down: the outbox holds the events](diagrams/11-broker-outage.png)
+
 | Failure | What happens |
 |---|---|
 | Broker down | Bookings, cancels and queries keep working (the broker is not part of `/actuator/health`). Events wait in each instance's outbox (`messaging.outbox` on `/api/cluster/health`) and go out when it is back; meanwhile the 30 s sync keeps the read models up to date (`scripts/test-failures.sh` phases 11f, 11g) |
@@ -593,6 +653,8 @@ Order doesn't matter (newest revision wins). Delivery is **at least once**; dupl
   `LocalAircraftCopyTest`, `LocalRouteCopyTest`.
 
 ### Decisions and alternatives
+
+Recorded as [ADR 0011](decisions/0011-publish-subscribe-one-queue-per-instance.md) to [ADR 0014](decisions/0014-local-copies-of-other-services-data.md).
 
 * **Publish/subscribe, one queue per instance (chosen) vs. one shared queue (work queues).** A shared queue hands each
   event to *one* instance (competing consumers, tutorial 2): right for tasks, wrong for state, because the other
@@ -728,7 +790,7 @@ pays off once they stop fanning out to every peer:
 ## Kubernetes and auto-scaling
 
 PL3 p.25 lists, for later, container orchestration (Kubernetes) and dynamic service discovery instead of hardcoded
-peer lists. Both are in `k8s/` (run: `./k8s/deploy.sh`, see the README).
+peer lists. Both are in `k8s/` (run: `./k8s/deploy.sh`, see [running.md](running.md#kubernetes-auto-scaling)).
 
 | Concern | docker-compose | Kubernetes (`k8s/`) |
 |---|---|---|

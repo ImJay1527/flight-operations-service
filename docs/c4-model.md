@@ -1,5 +1,7 @@
 # Flight Operations – C4+1 model
 
+[Documentation guide](README.md) · [Architecture](architecture.md) · [Decision records](decisions/README.md)
+
 The architecture of the Flight Operations service at four zoom levels (C4: Context, Containers, Components, Code),
 plus the views of Kruchten's 4+1 model (logical, development, process, physical) and the scenarios that tie them
 together (the "+1"). The other two AISafe services are shown as external systems: they belong to other teams.
@@ -181,7 +183,20 @@ No package cycles: no two packages import each other.
 ## +1 – Scenarios
 
 *For everyone: the architecture at work, step by step.* Each one is tested (`ReplicationIntegrationTest`,
-`TwoInstancesIntegrationTest`, the Postman collection, or the Kubernetes test in [architecture.md](architecture.md)).
+`TwoInstancesIntegrationTest`, `CqrsIntegrationTest`, `MessagingIntegrationTest`, `QueryInstanceIntegrationTest`, the
+Postman collection, or the Kubernetes test in [architecture.md](architecture.md)).
+
+| Scenario | Assignment | Evidence |
+|---|---|---|
+| [Reading a flight stored on another instance](#reading-a-flight-stored-on-another-instance-pl3-p11) | A1 | Postman 02 |
+| [Booking on the aircraft's owner](#booking-made-on-the-aircrafts-owner-copied-to-its-backup-p1-p15) | A1 | Postman 09 |
+| [Replication](#replication-how-a-change-reaches-every-copy) | A1 | `ReplicationIntegrationTest` |
+| [An instance fails and recovers](#an-instance-fails-and-recovers-pl3-p14-p1-p2) | A1 | Postman 03, 11b-11d |
+| [Auto-scaling](#auto-scaling-a-pod-is-added-on-kubernetes) | A1 | Kubernetes test |
+| [A command and a query take different paths](#a-command-and-a-query-take-different-paths-cqrs-p2-p2) | A2 | Postman 12 |
+| [An event reaches every consumer](#an-event-reaches-every-consumer-p2-p2) | A2 | Postman 13 |
+| [The broker is down](#the-broker-is-down-and-comes-back) | A2 | Postman 11f-11g |
+| [Queries served by query instances](#queries-served-by-query-instances-optional) | A2 | Postman 17 |
 
 ### Reading a flight stored on another instance (PL3 p.11)
 
@@ -202,6 +217,30 @@ No package cycles: no two packages import each other.
 ### Auto-scaling: a pod is added on Kubernetes
 
 ![Auto-scaling](diagrams/7-autoscaling.png)
+
+### A command and a query take different paths (CQRS, P2 p.2)
+
+![CQRS](diagrams/8-cqrs.png)
+
+A command changes the write database of the aircraft's owner; a query reads the instance's own read database, which
+holds every flight of the cluster. The two meet only through events: the projection after the commit, the broker,
+and the periodic sync.
+
+### An event reaches every consumer (P2 p.2)
+
+![Event flow](diagrams/10-event-flow.png)
+
+The topology the event travels through:
+
+![Messaging topology](diagrams/9-messaging-topology.png)
+
+### The broker is down and comes back
+
+![Broker outage](diagrams/11-broker-outage.png)
+
+### Queries served by query instances (optional)
+
+![Query instances](diagrams/12-query-instances.png)
 
 ## Deployment
 

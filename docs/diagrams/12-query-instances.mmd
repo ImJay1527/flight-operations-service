@@ -1,0 +1,39 @@
+---
+config:
+  flowchart:
+    wrappingWidth: 400
+---
+%% CQRS with separate processes (optional): query instances answer the queries, command instances take the commands
+flowchart LR
+    client["<b>Client</b>"]
+    lb["<b>nginx</b> (https://localhost:8443)<br/>routes by HTTP method"]
+
+    subgraph CMD["Command instances (cluster members: sharding, replication)"]
+        direction TB
+        c1["flightops-1"]
+        c2["flightops-2"]
+        c3["flightops-3"]
+        cdb[("PostgreSQL + MongoDB<br/>per instance")]
+    end
+
+    subgraph QRY["Query instances (not members; profile query)"]
+        direction TB
+        q1["flightops-query-1"]
+        q2["flightops-query-2"]
+        qdb[("MongoDB only<br/>per instance")]
+    end
+
+    broker{{"<b>RabbitMQ</b><br/>aisafe.events"}}
+
+    client --> lb
+    lb -->|"POST, PATCH, login,<br/>/api/cluster/**, dashboard"| CMD
+    lb -->|"GET, HEAD /api/**"| QRY
+    lb -.->|"backup: no query<br/>instance available"| CMD
+    CMD -->|"flight.* events"| broker -->|"flight.events.&lt;query instance&gt;"| QRY
+    QRY -->|"startup and 30 s sync:<br/>GET /internal/flights/all"| CMD
+    QRY -.->|"a command sent here:<br/>405, Allow: GET, HEAD"| client
+
+    classDef store fill:#eef6ff,stroke:#5b8def
+    classDef ext fill:#f2f2f2,stroke:#999
+    class cdb,qdb store
+    class broker ext

@@ -1,0 +1,50 @@
+---
+config:
+  flowchart:
+    wrappingWidth: 400
+---
+%% Messaging topology (P2 p.2, RMQ tutorials 3-5): one topic exchange, one queue per instance of every service
+flowchart LR
+    subgraph pubs["Publishers (each through its transactional outbox)"]
+        direction TB
+        fo["<b>Flight Operations</b><br/>flight.scheduled<br/>flight.cancelled<br/>flight.completed"]
+        am["<b>Aircraft & Maintenance</b><br/>aircraft.created<br/>aircraft.status.changed<br/>aircraft.maintenance.*"]
+        ar["<b>Airports & Routes</b><br/>airport.created, airport.status.changed,<br/>airport.certification.added,<br/>route.created, route.updated,<br/>route.deactivated"]
+    end
+
+    ex{{"<b>aisafe.events</b><br/>topic exchange, durable"}}
+
+    subgraph fq["Flight Operations: one queue per instance"]
+        direction TB
+        q1["<b>flight.events.instance1</b>"]
+        q2["<b>flight.events.instance2</b>"]
+        q3["<b>flight.events.instance3</b>"]
+    end
+
+    subgraph oq["Other services' queues"]
+        direction TB
+        qa["<b>aircraft.events.&lt;instance&gt;</b><br/>adds the flight hours<br/>of flight.completed;<br/>its own replicas"]
+        qr["<b>airports.events.&lt;instance&gt;</b><br/>their own replicas"]
+    end
+
+    use["<b>Consumer of each instance</b><br/>flight.* &rarr; read model<br/>aircraft.*, airport.*, route.* &rarr; local copies<br/>(aircraft_copy, airport_copy, route_copy)"]
+
+    dlx{{"<b>aisafe.dlx</b><br/>dead-letter exchange"}}
+    dlq["<b>flight.events.dlq</b><br/>kept 7 days"]
+
+    fo --> ex
+    am --> ex
+    ar --> ex
+    ex -->|"flight.#, aircraft.#,<br/>airport.#, route.#"| q1
+    ex -->|"same bindings"| q2
+    ex -->|"same bindings"| q3
+    ex -->|"flight.#, aircraft.#"| qa
+    ex -->|"airport.#, route.#, aircraft.#"| qr
+    q1 & q2 & q3 --> use
+    q1 & q2 & q3 -.-> dlx
+    dlx -->|"3 failed attempts,<br/>older than 1 day,<br/>or over 100 000 messages"| dlq
+
+    classDef queue fill:#eef6ff,stroke:#5b8def
+    classDef ext fill:#f2f2f2,stroke:#999
+    class q1,q2,q3,dlq queue
+    class am,ar,qa,qr ext
