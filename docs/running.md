@@ -11,8 +11,10 @@ whole AISafe system) and on Kubernetes with auto-scaling. Ports, instances and s
 **Windows:** double-click `Launcher.cmd`. **Mac / Linux:** `python3 launcher.py`. (Needs Python 3; the panel says
 which other tools it finds: Git Bash, Java, Docker, kubectl, Node.js.)
 
-A window with buttons to start the system (on this computer, with Docker Compose, or on Kubernetes), open the
-dashboard, run the Postman and JUnit tests, generate load, and stop everything. Each button explains what it does
+A window with buttons to start the system (on this computer, with Docker Compose, or on Kubernetes; optionally with
+the CQRS query instances), open the dashboard and the RabbitMQ management UI, run the Postman, JUnit and
+whole-system failure tests, compare the read model with the write side under load, generate load on Kubernetes, and
+stop or pause everything. Each button explains what it does
 and shows the exact command it runs, so the commands below can also be learned from it. The lights at the top show
 what is running.
 
