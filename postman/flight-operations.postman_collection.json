@@ -4727,322 +4727,7 @@
       ]
     },
     {
-      "name": "14 Unicorns - mood of the airplanes (/api/v2/unicorns)",
-      "description": "Assignment 2 mock endpoint: the mood of every airplane, in JSON. FLYING (in the air now), EXCITED (leaves within 24 h), TIRED (10 h or more in the last 7 days), BORED (nothing scheduled), HAPPY (a trip is planned). In CQRS it is a query: it only reads the read model, which the commands keep up to date through their events. Here a booking makes CS-TPB FLYING, and completing the flight changes its mood again.",
-      "item": [
-        {
-          "name": "Is there a read model here? (sets cqrsOn, so this folder runs on its own)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/cluster/health",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "cluster",
-                "health"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "const rm = pm.response.json().readModel;",
-                  "pm.environment.set(\"cqrsOn\", !!rm && rm.state !== \"DISABLED\");",
-                  "if (!rm || rm.state === \"DISABLED\") {",
-                  "  pm.test.skip(\"SKIPPED: no read database here (run-local.sh --h2): every query takes the write side. Run without --h2, or docker compose up, for CQRS\", () => {});",
-                  "} else {",
-                  "  pm.test(\"read model READY\", () => pm.expect(rm.state).to.eql(\"READY\"));",
-                  "  pm.test(\"it has been synced with the write side\", () => pm.expect(rm.lastSync).to.be.a(\"string\"));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Mood of every airplane",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/v2/unicorns",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"JSON\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"));",
-                  "const list = pm.response.json();",
-                  "pm.test(\"a list of airplanes\", () => pm.expect(list).to.be.an(\"array\").that.is.not.empty);",
-                  "pm.test(\"each with registration, model, mood and message\", () => list.forEach(u => {",
-                  "  pm.expect(u.registration).to.be.a(\"string\");",
-                  "  pm.expect(u.model).to.be.a(\"string\");",
-                  "  pm.expect([\"FLYING\", \"EXCITED\", \"TIRED\", \"BORED\", \"HAPPY\"]).to.include(u.mood);",
-                  "  pm.expect(u.message).to.be.a(\"string\");",
-                  "}));",
-                  "console.log(list.map(u => u.registration + \" \" + u.mood + \": \" + u.message).join(\"\\n\"));",
-                  "// CQRS: a query, answered from the read model (or the write side when there is none: run-local.sh --h2)",
-                  "const side = pm.response.headers.get(\"X-Read-Side\");",
-                  "pm.test(\"X-Read-Side: \" + side, () => pm.expect(side).to.eql(pm.environment.get(\"cqrsOn\") === true ? \"read-model\" : \"write-side\"));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Command: book CS-TPB, leaving in 3 s",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{instance1}}/api/scheduled-flights",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "scheduled-flights"
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"routeId\": \"route-lis-mad\",\n  \"aircraftRegistration\": \"CS-TPB\",\n  \"departureTime\": \"{{departure}}\",\n  \"arrivalTime\": \"{{arrival}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "// local time, as the server compares with its own clock",
-                  "const local = ms => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().substring(0, 19);",
-                  "const dep = Date.now() + 3000;",
-                  "pm.variables.set(\"departure_ms\", String(dep));",
-                  "pm.variables.set(\"departure\", local(dep));",
-                  "pm.variables.set(\"arrival\", local(dep + 20 * 60000));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
-                  "pm.environment.set(\"unicorn_flight\", pm.response.json().flightNumber);",
-                  "pm.environment.set(\"unicorn_departure_ms\", Number(pm.variables.get(\"departure_ms\")));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "It has left: CS-TPB is FLYING",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/v2/unicorns/CS-TPB",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns",
-                "CS-TPB"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const wait = Math.max(0, Number(pm.environment.get(\"unicorn_departure_ms\")) + 1000 - Date.now());",
-                  "setTimeout(() => {}, wait);"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"FLYING\", () => pm.expect(pm.response.json().mood).to.eql(\"FLYING\"));",
-                  "pm.test(\"on the way to MAD\", () => pm.expect(pm.response.json().message).to.include(\"MAD\"));",
-                  "// CQRS: a query, answered from the read model (or the write side when there is none: run-local.sh --h2)",
-                  "const side = pm.response.headers.get(\"X-Read-Side\");",
-                  "pm.test(\"X-Read-Side: \" + side, () => pm.expect(side).to.eql(pm.environment.get(\"cqrsOn\") === true ? \"read-model\" : \"write-side\"));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Command: it has landed - complete it",
-          "request": {
-            "method": "PATCH",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/scheduled-flights/{{unicorn_flight}}/complete",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "scheduled-flights",
-                "{{unicorn_flight}}",
-                "complete"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"COMPLETED\", () => pm.expect(pm.response.json().status).to.eql(\"COMPLETED\"));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "CS-TPB is not FLYING any more",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/v2/unicorns/CS-TPB",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns",
-                "CS-TPB"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"a new mood: \" + pm.response.json().mood, () => pm.expect(pm.response.json().mood).to.not.eql(\"FLYING\"));",
-                  "// CQRS: a query, answered from the read model (or the write side when there is none: run-local.sh --h2)",
-                  "const side = pm.response.headers.get(\"X-Read-Side\");",
-                  "pm.test(\"X-Read-Side: \" + side, () => pm.expect(side).to.eql(pm.environment.get(\"cqrsOn\") === true ? \"read-model\" : \"write-side\"));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Unknown airplane: 404",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/v2/unicorns/CS-NOPE",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns",
-                "CS-NOPE"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Without a token: 401",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{instance1}}/api/v2/unicorns",
-              "host": [
-                "{{instance1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ]
-            },
-            "auth": {
-              "type": "noauth"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "15 Aircraft events - local copy of the aircraft",
+      "name": "14 Aircraft events - local copy of the aircraft",
       "description": "Assignment 2, AMQP. Aircraft & Maintenance's events (aircraft.created, aircraft.status.changed) keep each instance's own copy of the aircraft, so a booking doesn't call that service. The events are sent here through RabbitMQ's management API, the way that service sends them. An older event changes nothing. Skipped without a broker (run-local.sh --h2).",
       "item": [
         {
@@ -5774,7 +5459,7 @@
       ]
     },
     {
-      "name": "16 Route and airport events - local copies",
+      "name": "15 Route and airport events - local copies",
       "description": "Assignment 2, AMQP. Airports & Routes' events (airport.created, airport.status, airport.certification.added, route.created, route.deactivated) keep each instance's own copy of the airports and routes, so a booking doesn't call that service. The events are sent here through RabbitMQ's management API in the JSON that service publishes. A route.created without the route's requirements is ignored (the REST API decides). Skipped without a broker (run-local.sh --h2).",
       "item": [
         {
@@ -7137,7 +6822,7 @@
       ]
     },
     {
-      "name": "17 CQRS - query instances (separate processes)",
+      "name": "16 CQRS - query instances (separate processes)",
       "description": "CQRS with separate processes: query instances answer the queries from their own read database and take no commands; they are not in the command instances' cluster. Needs query instances (run-local.sh --queries 2, docker compose --profile queries up, or QUERY_INSTANCES=2 k8s/deploy.sh with queryInstance = https://localhost:9444); skipped otherwise.",
       "item": [
         {
@@ -7446,19 +7131,18 @@
           ]
         },
         {
-          "name": "Unicorns on the query instance (a query: read model)",
+          "name": "Utilization report on the query instance (a query: read model)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{queryInstance}}/api/v2/unicorns",
+              "raw": "{{queryInstance}}/api/aircraft-utilization",
               "host": [
                 "{{queryInstance}}"
               ],
               "path": [
                 "api",
-                "v2",
-                "unicorns"
+                "aircraft-utilization"
               ]
             }
           },
@@ -7479,7 +7163,7 @@
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"X-Read-Side: read-model\", () => pm.expect(pm.response.headers.get(\"X-Read-Side\")).to.eql(\"read-model\"));",
-                  "pm.test(\"the booked aircraft is there\", () => pm.expect(pm.response.json().map(u => u.registration)).to.include(pm.environment.get(\"query_aircraft\")));"
+                  "pm.test(\"the booked aircraft is there\", () => pm.expect(pm.response.json()._embedded.utilizations.map(u => u.registrationNumber)).to.include(pm.environment.get(\"query_aircraft\")));"
                 ]
               }
             }

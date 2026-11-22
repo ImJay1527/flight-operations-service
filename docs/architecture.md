@@ -447,24 +447,6 @@ upsert, so it is atomic. Applying the same change twice, or an old change after 
 **Reports are recomputed, not incremented**: when a flight of CS-TPA changes, `aircraft_stats` of CS-TPA is computed
 again from the `flights` collection. A "+1" would count a repeated event twice.
 
-### The unicorns endpoint: a query
-
-`GET /api/v2/unicorns` (and `/api/v2/unicorns/{registration}`) gives the mood of each airplane in JSON. It is a
-**query**: it only reads the read model and never changes anything. The mood comes from the airplane's flights:
-
-| Mood | When |
-|---|---|
-| `FLYING` | one of its flights is in the air now |
-| `EXCITED` | it leaves within 24 hours |
-| `TIRED` | it flew 10 hours or more in the last 7 days |
-| `BORED` | nothing is scheduled |
-| `HAPPY` | otherwise: a trip is planned |
-
-The mood is worked out when asked (`services.UnicornMood`), because it depends on the time. Its input, the flights,
-is the read model, which the **commands** keep up to date through their events. So the path is: a command (book,
-complete) changes the write side -> its event updates the read models (this instance at once, the others through the
-broker) -> the next query shows a new mood. Without a usable read model the write side answers, as for every query.
-
 ### Which side answered (evidence)
 
 | Response header | Meaning |
@@ -692,7 +674,7 @@ Order doesn't matter (newest revision wins). Delivery is **at least once**; dupl
   `rest`, `refreshed`, `old_copy`).
 * The dashboard shows a "Broker (AMQP)" chip per instance; RabbitMQ's UI (http://localhost:15672) shows the exchanges,
   the queues and the message rates.
-* Postman folders 13, 15 and 16, `MessagingIntegrationTest`, `AircraftEventsTest`, `RouteEventsTest`,
+* Postman folders 13, 14 and 15, `MessagingIntegrationTest`, `AircraftEventsTest`, `RouteEventsTest`,
   `LocalAircraftCopyTest`, `LocalRouteCopyTest`.
 
 ### Decisions and alternatives

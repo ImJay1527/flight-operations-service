@@ -146,11 +146,11 @@ class QueryInstanceIntegrationTest {
         assertThat(fromWriteSide.getStatusCode().value()).isEqualTo(200);
         assertThat(fromWriteSide.getHeaders().getFirst("X-Data-Source")).startsWith("peer:");
 
-        ResponseEntity<String> unicorns = http.get().uri(query1 + "/api/v2/unicorns")
+        ResponseEntity<String> report = http.get().uri(query1 + "/api/aircraft-utilization")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token).retrieve().toEntity(String.class);
-        assertThat(unicorns.getStatusCode().value()).isEqualTo(200);
-        assertThat(unicorns.getHeaders().getFirst("X-Read-Side")).isEqualTo("read-model");
-        assertThat(unicorns.getBody()).contains("CS-TPA");
+        assertThat(report.getStatusCode().value()).isEqualTo(200);
+        assertThat(report.getHeaders().getFirst("X-Read-Side")).isEqualTo("read-model");
+        assertThat(report.getBody()).contains("CS-TPA");
     }
 
     @Test

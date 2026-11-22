@@ -16,7 +16,6 @@ the [logical view](c4-model.md#logical-view-uml)), then the architecture.
 | **Departures board** | The non-cancelled flights leaving an airport within the next N hours (default 24), for backoffice operators |
 | **Aircraft utilization** (US223) | Per aircraft: number of flights and flight hours, in total and per month |
 | **Fuel efficiency** (US227) | Per aircraft and per route: distance flown and fuel used, and kilometres per litre. The fuel burn rate of a flight is the model's fuel capacity divided by its maximum range, stored on the flight when it is booked |
-| **Mood** (`/api/v2/unicorns`) | An airplane's mood, from its flights at the time of the request: `FLYING` (in the air now), `EXCITED` (leaves within 24 h), `TIRED` (10 h or more flown in the last 7 days), `BORED` (nothing scheduled), `HAPPY` (otherwise) |
 | **Aircraft data** (`AircraftInfo`) | What Aircraft & Maintenance says about an aircraft: registration, model, status (only `AVAILABLE` can be booked), maximum range, fuel capacity and active capacity (seats in use). Not stored as such: kept in the local copy |
 | **Route data** (`RouteInfo`) | What Airports & Routes says about a route: status (only `ACTIVE` can be booked), distance, origin and destination airports, minimum range and minimum capacity required |
 | **Airport data** (`AirportInfo`) | What Airports & Routes says about an airport: status (only `OPERATIONAL` can be used) and the aircraft models it is certified for |

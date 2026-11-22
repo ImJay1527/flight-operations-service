@@ -30,7 +30,6 @@ token gets `401`; a token without the required role gets `403`.
 | `/api/scheduled-flights/departures/{iata}` | GET | ATCC, BACKOFFICE_OPERATOR | departures board |
 | `/api/aircraft-utilization`, `/api/aircraft-utilization/{registration}` | GET | ATCC | US223 aircraft utilization |
 | `/api/fuel-efficiency/aircraft/**`, `/api/fuel-efficiency/routes/**` | GET | ATCC | US227 fuel efficiency |
-| `/api/v2/unicorns`, `/api/v2/unicorns/{registration}` | GET | ATCC, BACKOFFICE_OPERATOR, ADMIN | mock endpoint (P2 p.2) |
 | `/api/cluster/health`, `/owner/{registration}`, `/metrics`, `/overview` | GET | ADMIN, ATCC, BACKOFFICE_OPERATOR | monitoring |
 | `/internal/**` | all | SERVICE (service tokens only) | instance-to-instance |
 | `/actuator/health/**` | GET | anyone | probes of Docker and Kubernetes |

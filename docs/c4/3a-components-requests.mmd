@@ -12,7 +12,7 @@ flowchart TB
         direction TB
         filters["<b>Request filters</b><br/>[Component: common.tracing, common.security, api]<br/><br/>Request id + X-Instance header, JWT to roles,<br/>audit log; on a query instance commands get 405"]
         auth["<b>AuthController</b><br/>[Component: security]<br/><br/>Sign-in; issues the user JWT<br/>accepted by all AISafe services"]
-        flightApi["<b>Flight API</b><br/>[Component: api]<br/><br/>ScheduledFlight, AircraftUtilization,<br/>FuelEfficiency and Unicorns controllers"]
+        flightApi["<b>Flight API</b><br/>[Component: api]<br/><br/>ScheduledFlight, AircraftUtilization<br/>and FuelEfficiency controllers"]
 
         subgraph CMD["Write side (commands)"]
             direction TB
@@ -22,7 +22,7 @@ flowchart TB
 
         subgraph QRY["Read side (queries)"]
             direction TB
-            queries["<b>FlightQueries + report services</b><br/>[Component: services]<br/><br/>Flights, departures, utilization (US223),<br/>fuel efficiency (US227), unicorns"]
+            queries["<b>FlightQueries + report services</b><br/>[Component: services]<br/><br/>Flights, departures, utilization (US223),<br/>fuel efficiency (US227)"]
             readModel["<b>Read model</b><br/>[Component: readmodel]<br/><br/>MongoReadModel: flights and reports<br/>already computed for the whole cluster"]
             fallback["<b>FlightQueryService</b><br/>[Component: services]<br/><br/>Fallback path (as in Assignment 1):<br/>local write database, then the peers"]
         end

@@ -18,7 +18,7 @@ flowchart LR
         end
         subgraph R["Read side (queries)"]
             direction TB
-            qry["<b>FlightQueries</b><br/>flights, lists, reports,<br/>departures, unicorns<br/><i>fallback to the write side when the<br/>read model is not READY or on<br/>X-Read-Side: write-side</i>"]
+            qry["<b>FlightQueries</b><br/>flights, lists, reports,<br/>departures<br/><i>fallback to the write side when the<br/>read model is not READY or on<br/>X-Read-Side: write-side</i>"]
             rdb[("<b>MongoDB</b><br/>every flight of the cluster<br/>+ precomputed reports<br/>(flights, aircraft_stats, route_stats)")]
             qry --> rdb
         end
