@@ -2,7 +2,26 @@
 
 [Documentation guide](README.md)
 
-Terms as they are used in this documentation and in the code.
+Terms as they are used in this documentation and in the code: first the domain (what the service manages, as in
+the [logical view](c4-model.md#logical-view-uml)), then the architecture.
+
+## Domain
+
+| Term | Meaning |
+|---|---|
+| **Scheduled flight** (`ScheduledFlight`) | An aircraft assigned to a route for a departure and an arrival time (US212). Identified by its flight number, a UUID. The only business entity of the service |
+| **Flight status** (`FlightStatus`) | `SCHEDULED` when booked; `CANCELED` by a cancel command; `COMPLETED` by a complete command, allowed only after departure. Cancelled flights count in no report |
+| **Overlap check** | A booking is refused (`409`) if the aircraft already has a scheduled flight that overlaps the new one's departure-to-arrival window widened by 30 minutes on each side (turnaround buffer) |
+| **Aircraft booking lock** (`AircraftBookingLock`) | One row per aircraft, locked during a booking so that two bookings of the same aircraft cannot pass the overlap check together |
+| **Departures board** | The non-cancelled flights leaving an airport within the next N hours (default 24), for backoffice operators |
+| **Aircraft utilization** (US223) | Per aircraft: number of flights and flight hours, in total and per month |
+| **Fuel efficiency** (US227) | Per aircraft and per route: distance flown and fuel used, and kilometres per litre. The fuel burn rate of a flight is the model's fuel capacity divided by its maximum range, stored on the flight when it is booked |
+| **Mood** (`/api/v2/unicorns`) | An airplane's mood, from its flights at the time of the request: `FLYING` (in the air now), `EXCITED` (leaves within 24 h), `TIRED` (10 h or more flown in the last 7 days), `BORED` (nothing scheduled), `HAPPY` (otherwise) |
+| **System user** (`SystemUser`) | A person who signs in, with a BCrypt password hash and a list of roles (ATCC, BACKOFFICE_OPERATOR, MAINTENANCE_TECHNICIAN, MAINTENANCE_SUPERVISOR, ADMIN) |
+| **Flight document** (`FlightDocument`) | A flight in the read database (MongoDB collection `flights`), shaped for the queries |
+| **Aircraft and route statistics** (`AircraftStatsDocument`, `RouteStatsDocument`) | The utilization and fuel-efficiency reports, stored already computed in the read database (`aircraft_stats`, `route_stats`) |
+
+## Architecture
 
 | Term | Meaning |
 |---|---|

@@ -155,7 +155,7 @@ public class ScheduledFlightController {
 
 
     @Operation(summary = "Bonus: Get upcoming departures (Departures Board)",
-               description = "Retrieves a list of upcoming flights departing from a specific airport within the next N hours. Requires BACKOFFICE_OPERATOR role.")
+               description = "Retrieves a list of upcoming flights departing from a specific airport within the next N hours. Requires BACKOFFICE_OPERATOR or ATCC role.")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "List of departures returned successfully"),
         @ApiResponse(responseCode = "400", description = "Invalid hours window"),
