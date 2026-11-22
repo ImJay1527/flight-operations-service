@@ -2,8 +2,10 @@
 
 Each record captures one significant design decision of the Flight Operations service: the problem it addresses,
 the option chosen, the alternatives that were rejected and the consequences accepted with it. The format follows
-Michael Nygard's *Documenting Architecture Decisions* (2011): one short, immutable record per decision; a decision
-that changes is superseded by a new record rather than edited.
+Michael Nygard's *Documenting Architecture Decisions* (2011): one short record per decision. A decision that is
+reversed or replaced is superseded by a new record, never rewritten; a decision that is only extended keeps its
+record, which gains a dated note in its status and date lines (for example [0007](0007-encryption-in-transit-and-at-rest.md),
+extended to the message broker in Assignment 2).
 
 | # | Decision | Assignment | Status |
 |---|---|---|---|

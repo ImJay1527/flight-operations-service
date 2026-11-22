@@ -8,6 +8,8 @@ the guarantees it gives, its failure behaviour and the alternatives considered; 
 per file in [decisions/](decisions/README.md).
 
 Contents: [System architecture (p.20)](#system-architecture-pl3-p20) ·
+[From Assignment 1 to Assignment 2](#from-assignment-1-to-assignment-2) ·
+[Communication patterns](#communication-patterns) ·
 [Distribution and resilience](#distribution-and-resilience) · [Performance (p.21)](#performance-pl3-p21) ·
 [Consistency model](#consistency-model) · [CQRS (Assignment 2)](#cqrs-assignment-2) ·
 [Messaging (Assignment 2)](#messaging-assignment-2) · [Horizontal scaling](#horizontal-scaling) ·
@@ -17,10 +19,11 @@ Contents: [System architecture (p.20)](#system-architecture-pl3-p20) ·
 
 The full C4+1 model (context, containers, components, code, scenarios, deployment) is in [c4-model.md](c4-model.md).
 
-Three components, each running as **3 instances** with their **own database**. Instances of the same component
-forward GET requests to each other (peer forwarding); components call each other over HTTPS with a service token.
-Flight Operations keeps every flight on **two instances** (replication), so the data of a stopped instance stays
-available.
+Three components, each running as **3 instances**, every instance with **its own databases** (Flight Operations:
+PostgreSQL for the write side and, since Assignment 2, MongoDB for the read side). Instances of the same component
+forward requests to each other (peer forwarding); components exchange events through the message broker (RabbitMQ)
+and call each other over HTTPS with a service token only for data they have not received yet. Flight Operations
+keeps every flight on **two instances** (replication), so the data of a stopped instance stays available.
 Diagram sources: `docs/diagrams/*.mmd` (Mermaid); images regenerated with
 `npx @mermaid-js/mermaid-cli -i <file>.mmd -o <file>.png -b white -s 2`.
 
@@ -37,6 +40,10 @@ A client request:
 Working with the other instances:
 
 ![C4 Level 3b - Components: distribution](c4/3b-components-distribution.png)
+
+Events and the read model (Assignment 2):
+
+![C4 Level 3c - Components: events](c4/3c-components-events.png)
 
 ### 3. HTTP GET forwarding (PL3 p.11)
 
@@ -59,12 +66,48 @@ and [Messaging](#messaging-assignment-2) (diagrams 9 to 11).
 
 ### Key architectural benefits (PL3 p.20)
 
-| Benefit | How this system provides it | Limit (honest) |
+| Benefit | How this system provides it | Limit |
 |---|---|---|
 | **High availability**: the service continues if instances fail | 3 instances per component behind a load balancer (nginx, or the Kubernetes Service: health-aware, fails over to another instance); any instance answers any request (stateless JWT); every flight kept on 2 instances, so a failed instance's data is still served from its copies; retries, circuit breaker; Docker / Kubernetes restart an instance whose process stops; a restarted instance catches up before taking traffic | With 2 copies, losing **both** holders of an aircraft at once makes its flights unavailable until one is back |
-| **Horizontal scalability**: add instances as load grows | Kubernetes auto-scaler (3 to 5 instances, by CPU) with DNS service discovery; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins, and their flights are copied to it automatically); requests spread by the load balancer | Reads that need *every* instance (utilization, fuel reports) do not get faster with more instances (load test, "Horizontal scaling" below) |
-| **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate database per instance; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); replication runs on its own thread, so a dead peer never slows down requests | Instances of one component share the same code, so a bug can affect all of them |
+| **Horizontal scalability**: add instances as load grows | Kubernetes auto-scaler (3 to 5 instances, by CPU) with DNS service discovery; aircraft sharded over the instances by rendezvous hashing (adding one only moves the aircraft it wins, and their flights are copied to it automatically); requests spread by the load balancer | Bookings of one aircraft are serialised on its owner. Reports answered on the fallback path ask every instance and do not get faster with more instances; with the read model (Assignment 2) they are local ("What the results mean" below) |
+| **Fault isolation**: a problem in one instance doesn't cascade | Separate process + separate databases per instance; a broker or read database that fails stops neither commands nor queries; timeouts on every remote call; circuit breaker stops calling a failing instance (no waiting on it, no flooding it); replication runs on its own thread, so a dead peer never slows down requests | Instances of one component share the same code, so a bug can affect all of them |
 | **Geographic distribution**: instances in different regions | Instances only need each other's URL (peer lists, service URLs) and talk over HTTPS, so they could run anywhere | Not deployed that way; forwarding across regions would add real network latency to every forwarded request (see Performance) |
+
+## From Assignment 1 to Assignment 2
+
+The statement of Assignment 2 (P2 p.1, "Issue") names what limited the Assignment 1 system. Each point, what
+Assignment 1 did, and what changed:
+
+| Limitation named in P2 | Assignment 1 | Assignment 2 | Record |
+|---|---|---|---|
+| Synchronous communication | Every booking called Aircraft & Maintenance and Airports & Routes over REST; with one of them down, bookings failed (`503`) | Changes are published as events on a message broker (AMQP, publish/subscribe). Bookings read local copies of the other services' data, fed by their events; REST is only the fallback for data not copied yet | [0011](decisions/0011-publish-subscribe-one-queue-per-instance.md), [0014](decisions/0014-local-copies-of-other-services-data.md) |
+| Optimized read/write operations | One model for both: reports recomputed on every request from the flights of every instance | CQRS: commands on the sharded PostgreSQL write model; queries on a MongoDB read model per instance, with every flight and the reports already computed | [0009](decisions/0009-cqrs-separate-read-database.md) |
+| Asynchronous integration | None between services | Transactional outbox and publisher confirms (no event lost or sent for a rolled-back change), at-least-once delivery, idempotent consumers, dead letters | [0012](decisions/0012-event-outbox-and-publisher-confirms.md), [0013](decisions/0013-at-least-once-idempotent-consumers.md) |
+| Proper data isolation | A PostgreSQL database per instance | Two databases per instance (write and read), no database shared by two instances or two services; other services' data enters only through their events or APIs | [0005](decisions/0005-database-per-instance.md) |
+| Eventual consistency during partitions | Replication with revisions; overlapping bookings detected as conflicts | Unchanged for the write side; the read model is marked `STALE` when it may have missed a change, and queries then fall back to the write side; the periodic sync repairs it | [0003](decisions/0003-availability-over-consistency.md), [0010](decisions/0010-read-model-fallback.md) |
+| Resilience in a fully distributed setup | Retries, circuit breaker, replicas | Also: the broker, the read database or another service can fail without stopping commands or queries | [Messaging failures](#messaging-failures), [Read side failures](#read-side-failures) |
+
+## Communication patterns
+
+Every interaction of a Flight Operations instance, with its pattern and why that pattern was chosen. External
+clients only ever use REST (P2 p.2).
+
+| Interaction | Pattern | Sync / async | Protocol | Why this pattern |
+|---|---|---|---|---|
+| Client → API | Request/response through a load balancer | Sync | REST over HTTPS (TLS 1.3) | Required by P2 p.2; any instance answers (stateless JWT) |
+| Command for an aircraft another instance owns | Forwarding to the owner | Sync | HTTPS `/internal/**`, service JWT | The owner's per-aircraft lock prevents double-booking; the client needs the outcome |
+| Change → backup instance | Push from a transactional outbox (point-to-point) | Async, after the commit | HTTPS `/internal/replicas` | Targets one known instance; works while the broker is down |
+| Missing copies after a restart or rebalance | Periodic pull (anti-entropy) | Async, every 60 s and on membership changes | HTTPS `/internal/replicas` | Repairs anything a push missed, with no coordinator |
+| Change → other instances' read models | Publish/subscribe, one queue per instance | Async, milliseconds | AMQP (AMQPS) topic exchange `aisafe.events` | Every instance needs every change; the publisher does not know the subscribers |
+| Change → other services (`flight.completed`) | Publish/subscribe | Async | AMQP | Aircraft & Maintenance reacts without Flight Operations calling it |
+| Other services' changes → local copies | Publish/subscribe | Async | AMQP | Bookings no longer depend on those services being up |
+| Read model repair | Periodic pull from every write side | Async, every 30 s, at startup, after a peer recovers | HTTPS `/internal/flights/all` | Safety net for lost events; the write side is the source of truth |
+| Query on the fallback path | Scatter-gather | Sync | HTTPS `/internal/flights/**` | Assignment 1 path, used only while the read model is not `READY` |
+| Aircraft, route or airport not copied yet | Request/response, round-robin with failover | Sync | REST over HTTPS, service JWT | Rare; the copies answer otherwise |
+| Peer and service health | Polling | Async, every 5 s | HTTPS `/actuator/health` | Closes circuit breakers as soon as an instance recovers |
+
+Diagrams: [9 Messaging topology](diagrams/9-messaging-topology.png), [10 Event flow](diagrams/10-event-flow.png),
+[6 Replication](diagrams/6-replication.png), [3 Forwarding](diagrams/3-forwarding.png).
 
 ## Distribution and resilience
 
@@ -138,8 +181,8 @@ local / forwarded (`X-Data-Source` header): 100 % of 61 000 checks passed (run o
 | 5 users (~264 req/s), average | 11.2 ms | 25.2 ms | |
 | 5 users, median / p95 | 4.3 / 72 ms | 9.2 / 80 ms | |
 
-* A forwarded request costs about **2×** a local one: the extra network hop and the peer's work (confirms quiz Q6:
-  forwarded requests have higher latency).
+* A forwarded request costs about **2×** a local one: the extra network hop and the peer's work (as the practical
+  sessions anticipate: forwarded requests have higher latency).
 * Both are far below the slide's reference values because all instances run on **one machine**: the "network" is
   local, a few tenths of a millisecond. Between machines or regions every forwarded request pays the real network
   round trip (~1 ms in a data centre, 20–150 ms between regions), which is why the slide expects ~200 ms.
@@ -229,7 +272,7 @@ system prefers **availability** (AP in CAP).
   the **owner**, where bookings go; the second is the **backup** (`GET /api/cluster/owner/{reg}` shows both, and a
   booking's `X-Replicas` header lists them). Not every instance holds everything: with 3 instances each one holds
   about 2/3 of the aircraft (`ClusterTest`), matching the practical session's answer that instances do **not** keep
-  identical copies of all data (PL3 p.24, quiz Q3). With 2 instances the backup of every aircraft is the other one.
+  identical copies of all data (PL3 p.24). With 2 instances the backup of every aircraft is the other one.
 * **No ID clashes.** Flight numbers are UUIDs, generated independently on each instance, so two instances can never
   create the same id (PL3 p.18 "Data inconsistency: same ID on multiple instances"). Sample flights get the same
   fixed number on every instance that loads them, so their copies match.
@@ -436,7 +479,7 @@ A client that must see every change already made (e.g. right after making it on 
 **`X-Read-Side: write-side`** and gets the write side's answer. `GET /api/cluster/health` and the dashboard show
 each instance's read model state; `GET /api/cluster/metrics` counts the lookups answered by the read model.
 
-### Failures
+### Read side failures
 
 | Failure | What happens |
 |---|---|
@@ -625,7 +668,7 @@ Eventual, with a much smaller window than before: the instance that made the cha
 its commit), the others **milliseconds** later (push), and at worst after the 30 s sync (pull) if an event is lost.
 Order doesn't matter (newest revision wins). Delivery is **at least once**; duplicates are harmless.
 
-### Failures
+### Messaging failures
 
 ![The broker is down: the outbox holds the events](diagrams/11-broker-outage.png)
 
@@ -698,9 +741,10 @@ instance can fail without any flight becoming unavailable.
 | airports-routes-service | 8082 | 8092 | 8102 |
 | flight-operations-service | 8083 | 8093 | 8103 |
 
-Port scheme: base port + 10 per extra instance. Each instance has its own database (data isolation), so instances
-share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on host ports 5433/5434/5435
-(in-memory H2 `flightops_db_1/2/3` when run without the `postgres` profile, e.g. in the automated tests).
+Port scheme: base port + 10 per extra instance. Each instance has its own databases (data isolation), so instances
+share nothing except the network and the broker: PostgreSQL containers `flightops-db-1/2/3` (write side) on host
+ports 5433/5434/5435, MongoDB containers `flightops-read-db-1/2/3` (read side) on 27018/27019/27020 (in-memory H2
+`flightops_db_1/2/3` when run without the `postgres` profile, e.g. in the automated tests).
 
 ### What makes it scalable
 
@@ -712,8 +756,10 @@ share nothing except the network: PostgreSQL containers `flightops-db-1/2/3` on 
   by name), `AIRCRAFT_SERVICE_URLS` and `AIRPORTS_ROUTES_SERVICE_URLS`. On Kubernetes: DNS (see "Kubernetes and
   auto-scaling"), so instances can be added and removed while the system runs.
 * **Sharded and replicated data.** Each aircraft's flights are kept on 2 of the instances (owner + backup, by
-  rendezvous hashing), not on all of them. Reads that need everything ask every peer and merge the answers, keeping
-  the newest copy of each flight (scatter-gather, `FlightQueryService`).
+  rendezvous hashing), not on all of them, so the write load is spread over the instances.
+* **Local reads (Assignment 2).** Each instance's read model holds every flight and the reports already computed,
+  so a query is answered without asking any peer. Only the fallback path (read model not `READY`) asks every peer
+  and merges the answers, keeping the newest copy of each flight (scatter-gather, `FlightQueryService`).
 
 ### How to add an instance
 
@@ -745,7 +791,8 @@ Tool: [k6](https://k6.io), run in Docker (`./loadtest/run.sh 2` and `./loadtest/
   * HTTPS between all parties.
   * 2 × 30 s warm-up before measuring: on 1 CPU the JVM's JIT compilation otherwise dominates the first minute.
 
-**Results (2026-10-02), each instance with its own PostgreSQL container:**
+**Results (2026-10-02, Assignment 1: before replication and CQRS), each instance with its own PostgreSQL
+container:**
 
 | Instances | Throughput | Median latency | p95 | p99 | Errors |
 |---|---|---|---|---|---|
@@ -758,26 +805,26 @@ Raw output: `loadtest/results/`.
 
 ### What the results mean
 
-*(Measured before replication was added. With 2 copies the fan-out per request is the same - every instance is
-still asked - so the conclusion below holds.)*
+**Assignment 1: a third instance did not increase capacity for this workload.** Every request was a scatter-gather
+read: the receiving instance did its local query *and* asked each of the other N−1 instances. The total work per
+request therefore grew with N, at the same rate as the capacity added by the new instance, so throughput stayed
+flat. Requests about one aircraft or one flight involved one or two instances only and did scale; the reports did
+not.
 
-**For this workload, a third instance does not increase capacity.** Every request is a scatter-gather read:
-the receiving instance does its local query *and* asks each of the other N−1 instances. The total work per request
-therefore grows with N, at the same rate as the capacity added by the new instance, so throughput stays flat.
+The measurement proposed three remedies. All three are now in place:
 
-Conclusion: for *this* workload (only scatter-gather reports) more instances do not add throughput. We run 3 for
-redundancy and so that the data really is sharded (see "Instances and ports"); the auto-scaler helps the requests
-about one aircraft or one flight, which involve one or two instances only. For the reports, adding instances only
-pays off once they stop fanning out to every peer:
+| Remedy proposed in Assignment 1 | Where it is now |
+|---|---|
+| Route each aircraft to one instance (consistent hashing), so requests about it involve no fan-out | Sharding by rendezvous hashing, bookings on the owner ([ADR 0001](decisions/0001-shard-flights-by-aircraft.md)) |
+| Replicate, so a flight survives the loss of an instance and is more often read locally | Owner + backup ([ADR 0002](decisions/0002-two-copies-of-every-flight.md)) |
+| Precompute the reports per instance, so they stop fanning out | The CQRS read model: every flight and every report on each instance, kept current by events ([ADR 0009](decisions/0009-cqrs-separate-read-database.md)) |
 
-1. **Route by owner.** Pick the instance that stores a flight from a hash of the aircraft registration (consistent
-   hashing). Requests about one aircraft then go to one instance, with no fan-out, so capacity grows with N. This
-   also removes the double-booking race, because all bookings for an aircraft are serialised on one instance.
-2. **Replicate** (done for redundancy, with 2 copies): reads of one flight are now answered locally more often, and
-   a flight survives the loss of the instance that holds it. Lists still ask every instance; answering them from
-   the local copies only would need every instance to hold everything (more copies, more expensive writes).
-3. **Cache aggregates.** Utilization and fuel reports change rarely; caching them for a few seconds per instance
-   removes most of the fan-out.
+**Assignment 2: expected effect.** With the read model `READY`, each of the four requests of this workload is one
+local MongoDB query on the instance that receives it; no peer is asked. The work per request no longer grows with
+N, so throughput should grow with the number of instances, while the write side (bookings on the owner) and the
+fallback path keep the Assignment 1 behaviour. This is to be confirmed by repeating `./loadtest/run.sh 2` and
+`./loadtest/run.sh 3` with the Assignment 2 configuration; the table above will then gain the new rows, and
+sending `X-Read-Side: write-side` with the same workload would reproduce the Assignment 1 path for comparison.
 
 ### Performance problems found by load testing (fixed)
 
@@ -854,7 +901,7 @@ Its disk is deleted (`whenScaled: Delete`): everything on it exists elsewhere.
   the 12 flights were again each on their owner and one backup.
 * 5 pods used most of the laptop's 16 GB: `maxReplicas` stays at 5 here only because the test machine allows it.
 
-**Limits (honest):**
+**Limits:**
 
 * The hand-off to a new pod waits until it answers (start-up takes about 25 s on the test laptop, plus up to 5 s until the next health
   check). Meanwhile its aircraft are served by their other holder and left-over copies aren't answered while a holder

@@ -2,82 +2,153 @@
 config:
   fontFamily: arial
 ---
-%% Logical view (UML class diagram): the entities of Flight Operations and what it reads from the other services.
-%% Other services' data is referenced by id only (no foreign keys across services, each has its own database).
+%% Logical view (UML class diagram): what Flight Operations stores in its write database (PostgreSQL) and in its
+%% read database (MongoDB), and what it reads from the other services. Other services' data is referenced by id only
+%% (no foreign keys across services, each has its own database); the copies of it are kept up to date by events.
 classDiagram
-    direction LR
+    direction TB
 
-    class ScheduledFlight {
-        <<entity: scheduled_flight>>
-        -String flightNumber «id, UUID»
-        -String routeId «encrypted»
-        -String aircraftRegistration «encrypted»
-        -String aircraftModel «encrypted»
-        -String originIata «encrypted»
-        -String destinationIata «encrypted»
-        -double distanceKm
-        -double fuelBurnRate
-        -LocalDateTime scheduledDeparture
-        -LocalDateTime scheduledArrival
-        -FlightStatus status
-        -Long version «optimistic lock»
-        -long revision «replication»
-        +cancel() void
-        +restoreCopyState(status, revision) void
-        +updateFromCopy(status, revision) boolean
-    }
-    class FlightStatus {
-        <<enumeration>>
-        SCHEDULED
-        CANCELED
-        COMPLETED
-    }
-    class AircraftBookingLock {
-        <<entity: aircraft_booking_lock>>
-        -String aircraftRegistration «id»
-    }
-    class ReplicationTask {
-        <<entity: replication_outbox>>
-        -Long id «id»
-        -String target «instance name»
-        -String flightNumber
-        -Instant createdAt
-    }
-    class SystemUser {
-        <<entity: system_user>>
-        -Long id «id»
-        -String username «unique»
-        -String passwordHash «BCrypt»
-        -String roles
+    namespace WriteDatabase_PostgreSQL {
+        class ScheduledFlight {
+            <<entity: scheduled_flight>>
+            -String flightNumber «id, UUID»
+            -String routeId «encrypted»
+            -String aircraftRegistration «encrypted»
+            -String aircraftModel «encrypted»
+            -String originIata «encrypted»
+            -String destinationIata «encrypted»
+            -double distanceKm
+            -double fuelBurnRate
+            -LocalDateTime scheduledDeparture
+            -LocalDateTime scheduledArrival
+            -FlightStatus status
+            -Long version «optimistic lock»
+            -long revision «replication»
+            +cancel() void
+            +complete(now) void
+            +updateFromCopy(status, revision) boolean
+        }
+        class FlightStatus {
+            <<enumeration>>
+            SCHEDULED
+            CANCELED
+            COMPLETED
+        }
+        class AircraftBookingLock {
+            <<entity: aircraft_booking_lock>>
+            -String aircraftRegistration «id»
+        }
+        class ReplicationTask {
+            <<entity: replication_outbox>>
+            -Long id «id»
+            -String target «instance name»
+            -String flightNumber
+            -Instant createdAt
+        }
+        class OutboxMessage {
+            <<entity: event_outbox>>
+            -Long id «id»
+            -String eventId «UUID»
+            -String routingKey
+            -String payload «encrypted»
+            -Instant createdAt
+        }
+        class SystemUser {
+            <<entity: system_user>>
+            -Long id «id»
+            -String username «unique»
+            -String passwordHash «BCrypt»
+            -String roles
+        }
+        class AircraftCopy {
+            <<entity: aircraft_copy>>
+            -String registration «id»
+            -String status
+            -String modelName
+            -double maxRange
+            -int activeCapacity
+            -Instant asOf «newest change wins»
+        }
+        class RouteCopy {
+            <<entity: route_copy>>
+            -String routeId «id»
+            -String status
+            -double distanceKm
+            -String originIata
+            -String destinationIata
+            -Instant asOf
+        }
+        class AirportCopy {
+            <<entity: airport_copy>>
+            -String iataCode «id»
+            -String status
+            -String certifiedModels
+            -Instant asOf
+        }
     }
 
-    class AircraftInfo {
-        <<read from Aircraft & Maintenance>>
-        String registrationNumber
-        String status
-        String modelName
-        double maxRange
-        double fuelCapacity
-        int activeCapacity
+    namespace ReadDatabase_MongoDB {
+        class FlightDocument {
+            <<collection: flights>>
+            String flightNumber «id»
+            String registration «encrypted»
+            String routeId «encrypted»
+            LocalDateTime departure
+            String status
+            long revision
+        }
+        class AircraftStatsDocument {
+            <<collection: aircraft_stats>>
+            String registration «id»
+            int flights
+            double totalHours
+            double kmPerL
+            List~Period~ periods
+        }
+        class RouteStatsDocument {
+            <<collection: route_stats>>
+            String routeId «id»
+            int flights
+            double fuelPerFlightL
+            double kmPerL
+        }
     }
-    class RouteInfo {
-        <<read from Airports & Routes>>
-        String routeId
-        String status
-        double distanceKm
-        double minRangeRequired
-        int minCapacityRequired
-    }
-    class AirportInfo {
-        <<read from Airports & Routes>>
-        String iataCode
-        String status
-        List~String~ certifiedModels
+
+    namespace OtherServices_notStored {
+        class AircraftInfo {
+            <<Aircraft & Maintenance>>
+            String registrationNumber
+            String status
+            String modelName
+            double maxRange
+            int activeCapacity
+        }
+        class RouteInfo {
+            <<Airports & Routes>>
+            String routeId
+            String status
+            double distanceKm
+            double minRangeRequired
+            int minCapacityRequired
+        }
+        class AirportInfo {
+            <<Airports & Routes>>
+            String iataCode
+            String status
+            List~String~ certifiedModels
+        }
     }
 
     ScheduledFlight --> "1" FlightStatus : status
     ReplicationTask ..> ScheduledFlight : copy of (flightNumber)
-    AircraftBookingLock ..> AircraftInfo : one row per aircraft (registration)
+    OutboxMessage ..> ScheduledFlight : event about (in the payload)
+    AircraftBookingLock ..> AircraftInfo : one row per aircraft
     ScheduledFlight ..> AircraftInfo : aircraftRegistration (by id)
     ScheduledFlight ..> RouteInfo : routeId (by id)
     RouteInfo *-- "2" AirportInfo : origin, destination
+    AircraftCopy ..> AircraftInfo : local copy of
+    RouteCopy ..> RouteInfo : local copy of
+    AirportCopy ..> AirportInfo : local copy of
+    FlightDocument ..> ScheduledFlight : projection of (every instance's)
+    AircraftStatsDocument ..> FlightDocument : computed from
+    RouteStatsDocument ..> FlightDocument : computed from

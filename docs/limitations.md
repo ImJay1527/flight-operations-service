@@ -39,5 +39,10 @@ The trade-offs accepted on purpose and what would remove each of them. They foll
 * **Development defaults.** The JWT key, database password and encryption key have defaults in the configuration for
   local runs; a real deployment must override them (Kubernetes takes them from Secrets). Encryption keys can be
   versioned, but re-encrypting old data with a new key is not implemented.
+* **Events are not signed, and the services share one broker user.** The broker connection is authenticated and
+  encrypted, but a message carries no signature, and the development default is `guest` / `guest` for every
+  service (Kubernetes: one user from a Secret). Anyone with those credentials could publish a forged event. One
+  broker user per service, allowed to publish only its own routing keys, would remove it
+  ([security.md](security.md#not-covered)).
 * **Measured on one laptop.** Latencies and throughput have no real network between the instances; they show
   relative effects (local vs forwarded, 2 vs 3 instances), not production numbers.

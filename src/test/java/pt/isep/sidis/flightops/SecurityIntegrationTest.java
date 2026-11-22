@@ -10,6 +10,7 @@ import pt.isep.sidis.flightops.common.security.JwtUtils;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -70,6 +71,30 @@ class SecurityIntegrationTest {
         String userToken = jwtUtils.generateToken("atcc", "ATCC");
         mvc.perform(get("/api/aircraft-utilization").header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isOk());
+    }
+
+    // Role-based access (P1 p.2): a valid user token is not enough, the endpoint's role is checked too
+    // (the table in docs/security.md)
+
+    @Test
+    void backofficeOperatorCannotReadTheReports() throws Exception {
+        String userToken = jwtUtils.generateToken("operator", "BACKOFFICE_OPERATOR");
+        mvc.perform(get("/api/aircraft-utilization").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void backofficeOperatorCannotCancelAFlight() throws Exception {
+        String userToken = jwtUtils.generateToken("operator", "BACKOFFICE_OPERATOR");
+        mvc.perform(patch("/api/scheduled-flights/any/cancel").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void maintenanceStaffCannotReadTheDepartures() throws Exception {
+        String userToken = jwtUtils.generateToken("technician", "MAINTENANCE_TECHNICIAN");
+        mvc.perform(get("/api/scheduled-flights/departures/LIS").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
     }
 
     @Test

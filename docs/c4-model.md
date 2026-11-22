@@ -48,9 +48,14 @@ Sources: `docs/c4/*.mmd` and `docs/diagrams/*.mmd` (Mermaid, kept in git next to
   reports. **Backoffice operators** read an airport's departures. **Administrators** watch the instances.
 * **Every AISafe user signs in here.** The token is accepted by the other two services as well (same signing key),
   which is why maintenance staff, who work in Aircraft & Maintenance, also sign in through Flight Operations.
-* Before a flight is booked, Flight Operations asks **Aircraft & Maintenance** whether the aircraft is available
-  and what it can do (model, range, seats), and **Airports & Routes** whether the route is active and the airports
-  are certified for the model. Neither of them calls Flight Operations.
+* Before a flight is booked, Flight Operations checks that the aircraft is available and can fly the route (model,
+  range, seats), that the route is active and that both airports are certified for the model. Since Assignment 2 it
+  answers these questions from **its own copies** of the other services' data, which **Aircraft & Maintenance** and
+  **Airports & Routes** keep up to date with **events** (dashed lines, asynchronous, through the message broker). It
+  calls their REST APIs only for an aircraft, route or airport it has not copied yet.
+* Flight Operations announces every flight scheduled, cancelled or completed as an event; **Aircraft & Maintenance**
+  uses `flight.completed` to add the flight's hours to the aircraft. Neither service calls Flight Operations
+  synchronously.
 
 ## Level 2 – Containers
 
@@ -74,19 +79,25 @@ JWT; instances calling each other or the other services carry a short-lived serv
 
 ## Level 3 – Components
 
-*For developers: how one instance of the API is built.* Split in two so that each diagram stays readable: the path
-of a client request, and the parts that make the instances work together.
+*For developers: how one instance of the API is built.* Split in three so that each diagram stays readable: the path
+of a client request (commands and queries apart), the parts that make the instances work together, and the events
+that keep the read model and the local copies up to date.
 
 ### 3a – A client request (bookings, queries, reports)
 
 ![C4 Level 3a - Components: requests](c4/3a-components-requests.png)
 
-* A booking goes to `ScheduledFlightService`, which asks `Cluster` who owns the aircraft. If it is this instance,
-  `LocalBookingService` checks the business rules (with the other two services), locks the aircraft and saves the
-  flight together with its outbox task; otherwise the booking is forwarded to the owner (diagram 5).
-* A lookup goes to `FlightQueryService`: the local database first, then the peers. Lists ask every peer at once
-  and keep the newest copy of each flight. A left-over copy of an aircraft this instance no longer holds (after
-  instances joined, before its hand-off) is not answered while one of the aircraft's holders can be asked.
+* **Commands** (`POST`, `PATCH`) go to `FlightCommandService`, which asks `Cluster` who owns the aircraft. If it is
+  this instance, `LocalBookingService` checks the business rules (with the local copies of the other services'
+  data), locks the aircraft and saves, in one transaction, the flight, its replication task and its event;
+  otherwise the command is forwarded to the owner (diagram 5). On a query instance, commands are refused with `405`
+  before they reach the API.
+* **Queries** (`GET`) go to `FlightQueries` and the report services (utilization, fuel efficiency, unicorns), which
+  answer from the **read model** while it is `READY`: one local MongoDB query, no peer involved.
+* When the read model is not `READY`, or the client asks for `X-Read-Side: write-side`, the query takes the
+  **fallback path** of Assignment 1, `FlightQueryService`: the local write database first, then the peers. Lists ask
+  every peer at once and keep the newest copy of each flight. A left-over copy of an aircraft this instance no
+  longer holds (after instances joined, before its hand-off) is not answered while one of its holders can be asked.
 
 ### 3b – Working with the other instances (sharding, replication, resilience)
 
@@ -103,9 +114,32 @@ of a client request, and the parts that make the instances work together.
 * Every call to another instance goes through `PeerClient` and **Resilience** (timeouts, retries for reads,
   circuit breaker per instance, health checks).
 
+### 3c – Events and the read model (CQRS, AMQP)
+
+![C4 Level 3c - Components: events](c4/3c-components-events.png)
+
+* Every change made on the write side raises a `FlightChanged` domain event inside its transaction. Two components
+  listen to it: `ReadModelProjection` updates this instance's read model **after** the commit (the client reads its
+  own write at once), and `EventOutbox` saves the event as a row of `event_outbox` **before** the commit, in the same
+  transaction, so a change and its event are saved together or not at all.
+* `EventRelay`, on its own thread, publishes the waiting rows to `aisafe.events` over AMQPS, waits for the publisher
+  confirm and only then deletes them; while the broker is down it retries every second, and requests are not
+  delayed ([ADR 0012](decisions/0012-event-outbox-and-publisher-confirms.md)).
+* `MessagingConfig` declares this instance's queue `flight.events.<instance>`, its bindings and its limits.
+  `FlightEventListener` consumes it: `flight.*` from the other instances go into the read model, `aircraft.*`,
+  `airport.*` and `route.*` from the other services into the local copies. Both are idempotent (newest revision or
+  newest change wins); a message that fails 3 times goes to the dead-letter queue
+  ([ADR 0013](decisions/0013-at-least-once-idempotent-consumers.md)).
+* `ReadModelSync` is the safety net: it rebuilds the read model from every instance's write side at startup, every
+  30 s and after a peer recovers, and marks it `READY` only when no flight can have been missed
+  ([ADR 0010](decisions/0010-read-model-fallback.md)).
+
 ## Level 4 – Code
 
-*For developers changing the distribution code: the significant classes only.*
+*For developers changing the code: the significant classes only.* Two diagrams, as at level 3: the distribution
+(sharding, replication, peer calls) and CQRS with messaging.
+
+### 4a – Sharding, replication and peer calls
 
 ![C4 Level 4 - Code](c4/4-code.png)
 
@@ -128,9 +162,36 @@ Design points visible here:
   converge whatever the order they arrive in (eventual consistency).
 * **Circuit breaker per instance**: `ResilientCaller` asks `EndpointHealth.allowRequest()` before every call.
 
+### 4b – CQRS and messaging
+
+![C4 Level 4 - Code: CQRS and messaging](c4/4b-code-events.png)
+
+| Class | Source |
+|---|---|
+| `FlightCommandService`, `LocalBookingService`, `FlightQueries` | [services/](../src/main/java/pt/isep/sidis/flightops/services) |
+| `FlightChanged` | [events/FlightChanged.java](../src/main/java/pt/isep/sidis/flightops/events/FlightChanged.java) |
+| `ReadModel`, `MongoReadModel`, `ReadModelState`, `ReadModelProjection`, `ReadModelSync` | [readmodel/](../src/main/java/pt/isep/sidis/flightops/readmodel) |
+| `EventOutbox`, `EventRelay`, `FlightEvent`, `FlightEventListener` | [messaging/](../src/main/java/pt/isep/sidis/flightops/messaging) |
+| `OutboxMessage` | [domain/OutboxMessage.java](../src/main/java/pt/isep/sidis/flightops/domain/OutboxMessage.java) |
+| `LocalAircraftCopy` | [clients/LocalAircraftCopy.java](../src/main/java/pt/isep/sidis/flightops/clients/LocalAircraftCopy.java) |
+
+Design points visible here:
+
+* **One domain event, two listeners**: the write side knows nothing about the read model or the broker; it only
+  raises `FlightChanged`. `madeHere` tells a change this instance made (announced on the broker) from one it learnt
+  from a peer (only projected), so an event is published once, by the instance that made the change.
+* **Transaction phases**: `EventOutbox.on` runs before the commit (the row is part of the transaction),
+  `EventOutbox.committed` and `ReadModelProjection.on` after it (nothing is published or projected for a change
+  that is rolled back).
+* **Idempotent read model**: `MongoReadModel.upsert` replaces a flight only if the stored copy is older, as a
+  condition of the upsert itself, so duplicates and late events change nothing.
+* **Queries choose their side**: `FlightQueries.useReadModel` checks `ReadModelState` (and the `X-Read-Side`
+  header) before each query.
+
 ## Logical view (UML)
 
-*For developers and reviewers: what Flight Operations stores, and what it only reads from the other services.*
+*For developers and reviewers: what Flight Operations stores in its write database (PostgreSQL) and in its read
+database (MongoDB), and what it only reads from the other services.*
 
 ![Logical view - UML class diagram](c4/6-logical-view.png)
 
@@ -142,9 +203,17 @@ Design points visible here:
   the same aircraft on one instance can't both pass the overlap check.
 * **`ReplicationTask`** is the outbox: "send the current state of flight X to instance Y", saved in the same
   transaction as the change.
+* **`OutboxMessage`** is the event outbox (Assignment 2): an event to publish on the broker, saved in the same
+  transaction as the change and deleted once the broker confirms it. Its payload is encrypted.
 * **`SystemUser`** holds the users who sign in (password as a BCrypt hash, roles as a list).
-* **`AircraftInfo`, `RouteInfo`, `AirportInfo`** are not stored: they are what the other two services answer.
-  A flight refers to its aircraft and route **by id only**, with no foreign key: each service has its own database.
+* **`AircraftInfo`, `RouteInfo`, `AirportInfo`** are what the other two services answer. A flight refers to its
+  aircraft and route **by id only**, with no foreign key: each service has its own database.
+* **`AircraftCopy`, `RouteCopy`, `AirportCopy`** (Assignment 2) are this instance's copies of that data, kept up to
+  date by the other services' events; `asOf` keeps only the newest change, so events applied twice or out of order
+  change nothing.
+* **Read database.** `FlightDocument` holds every flight of the cluster (not only this instance's shard), shaped
+  for the queries; `AircraftStatsDocument` and `RouteStatsDocument` are the utilization and fuel-efficiency reports,
+  recomputed whenever one of their flights changes. All three can be rebuilt from the write side at any time.
 
 ## Development view (packages)
 

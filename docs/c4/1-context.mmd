@@ -20,9 +20,12 @@ flowchart TB
     office -->|"Reads the departures<br/>of an airport"| fo
     admin -->|"Watches the instances<br/>(dashboard, health, metrics)"| fo
     maint -->|"Signs in"| fo
-    maint -.->|"Records maintenance<br/>(with the same sign-in)"| am
-    fo -->|"Is the aircraft available?<br/>Model, range, seats"| am
-    fo -->|"Route details; is the airport<br/>certified for the model?"| ar
+    maint -->|"Records maintenance<br/>(with the same sign-in)"| am
+    am -.->|"Aircraft created, status changed<br/>(events, asynchronous)"| fo
+    ar -.->|"Airports and routes created,<br/>changed, deactivated<br/>(events, asynchronous)"| fo
+    fo -.->|"Flights scheduled, cancelled,<br/>completed (events, asynchronous)"| am
+    fo -->|"Aircraft not known yet:<br/>model, range, seats, status"| am
+    fo -->|"Route or airport not known yet:<br/>details, certified models"| ar
 
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff
     classDef system fill:#1168bd,stroke:#0b4884,color:#ffffff
